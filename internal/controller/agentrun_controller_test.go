@@ -497,7 +497,7 @@ func TestBuildContainers_SkillSidecarDefaultCommand(t *testing.T) {
 	if len(sc.Command) != 0 {
 		t.Errorf("sidecar command = %v, want empty (use image CMD)", sc.Command)
 	}
-	// Agent container should have TOOLS_ENABLED when sidecars are present.
+	// Agent container should always have TOOLS_ENABLED.
 	var toolsEnabled bool
 	for _, env := range cs[0].Env {
 		if env.Name == "TOOLS_ENABLED" && env.Value == "true" {
@@ -505,7 +505,7 @@ func TestBuildContainers_SkillSidecarDefaultCommand(t *testing.T) {
 		}
 	}
 	if !toolsEnabled {
-		t.Error("agent container should have TOOLS_ENABLED=true when sidecars are present")
+		t.Error("agent container should have TOOLS_ENABLED=true")
 	}
 	// Should NOT have workspace mount
 	for _, m := range sc.VolumeMounts {

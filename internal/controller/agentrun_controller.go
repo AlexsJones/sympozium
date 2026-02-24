@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 	"time"
 
@@ -28,15 +29,20 @@ import (
 const agentRunFinalizer = "kubeclaw.io/agentrun-finalizer"
 const systemNamespace = "kubeclaw-system"
 
+// DefaultRunHistoryLimit is how many completed AgentRuns to keep per instance
+// before the oldest are pruned.
+const DefaultRunHistoryLimit = 50
+
 // AgentRunReconciler reconciles AgentRun objects.
 // It watches AgentRun CRDs and reconciles them into Kubernetes Jobs/Pods.
 type AgentRunReconciler struct {
 	client.Client
-	Scheme     *runtime.Scheme
-	Log        logr.Logger
-	PodBuilder *orchestrator.PodBuilder
-	Clientset  kubernetes.Interface
-	ImageTag   string // release tag for KubeClaw images (e.g. "v0.0.25")
+	Scheme          *runtime.Scheme
+	Log             logr.Logger
+	PodBuilder      *orchestrator.PodBuilder
+	Clientset       kubernetes.Interface
+	ImageTag        string // release tag for KubeClaw images (e.g. "v0.0.25")
+	RunHistoryLimit int    // max completed runs to keep per instance (0 = use default)
 }
 
 const imageRegistry = "ghcr.io/alexsjones/kubeclaw"
@@ -299,30 +305,89 @@ func (r *AgentRunReconciler) checkAgentContainer(ctx context.Context, log logr.L
 }
 
 // reconcileCompleted handles cleanup of completed AgentRuns.
+// Instead of deleting immediately, it keeps up to RunHistoryLimit completed
+// runs per instance and prunes only the oldest ones beyond that threshold.
 func (r *AgentRunReconciler) reconcileCompleted(ctx context.Context, log logr.Logger, agentRun *kubeclawv1alpha1.AgentRun) (ctrl.Result, error) {
 	// Clean up cluster-scoped RBAC created for skill sidecars.
 	r.cleanupSkillRBAC(ctx, log, agentRun)
 
-	if agentRun.Spec.Cleanup == "delete" {
-		if controllerutil.ContainsFinalizer(agentRun, agentRunFinalizer) {
-			log.Info("Cleaning up completed AgentRun")
-			controllerutil.RemoveFinalizer(agentRun, agentRunFinalizer)
-			if err := r.Update(ctx, agentRun); err != nil {
-				if errors.IsConflict(err) {
-					return ctrl.Result{Requeue: true}, nil
-				}
-				return ctrl.Result{}, err
+	// Remove the finalizer so the CR can be deleted later if needed.
+	if controllerutil.ContainsFinalizer(agentRun, agentRunFinalizer) {
+		log.Info("Removing finalizer from completed AgentRun")
+		controllerutil.RemoveFinalizer(agentRun, agentRunFinalizer)
+		if err := r.Update(ctx, agentRun); err != nil {
+			if errors.IsConflict(err) {
+				return ctrl.Result{Requeue: true}, nil
 			}
+			return ctrl.Result{}, err
 		}
-		// Delete the AgentRun CR now that the finalizer is removed.
-		log.Info("Deleting completed AgentRun", "name", agentRun.Name)
-		if err := r.Delete(ctx, agentRun); err != nil {
+	}
+
+	// Prune old runs beyond the history limit for this instance.
+	if err := r.pruneOldRuns(ctx, log, agentRun); err != nil {
+		log.Error(err, "Failed to prune old AgentRuns")
+		// Non-fatal: don't block reconciliation.
+	}
+
+	return ctrl.Result{}, nil
+}
+
+// runHistoryLimit returns the effective run history limit.
+func (r *AgentRunReconciler) runHistoryLimit() int {
+	if r.RunHistoryLimit > 0 {
+		return r.RunHistoryLimit
+	}
+	return DefaultRunHistoryLimit
+}
+
+// pruneOldRuns lists all completed runs for the same instance and deletes the
+// oldest ones when the total exceeds the configured RunHistoryLimit.
+func (r *AgentRunReconciler) pruneOldRuns(ctx context.Context, log logr.Logger, agentRun *kubeclawv1alpha1.AgentRun) error {
+	instanceRef := agentRun.Spec.InstanceRef
+	if instanceRef == "" {
+		return nil
+	}
+
+	var allRuns kubeclawv1alpha1.AgentRunList
+	if err := r.List(ctx, &allRuns,
+		client.InNamespace(agentRun.Namespace),
+		client.MatchingLabels{"kubeclaw.io/instance": instanceRef},
+	); err != nil {
+		return fmt.Errorf("listing runs for instance %s: %w", instanceRef, err)
+	}
+
+	// Collect only completed (Succeeded/Failed) runs.
+	var completed []kubeclawv1alpha1.AgentRun
+	for _, run := range allRuns.Items {
+		if run.Status.Phase == "Succeeded" || run.Status.Phase == "Failed" {
+			completed = append(completed, run)
+		}
+	}
+
+	limit := r.runHistoryLimit()
+	if len(completed) <= limit {
+		return nil
+	}
+
+	// Sort oldest first by creation timestamp.
+	sort.Slice(completed, func(i, j int) bool {
+		return completed[i].CreationTimestamp.Before(&completed[j].CreationTimestamp)
+	})
+
+	pruneCount := len(completed) - limit
+	log.Info("Pruning old AgentRuns", "instance", instanceRef, "total", len(completed), "limit", limit, "pruning", pruneCount)
+
+	for i := 0; i < pruneCount; i++ {
+		run := &completed[i]
+		log.Info("Deleting old AgentRun", "name", run.Name, "created", run.CreationTimestamp.Time)
+		if err := r.Delete(ctx, run); err != nil {
 			if !errors.IsNotFound(err) {
-				return ctrl.Result{}, err
+				return fmt.Errorf("deleting run %s: %w", run.Name, err)
 			}
 		}
 	}
-	return ctrl.Result{}, nil
+
+	return nil
 }
 
 // reconcileDelete handles AgentRun deletion.
@@ -615,10 +680,24 @@ func (r *AgentRunReconciler) buildContainers(agentRun *kubeclawv1alpha1.AgentRun
 		})
 	}
 
-	// Enable tools on the agent container when skill sidecars are present.
-	if len(sidecars) > 0 {
+	// Always enable tools — the IPC bridge is always present so
+	// send_channel_message, read_file, and list_directory work without
+	// sidecars.  execute_command gracefully times out if no skill sidecar
+	// is running to handle exec requests.
+	containers[0].Env = append(containers[0].Env,
+		corev1.EnvVar{Name: "TOOLS_ENABLED", Value: "true"},
+	)
+
+	// Pass channel context so the agent knows how to reply when the run
+	// was triggered by a channel message (WhatsApp, Telegram, etc.).
+	if ch := agentRun.Annotations["kubeclaw.io/reply-channel"]; ch != "" {
 		containers[0].Env = append(containers[0].Env,
-			corev1.EnvVar{Name: "TOOLS_ENABLED", Value: "true"},
+			corev1.EnvVar{Name: "SOURCE_CHANNEL", Value: ch},
+		)
+	}
+	if cid := agentRun.Annotations["kubeclaw.io/reply-chat-id"]; cid != "" {
+		containers[0].Env = append(containers[0].Env,
+			corev1.EnvVar{Name: "SOURCE_CHAT_ID", Value: cid},
 		)
 	}
 

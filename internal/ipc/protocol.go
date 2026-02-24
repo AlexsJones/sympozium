@@ -28,11 +28,11 @@ type AgentResult struct {
 	Response string `json:"response,omitempty"`
 	Error    string `json:"error,omitempty"`
 	Metrics  struct {
-		DurationMs    int64 `json:"durationMs"`
-		InputTokens   int   `json:"inputTokens"`
-		OutputTokens  int   `json:"outputTokens"`
-		ToolCalls     int   `json:"toolCalls"`
-		SubagentSpawns int  `json:"subagentSpawns"`
+		DurationMs     int64 `json:"durationMs"`
+		InputTokens    int   `json:"inputTokens"`
+		OutputTokens   int   `json:"outputTokens"`
+		ToolCalls      int   `json:"toolCalls"`
+		SubagentSpawns int   `json:"subagentSpawns"`
 	} `json:"metrics"`
 }
 
@@ -54,12 +54,12 @@ type SpawnRequest struct {
 
 // ExecRequest is written to /ipc/tools/exec-request-*.json for sandbox execution.
 type ExecRequest struct {
-	ID       string   `json:"id"`
-	Command  string   `json:"command"`
-	Args     []string `json:"args,omitempty"`
-	WorkDir  string   `json:"workDir,omitempty"`
-	Timeout  int      `json:"timeout,omitempty"` // seconds
-	Stdin    string   `json:"stdin,omitempty"`
+	ID      string   `json:"id"`
+	Command string   `json:"command"`
+	Args    []string `json:"args,omitempty"`
+	WorkDir string   `json:"workDir,omitempty"`
+	Timeout int      `json:"timeout,omitempty"` // seconds
+	Stdin   string   `json:"stdin,omitempty"`
 }
 
 // ExecResult is written to /ipc/tools/exec-result-*.json with execution results.
@@ -75,10 +75,10 @@ type ExecResult struct {
 // Field names align with channel.OutboundMessage so the bridge can relay the
 // JSON directly without remapping.
 type OutboundMessage struct {
-	Channel  string          `json:"channel"`            // "telegram", "whatsapp", etc.
-	ChatID   string          `json:"chatId,omitempty"`   // Chat/group ID; empty = owner/self
+	Channel  string          `json:"channel"`          // "telegram", "whatsapp", etc.
+	ChatID   string          `json:"chatId,omitempty"` // Chat/group ID; empty = owner/self
 	Text     string          `json:"text"`
-	Format   string          `json:"format,omitempty"`   // "plain", "markdown", "html"
+	Format   string          `json:"format,omitempty"` // "plain", "markdown", "html"
 	Metadata json.RawMessage `json:"metadata,omitempty"`
 }
 

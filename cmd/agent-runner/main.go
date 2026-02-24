@@ -71,6 +71,23 @@ func main() {
 	skills := loadSkills(defaultSkillsDir)
 	systemPrompt = buildSystemPrompt(systemPrompt, skills, toolsEnabled)
 
+	// If this run was triggered from a channel, inject context so the
+	// agent knows how to reply through the originating channel.
+	sourceChannel := getEnv("SOURCE_CHANNEL", "")
+	sourceChatID := getEnv("SOURCE_CHAT_ID", "")
+	if sourceChannel != "" {
+		channelCtx := fmt.Sprintf(
+			"\n\n## Channel Context\n\n"+
+				"This task was received through the **%s** channel (chat ID: %s). "+
+				"You can reply through this channel using the `send_channel_message` tool "+
+				"with channel=%q and chatId=%q. Use it to deliver results, ask follow-up "+
+				"questions, or send notifications to the user.",
+			sourceChannel, sourceChatID, sourceChannel, sourceChatID,
+		)
+		systemPrompt += channelCtx
+		log.Printf("channel context injected: channel=%s chatId=%s", sourceChannel, sourceChatID)
+	}
+
 	// Resolve tool definitions.
 	var tools []ToolDef
 	if toolsEnabled {

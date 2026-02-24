@@ -3,19 +3,26 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode"
+
+	"golang.org/x/net/html"
 )
 
 // Tool name constants.
 const (
-	ToolExecuteCommand    = "execute_command"
-	ToolReadFile          = "read_file"
-	ToolListDirectory     = "list_directory"
+	ToolExecuteCommand     = "execute_command"
+	ToolReadFile           = "read_file"
+	ToolWriteFile          = "write_file"
+	ToolListDirectory      = "list_directory"
 	ToolSendChannelMessage = "send_channel_message"
+	ToolFetchURL           = "fetch_url"
 )
 
 // ToolDef describes a tool for LLM function calling.
@@ -106,6 +113,51 @@ func defaultTools() []ToolDef {
 				"required": []string{"channel", "text"},
 			},
 		},
+		{
+			Name: ToolFetchURL,
+			Description: "Fetch the content of a web page or API endpoint. " +
+				"Returns the page content as readable plain text with HTML tags stripped. " +
+				"Use this to read documentation, check web services, download data, or gather information from the internet. " +
+				"For APIs that return JSON, the raw JSON is returned as-is.",
+			Parameters: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"url": map[string]any{
+						"type":        "string",
+						"description": "The URL to fetch (must start with http:// or https://).",
+					},
+					"maxChars": map[string]any{
+						"type":        "integer",
+						"description": "Maximum characters to return (default 50000, max 100000). Content is truncated beyond this limit.",
+					},
+					"headers": map[string]any{
+						"type":        "object",
+						"description": "Optional HTTP headers to send with the request (e.g. {\"Authorization\": \"Bearer token\"}).",
+					},
+				},
+				"required": []string{"url"},
+			},
+		},
+		{
+			Name: ToolWriteFile,
+			Description: "Write content to a file on the pod filesystem. Creates the file if it doesn't exist, " +
+				"or overwrites it if it does. Parent directories are created automatically. " +
+				"Paths under /workspace and /tmp are writable.",
+			Parameters: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"path": map[string]any{
+						"type":        "string",
+						"description": "Absolute path to the file to write.",
+					},
+					"content": map[string]any{
+						"type":        "string",
+						"description": "The content to write to the file.",
+					},
+				},
+				"required": []string{"path", "content"},
+			},
+		},
 	}
 }
 
@@ -123,10 +175,14 @@ func executeToolCall(name string, argsJSON string) string {
 		return executeCommand(args)
 	case ToolReadFile:
 		return readFileTool(args)
+	case ToolWriteFile:
+		return writeFileTool(args)
 	case ToolListDirectory:
 		return listDirectoryTool(args)
 	case ToolSendChannelMessage:
 		return sendChannelMessageTool(args)
+	case ToolFetchURL:
+		return fetchURLTool(args)
 	default:
 		return fmt.Sprintf("Unknown tool: %s", name)
 	}
@@ -236,6 +292,276 @@ func sendChannelMessageTool(args map[string]any) string {
 		target = "owner (self)"
 	}
 	return fmt.Sprintf("Message sent to %s channel (target: %s)", channel, target)
+}
+
+// --- Web fetch tool (runs in the agent container) ---
+
+// fetchURLTool fetches a URL and returns the content as readable text.
+// HTML pages are converted to plain text by stripping tags.
+// JSON responses are returned as-is.
+func fetchURLTool(args map[string]any) string {
+	rawURL, _ := args["url"].(string)
+	if rawURL == "" {
+		return "Error: 'url' is required"
+	}
+	if !strings.HasPrefix(rawURL, "http://") && !strings.HasPrefix(rawURL, "https://") {
+		return "Error: url must start with http:// or https://"
+	}
+
+	maxChars := 50_000
+	if mc, ok := args["maxChars"].(float64); ok && mc > 0 {
+		maxChars = int(mc)
+	}
+	if maxChars > 100_000 {
+		maxChars = 100_000
+	}
+
+	client := &http.Client{
+		Timeout: 30 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 5 {
+				return fmt.Errorf("too many redirects")
+			}
+			return nil
+		},
+	}
+
+	req, err := http.NewRequest("GET", rawURL, nil)
+	if err != nil {
+		return fmt.Sprintf("Error creating request: %v", err)
+	}
+	req.Header.Set("User-Agent", "KubeClaw/1.0 (agent-runner)")
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/json,text/plain,*/*")
+
+	// Apply custom headers if provided.
+	if hdrs, ok := args["headers"].(map[string]any); ok {
+		for k, v := range hdrs {
+			if sv, ok := v.(string); ok {
+				req.Header.Set(k, sv)
+			}
+		}
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Sprintf("Error fetching URL: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2000))
+		return fmt.Sprintf("HTTP %d %s\n%s", resp.StatusCode, resp.Status, string(body))
+	}
+
+	// Limit read to 2MB to avoid memory issues.
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 2*1024*1024))
+	if err != nil {
+		return fmt.Sprintf("Error reading response body: %v", err)
+	}
+
+	contentType := resp.Header.Get("Content-Type")
+	content := string(body)
+
+	// If content looks like HTML, convert to readable text.
+	if strings.Contains(contentType, "text/html") || strings.Contains(contentType, "xhtml") ||
+		(strings.Contains(contentType, "text/") == false && strings.HasPrefix(strings.TrimSpace(content), "<")) {
+		content = htmlToText(content)
+	}
+
+	if len(content) > maxChars {
+		content = content[:maxChars] + fmt.Sprintf("\n\n... (truncated at %d chars, total ~%d)", maxChars, len(string(body)))
+	}
+
+	log.Printf("Fetched URL %s: status=%d content-type=%s len=%d", rawURL, resp.StatusCode, contentType, len(content))
+	return content
+}
+
+// htmlToText converts an HTML document to readable plain text by stripping
+// tags, extracting text content, and cleaning up whitespace. Block-level
+// elements produce line breaks. Script, style, and head elements are skipped.
+func htmlToText(rawHTML string) string {
+	tokenizer := html.NewTokenizer(strings.NewReader(rawHTML))
+
+	var sb strings.Builder
+	var skipDepth int // depth inside elements we want to skip
+
+	// Elements whose content should be suppressed.
+	skipTags := map[string]bool{
+		"script":   true,
+		"style":    true,
+		"head":     true,
+		"noscript": true,
+		"svg":      true,
+	}
+
+	// Block-level elements that produce line breaks.
+	blockTags := map[string]bool{
+		"p": true, "div": true, "br": true, "hr": true,
+		"h1": true, "h2": true, "h3": true, "h4": true, "h5": true, "h6": true,
+		"li": true, "tr": true, "blockquote": true, "pre": true,
+		"section": true, "article": true, "header": true, "footer": true,
+		"nav": true, "main": true, "aside": true, "figure": true,
+		"figcaption": true, "details": true, "summary": true,
+		"table": true, "thead": true, "tbody": true,
+	}
+
+	for {
+		tt := tokenizer.Next()
+
+		switch tt {
+		case html.ErrorToken:
+			goto done
+
+		case html.StartTagToken, html.SelfClosingTagToken:
+			tn, _ := tokenizer.TagName()
+			tag := string(tn)
+
+			if skipTags[tag] {
+				skipDepth++
+			}
+			if skipDepth == 0 {
+				if blockTags[tag] {
+					sb.WriteString("\n")
+				}
+				if tag == "br" || tag == "hr" {
+					sb.WriteString("\n")
+				}
+				// For links, try to extract href for context.
+				if tag == "a" {
+					href := getAttr(tokenizer, "href")
+					if href != "" && !strings.HasPrefix(href, "#") && !strings.HasPrefix(href, "javascript:") {
+						// We'll output the link text followed by the URL.
+						// The text will come from TextToken below.
+					}
+				}
+				if tag == "td" || tag == "th" {
+					sb.WriteString("\t")
+				}
+			}
+
+		case html.EndTagToken:
+			tn, _ := tokenizer.TagName()
+			tag := string(tn)
+
+			if skipTags[tag] && skipDepth > 0 {
+				skipDepth--
+			}
+			if skipDepth == 0 && blockTags[tag] {
+				sb.WriteString("\n")
+			}
+
+		case html.TextToken:
+			if skipDepth == 0 {
+				text := string(tokenizer.Text())
+				text = strings.TrimSpace(text)
+				if text != "" {
+					sb.WriteString(text)
+					sb.WriteString(" ")
+				}
+			}
+		}
+	}
+
+done:
+	// Clean up excessive whitespace.
+	result := sb.String()
+	result = collapseWhitespace(result)
+	return strings.TrimSpace(result)
+}
+
+// getAttr returns the value of the named attribute from the current token.
+func getAttr(t *html.Tokenizer, name string) string {
+	for {
+		key, val, more := t.TagAttr()
+		if string(key) == name {
+			return string(val)
+		}
+		if !more {
+			break
+		}
+	}
+	return ""
+}
+
+// collapseWhitespace reduces runs of whitespace. Multiple blank lines become
+// a single blank line; runs of spaces/tabs become a single space.
+func collapseWhitespace(s string) string {
+	var sb strings.Builder
+	sb.Grow(len(s) / 2)
+
+	lines := strings.Split(s, "\n")
+	blankCount := 0
+	for _, line := range lines {
+		trimmed := strings.TrimRightFunc(line, unicode.IsSpace)
+		// Collapse horizontal whitespace within the line.
+		trimmed = collapseSpaces(trimmed)
+		if trimmed == "" {
+			blankCount++
+			if blankCount <= 2 {
+				sb.WriteString("\n")
+			}
+			continue
+		}
+		blankCount = 0
+		sb.WriteString(trimmed)
+		sb.WriteString("\n")
+	}
+	return sb.String()
+}
+
+// collapseSpaces reduces runs of spaces/tabs within a line to a single space.
+func collapseSpaces(s string) string {
+	var sb strings.Builder
+	prevSpace := false
+	for _, r := range s {
+		if r == ' ' || r == '\t' {
+			if !prevSpace {
+				sb.WriteRune(' ')
+			}
+			prevSpace = true
+		} else {
+			sb.WriteRune(r)
+			prevSpace = false
+		}
+	}
+	return sb.String()
+}
+
+// --- Write file tool (runs in the agent container) ---
+
+func writeFileTool(args map[string]any) string {
+	path, _ := args["path"].(string)
+	if path == "" {
+		return "Error: 'path' is required"
+	}
+	content, _ := args["content"].(string)
+
+	// Security: restrict to writable paths.
+	allowed := []string{"/workspace", "/tmp"}
+	clean := filepath.Clean(path)
+	ok := false
+	for _, prefix := range allowed {
+		if strings.HasPrefix(clean, prefix) {
+			ok = true
+			break
+		}
+	}
+	if !ok {
+		return fmt.Sprintf("Error: access denied — path must be under %s", strings.Join(allowed, ", "))
+	}
+
+	// Ensure parent directory exists.
+	dir := filepath.Dir(clean)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Sprintf("Error creating directory %s: %v", dir, err)
+	}
+
+	if err := os.WriteFile(clean, []byte(content), 0o644); err != nil {
+		return fmt.Sprintf("Error writing file: %v", err)
+	}
+
+	log.Printf("Wrote file %s (%d bytes)", clean, len(content))
+	return fmt.Sprintf("Successfully wrote %d bytes to %s", len(content), clean)
 }
 
 // --- IPC-based command execution (runs in the sidecar container) ---

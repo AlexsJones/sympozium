@@ -37,6 +37,7 @@ func main() {
 	var probeAddr string
 	var enableLeaderElection bool
 	var natsURL string
+	var maxRunHistory int
 
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
@@ -44,6 +45,8 @@ func main() {
 		"Enable leader election for controller manager. "+
 			"Enabling this will ensure there is only one active controller manager.")
 	flag.StringVar(&natsURL, "nats-url", "", "NATS URL for channel message routing. If empty, reads NATS_URL env var.")
+	flag.IntVar(&maxRunHistory, "max-run-history", controller.DefaultRunHistoryLimit,
+		"Maximum number of completed AgentRuns to keep per instance before pruning oldest.")
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(zap.UseDevMode(true)))
@@ -84,12 +87,13 @@ func main() {
 	}
 
 	if err := (&controller.AgentRunReconciler{
-		Client:     mgr.GetClient(),
-		Scheme:     mgr.GetScheme(),
-		Log:        ctrl.Log.WithName("controllers").WithName("AgentRun"),
-		PodBuilder: podBuilder,
-		Clientset:  clientset,
-		ImageTag:   imageTag,
+		Client:          mgr.GetClient(),
+		Scheme:          mgr.GetScheme(),
+		Log:             ctrl.Log.WithName("controllers").WithName("AgentRun"),
+		PodBuilder:      podBuilder,
+		Clientset:       clientset,
+		ImageTag:        imageTag,
+		RunHistoryLimit: maxRunHistory,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "AgentRun")
 		os.Exit(1)

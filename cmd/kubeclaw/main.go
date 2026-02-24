@@ -1905,11 +1905,11 @@ func refreshDataCmd() tea.Cmd {
 		defer cancel()
 
 		var (
-			inst   kubeclawv1alpha1.ClawInstanceList
-			runs   kubeclawv1alpha1.AgentRunList
-			pols   kubeclawv1alpha1.ClawPolicyList
-			skls   kubeclawv1alpha1.SkillPackList
-			scheds kubeclawv1alpha1.ClawScheduleList
+			inst    kubeclawv1alpha1.ClawInstanceList
+			runs    kubeclawv1alpha1.AgentRunList
+			pols    kubeclawv1alpha1.ClawPolicyList
+			skls    kubeclawv1alpha1.SkillPackList
+			scheds  kubeclawv1alpha1.ClawScheduleList
 			podList corev1.PodList
 		)
 

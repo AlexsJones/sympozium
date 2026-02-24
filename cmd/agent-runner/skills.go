@@ -68,7 +68,7 @@ func buildSystemPrompt(base string, skills string, toolsEnabled bool) string {
 
 	if toolsEnabled {
 		sb.WriteString("\n\n## Tool Usage\n\n")
-		sb.WriteString("You have access to tools that let you execute commands and inspect files. ")
+		sb.WriteString("You have access to tools that let you execute commands, inspect files, fetch web content, and send messages through channels. ")
 		sb.WriteString("When the task requires interacting with Kubernetes or running shell commands, ")
 		sb.WriteString("use the `execute_command` tool to run them. The commands run inside a sidecar container ")
 		sb.WriteString("that has kubectl and other CLI tools available.\n\n")
@@ -80,7 +80,22 @@ func buildSystemPrompt(base string, skills string, toolsEnabled bool) string {
 		sb.WriteString("`kubectl config current-context` will always error in-cluster; this is normal and expected.**\n\n")
 		sb.WriteString("Always use tools to gather real information rather than guessing. ")
 		sb.WriteString("For example, if asked about pod status, run `kubectl get pods` rather than speculating.\n\n")
-		sb.WriteString("After executing commands, summarise the results clearly for the user.")
+		sb.WriteString("After executing commands, summarise the results clearly for the user.\n\n")
+		sb.WriteString("### Fetching Web Content\n\n")
+		sb.WriteString("You have a `fetch_url` tool that lets you download and read web pages, API responses, ")
+		sb.WriteString("and online documentation. HTML pages are automatically converted to readable plain text. ")
+		sb.WriteString("Use this to research information, read docs, check endpoints, or download data from the internet.\n\n")
+		sb.WriteString("### Writing Files\n\n")
+		sb.WriteString("You have a `write_file` tool that lets you create or overwrite files under /workspace or /tmp. ")
+		sb.WriteString("Use this to save reports, create scripts, write configuration files, or produce any output artifacts.\n\n")
+		sb.WriteString("### Sending Messages Through Channels\n\n")
+		sb.WriteString("You have a `send_channel_message` tool that lets you send messages through connected channels ")
+		sb.WriteString("(WhatsApp, Telegram, Discord, Slack). Use it whenever the user asks you to notify someone, ")
+		sb.WriteString("send a summary, or deliver any message. You can send to specific chat IDs, phone numbers, ")
+		sb.WriteString("or leave the chatId empty to send to the device owner.\n")
+		sb.WriteString("For WhatsApp, use the phone number in international format without + (e.g. '447450248165' for +44 7450 248165).\n")
+		sb.WriteString("For Telegram, use the numeric chat ID.\n")
+		sb.WriteString("For Discord/Slack, use the channel ID.")
 	}
 
 	return sb.String()
