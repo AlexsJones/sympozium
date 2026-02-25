@@ -104,7 +104,9 @@ graph TB
 
         subgraph SCHED["Scheduled Tasks"]
             CS["ClawSchedule Controller<br/><small>Cron-based reconciler</small>"]
+            SROUTER["Schedule Router<br/><small>NATS → ClawSchedule CRD</small>"]
             CS -- "creates AgentRuns<br/>on schedule" --> CM
+            SROUTER -- "creates / updates<br/>ClawSchedule CRDs" --> CS
         end
 
         subgraph CH["Channel Pods  ·  one Deployment per type"]
@@ -148,6 +150,8 @@ graph TB
 
         TG & SL & DC & WA -- "messages" --> NATS
         NATS -- "tasks" --> IPC
+        IPC -- "channel msgs<br/>schedule requests" --> NATS
+        NATS -- "schedule.upsert" --> SROUTER
     end
 
     USER(["User / Chat Client"]) -- "Telegram · Slack<br/>Discord · WhatsApp" --> CH
