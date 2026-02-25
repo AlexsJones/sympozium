@@ -4634,7 +4634,7 @@ func (m tuiModel) renderLog(logH int) string {
 func (m tuiModel) renderDetailPane(width, height int) string {
 	switch m.activeView {
 	case viewInstances:
-		return m.renderDetailInstanceChannels(width, height)
+		return m.renderDetailFeed(width, height)
 	case viewRuns:
 		return m.renderDetailFeed(width, height)
 	case viewSkills:
@@ -5039,10 +5039,10 @@ func (m tuiModel) renderDetailPaneFullscreen() string {
 	case viewChannels:
 		// Channels tab: nothing to show fullscreen, fall back to chat
 	case viewInstances:
-		return m.renderFullscreenDetailStatic(w, h, m.renderDetailInstanceChannels)
+		// Fall through to chat fullscreen (same as Runs tab)
 	}
 
-	// Runs tab and fallback: show the chat fullscreen with input.
+	// Instances tab, Runs tab and fallback: show the chat fullscreen with input.
 	inst := m.selectedInstanceForFeed()
 
 	var allLines []string
