@@ -84,7 +84,8 @@ install() {
     elif command -v sudo >/dev/null 2>&1; then
         info "Installing to /usr/local/bin (requires sudo)..."
         INSTALL_DIR="/usr/local/bin"
-        sudo mv "$BIN" "${INSTALL_DIR}/${BINARY}"
+        sudo sh -c "mv '$BIN' '${INSTALL_DIR}/${BINARY}' && chmod 755 '${INSTALL_DIR}/${BINARY}'" </dev/tty \
+            || err "sudo install failed. Try running the script directly (not piped from curl)."
         info "Installed ${BINARY} to ${INSTALL_DIR}/${BINARY}"
         return
     else
