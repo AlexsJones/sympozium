@@ -1,29 +1,15 @@
 ---
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: sympozium-controller-manager
-  namespace: sympozium-system
----
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: sympozium-apiserver
-  namespace: sympozium-system
----
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   name: sympozium-manager-role
 rules:
-# Core resources for agent pods
 - apiGroups:
   - ""
   resources:
   - configmaps
   - secrets
   - services
-  - serviceaccounts
   verbs:
   - create
   - delete
@@ -37,12 +23,8 @@ rules:
   resources:
   - pods
   verbs:
-  - create
-  - delete
   - get
   - list
-  - patch
-  - update
   - watch
 - apiGroups:
   - ""
@@ -53,11 +35,12 @@ rules:
 - apiGroups:
   - ""
   resources:
-  - events
+  - serviceaccounts
   verbs:
   - create
-  - patch
-# Deployments
+  - get
+  - list
+  - watch
 - apiGroups:
   - apps
   resources:
@@ -70,7 +53,6 @@ rules:
   - patch
   - update
   - watch
-# Jobs for agent runs
 - apiGroups:
   - batch
   resources:
@@ -83,36 +65,6 @@ rules:
   - patch
   - update
   - watch
-# Leader election
-- apiGroups:
-  - coordination.k8s.io
-  resources:
-  - leases
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-# RBAC for skill sidecar auto-provisioning
-- apiGroups:
-  - rbac.authorization.k8s.io
-  resources:
-  - clusterroles
-  - clusterrolebindings
-  - roles
-  - rolebindings
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-# CRDs
 - apiGroups:
   - sympozium.ai
   resources:
@@ -137,7 +89,6 @@ rules:
   - personapacks/finalizers
   - skillpacks/finalizers
   - sympoziuminstances/finalizers
-  - sympoziumpolicies/finalizers
   - sympoziumschedules/finalizers
   verbs:
   - update
@@ -154,16 +105,3 @@ rules:
   - get
   - patch
   - update
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: sympozium-manager-rolebinding
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: sympozium-manager-role
-subjects:
-- kind: ServiceAccount
-  name: sympozium-controller-manager
-  namespace: sympozium-system
