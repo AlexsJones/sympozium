@@ -7897,6 +7897,10 @@ func tuiPersonaApply(ns string, w *wizardState) (string, error) {
 		},
 	}
 
+	// Enable all personas — clear any previous exclusions so the controller
+	// stamps out every instance defined in the pack.
+	pack.Spec.ExcludePersonas = nil
+
 	// Update each persona with the chosen model and channel bindings.
 	var enabledChannels []string
 	channelConfigs := make(map[string]string)
