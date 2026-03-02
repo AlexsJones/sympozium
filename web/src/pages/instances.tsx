@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useInstances, useDeleteInstance, useCreateInstance, useSkills } from "@/hooks/use-api";
 import { StatusBadge } from "@/components/status-badge";
 import { OnboardingWizard, type WizardResult } from "@/components/onboarding-wizard";
@@ -19,6 +19,7 @@ import { Plus, Trash2, ExternalLink } from "lucide-react";
 import { formatAge } from "@/lib/utils";
 
 export function InstancesPage() {
+  const navigate = useNavigate();
   const { data, isLoading } = useInstances();
   const { data: skillPacks } = useSkills();
   const deleteInstance = useDeleteInstance();
@@ -40,16 +41,21 @@ export function InstancesPage() {
         baseURL: result.baseURL || undefined,
         secretName: result.secretName || undefined,
         apiKey: result.apiKey || undefined,
-        skills: result.skills,
-        channels: result.channels,
-        channelConfigs:
-          Object.keys(result.channelConfigs).length > 0
-            ? result.channelConfigs
+        skills: result.skills.map((skillPackRef) => ({ skillPackRef })),
+        channels: result.channels.map((type) => ({
+          type,
+          configRef: result.channelConfigs[type]
+            ? { provider: "", secret: result.channelConfigs[type] }
             : undefined,
+        })),
       },
       {
         onSuccess: () => {
           setWizardOpen(false);
+          if (result.skills.includes("github-gitops")) {
+            navigate(`/instances/${result.name}?tab=skills&connect=github`);
+            return;
+          }
           if (result.channels.includes("whatsapp")) {
             setWhatsAppInstance(result.name);
           }
@@ -140,9 +146,7 @@ export function InstancesPage() {
                   {inst.status?.totalAgentRuns ?? 0}
                 </TableCell>
                 <TableCell className="text-sm">
-                  {inst.status?.tokenUsage
-                    ? inst.status.tokenUsage.totalTokens.toLocaleString()
-                    : "—"}
+                  —
                 </TableCell>
                 <TableCell className="text-sm text-muted-foreground">
                   {formatAge(inst.metadata.creationTimestamp)}

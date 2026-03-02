@@ -550,7 +550,7 @@ func (r *AgentRunReconciler) buildJob(
 
 	// Build containers
 	containers := r.buildContainers(agentRun, memoryEnabled, observability, sidecars)
-	volumes := r.buildVolumes(agentRun, memoryEnabled)
+	volumes := r.buildVolumes(agentRun, memoryEnabled, sidecars)
 
 	runAsNonRoot := true
 	runAsUser := int64(1000)
@@ -801,6 +801,27 @@ func (r *AgentRunReconciler) buildContainers(
 		if len(cmd) > 0 {
 			container.Command = cmd
 		}
+
+		// Inject per-instance SKILL_<KEY> env vars from SkillRef.Params.
+		for k, v := range sc.params {
+			envKey := "SKILL_" + strings.ToUpper(k)
+			container.Env = append(container.Env, corev1.EnvVar{Name: envKey, Value: v})
+		}
+
+		// Mount the skill's SecretRef if one is configured.
+		if sc.sidecar.SecretRef != "" {
+			mountPath := sc.sidecar.SecretMountPath
+			if mountPath == "" {
+				mountPath = "/secrets/" + sc.sidecar.SecretRef
+			}
+			volName := "skill-secret-" + sc.skillPackName
+			container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{
+				Name:      volName,
+				MountPath: mountPath,
+				ReadOnly:  true,
+			})
+		}
+
 		containers = append(containers, container)
 	}
 
@@ -859,7 +880,7 @@ func buildObservabilityEnv(agentRun *sympoziumv1alpha1.AgentRun, obs *sympoziumv
 }
 
 // buildVolumes constructs the volume list for an agent pod.
-func (r *AgentRunReconciler) buildVolumes(agentRun *sympoziumv1alpha1.AgentRun, memoryEnabled bool) []corev1.Volume {
+func (r *AgentRunReconciler) buildVolumes(agentRun *sympoziumv1alpha1.AgentRun, memoryEnabled bool, sidecars []resolvedSidecar) []corev1.Volume {
 	workspaceSizeLimit := resource.MustParse("1Gi")
 	ipcSizeLimit := resource.MustParse("64Mi")
 	tmpSizeLimit := resource.MustParse("256Mi")
@@ -946,6 +967,23 @@ func (r *AgentRunReconciler) buildVolumes(agentRun *sympoziumv1alpha1.AgentRun, 
 						Name: cmName,
 					},
 					Optional: boolPtr(true),
+				},
+			},
+		})
+	}
+
+	// Add Secret volumes for skill sidecars that require credentials.
+	for _, sc := range sidecars {
+		if sc.sidecar.SecretRef == "" {
+			continue
+		}
+		volName := "skill-secret-" + sc.skillPackName
+		volumes = append(volumes, corev1.Volume{
+			Name: volName,
+			VolumeSource: corev1.VolumeSource{
+				Secret: &corev1.SecretVolumeSource{
+					SecretName: sc.sidecar.SecretRef,
+					Optional:   boolPtr(true),
 				},
 			},
 		})
@@ -1207,10 +1245,11 @@ func (r *AgentRunReconciler) failRun(ctx context.Context, agentRun *sympoziumv1a
 
 // --- Skill sidecar resolution and RBAC ---
 
-// resolvedSidecar pairs a SkillPack name with its sidecar spec.
+// resolvedSidecar pairs a SkillPack name with its sidecar spec and per-instance params.
 type resolvedSidecar struct {
 	skillPackName string
 	sidecar       sympoziumv1alpha1.SkillSidecar
+	params        map[string]string // per-instance SKILL_* env vars (from SkillRef.Params)
 }
 
 // resolveSkillSidecars looks up SkillPack CRDs for the AgentRun's active
@@ -1249,6 +1288,7 @@ func (r *AgentRunReconciler) resolveSkillSidecars(ctx context.Context, log logr.
 			sidecars = append(sidecars, resolvedSidecar{
 				skillPackName: spName,
 				sidecar:       *sp.Spec.Sidecar,
+				params:        ref.Params,
 			})
 		}
 	}

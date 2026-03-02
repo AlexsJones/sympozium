@@ -31,7 +31,7 @@ CHANNELS = telegram whatsapp discord slack
 # All images
 IMAGES = controller apiserver ipc-bridge webhook agent-runner \
          channel-telegram channel-whatsapp channel-discord channel-slack \
-         skill-k8s-ops skill-sre-observability
+		 skill-k8s-ops skill-sre-observability skill-github-gitops
 
 .PHONY: all build test clean generate manifests docker-build docker-push install help web-build web-dev web-dev-serve web-clean web-install setup-hooks
 
@@ -109,17 +109,24 @@ web-dev: ## Start the frontend dev server (hot-reload, proxy to :8080)
 	cd web && npm run dev
 
 web-dev-serve: ## Vite hot-reload + port-forward to in-cluster apiserver (no rebuild needed)
-	@echo "==> Port-forwarding sympozium-apiserver to localhost:8080"
-	@echo "==> Vite dev server on http://localhost:$(VITE_PORT) (proxies /api + /ws to :8080)"
-	@TOKEN="$$(kubectl get secret sympozium-ui-token -n $(SYMPOZIUM_NAMESPACE) -o jsonpath='{.data.token}' 2>/dev/null | base64 -d 2>/dev/null || true)"; \
-	if [ -n "$$TOKEN" ]; then \
-		echo "==> API token: $$TOKEN"; \
-	else \
-		echo "==> API token: (not found; run: kubectl get secret sympozium-ui-token -n $(SYMPOZIUM_NAMESPACE) -o jsonpath='{.data.token}' | base64 -d)"; \
-	fi
-	@echo "==> Edit web/src/ and changes hot-reload instantly."
-	@echo ""
-	@trap 'kill 0' EXIT; \
+	@APISERVER_TOKEN=$$( \
+		kubectl get deploy -n $(SYMPOZIUM_NAMESPACE) sympozium-apiserver -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="SYMPOZIUM_UI_TOKEN")].value}' 2>/dev/null \
+	); \
+	if [ -z "$$APISERVER_TOKEN" ]; then \
+		SECRET_NAME=$$(kubectl get deploy -n $(SYMPOZIUM_NAMESPACE) sympozium-apiserver -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="SYMPOZIUM_UI_TOKEN")].valueFrom.secretKeyRef.name}' 2>/dev/null); \
+		SECRET_KEY=$$(kubectl get deploy -n $(SYMPOZIUM_NAMESPACE) sympozium-apiserver -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="SYMPOZIUM_UI_TOKEN")].valueFrom.secretKeyRef.key}' 2>/dev/null); \
+		if [ -z "$$SECRET_KEY" ]; then SECRET_KEY=token; fi; \
+		if [ -n "$$SECRET_NAME" ]; then \
+			APISERVER_TOKEN=$$(kubectl get secret -n $(SYMPOZIUM_NAMESPACE) "$$SECRET_NAME" -o jsonpath="{.data.$$SECRET_KEY}" 2>/dev/null | base64 -d 2>/dev/null); \
+		fi; \
+	fi; \
+	if [ -z "$$APISERVER_TOKEN" ]; then APISERVER_TOKEN="(not set)"; fi; \
+	echo "==> Port-forwarding sympozium-apiserver to localhost:8080"; \
+	echo "==> Vite dev server on http://localhost:$(VITE_PORT) (proxies /api + /ws to :8080)"; \
+	echo "==> API token (from apiserver): $$APISERVER_TOKEN"; \
+	echo "==> Edit web/src/ and changes hot-reload instantly."; \
+	echo ""; \
+	trap 'kill 0' EXIT; \
 		kubectl port-forward -n $(SYMPOZIUM_NAMESPACE) svc/sympozium-apiserver 8080:8080 & \
 		cd web && npx vite --port $(VITE_PORT); \
 		wait

@@ -186,6 +186,19 @@ spec:
                         description: Memory request (e.g. "128Mi").
                         type: string
                     type: object
+                  secretMountPath:
+                    description: |-
+                      SecretMountPath is the directory inside the sidecar where the Secret keys are
+                      projected as individual files. Defaults to /secrets/<SecretRef>.
+                    type: string
+                  secretRef:
+                    description: |-
+                      SecretRef is the name of a Kubernetes Secret whose keys are mounted as files
+                      inside the sidecar at SecretMountPath. Use this to supply credentials such as
+                      API tokens that the sidecar needs at runtime (e.g. GH_TOKEN for github-gitops).
+                      The Secret must exist in sympozium-system and will be mirrored into the
+                      AgentRun namespace automatically.
+                    type: string
                 required:
                 - image
                 type: object

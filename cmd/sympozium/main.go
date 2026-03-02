@@ -525,18 +525,14 @@ func runOnboard() error {
 				fmt.Printf("  ✓ Using %s from environment\n", secretEnvKey)
 			}
 		}
+		if apiKey == "" {
+			fmt.Println("  ⚠  No API key provided — you can add it later:")
+			fmt.Printf("  kubectl create secret generic %s-%s-key --from-literal=%s=<key>\n",
+				instanceName, providerName, secretEnvKey)
+		}
 	}
 
 	providerSecretName := fmt.Sprintf("%s-%s-key", instanceName, providerName)
-	if secretEnvKey != "" && apiKey == "" {
-		// Standalone onboarding requires a provider secret before completing.
-		// If the user skipped key entry, allow using a pre-existing secret.
-		if err := kubectlQuiet("get", "secret", providerSecretName, "-n", namespace); err != nil {
-			return fmt.Errorf("provider secret %q is required before creating instance %q; create it with: kubectl create secret generic %s -n %s --from-literal=%s=<key>",
-				providerSecretName, instanceName, providerSecretName, namespace, secretEnvKey)
-		}
-		fmt.Printf("  ✓ Using existing provider secret %s\n", providerSecretName)
-	}
 
 	// ── Step 4: Channel ──────────────────────────────────────────────────
 	fmt.Println("\n📋 Step 4/6 — Connect a Channel (optional)")
@@ -672,10 +668,10 @@ func runOnboard() error {
 
 	// 4. Create SympoziumInstance.
 	fmt.Printf("  Creating SympoziumInstance %s...\n", instanceName)
-	// Provider secret is required (except providers that do not need keys, e.g. ollama).
-	instanceSecret := ""
-	if secretEnvKey != "" {
-		instanceSecret = providerSecretName
+	// Only pass the secret name if an API key was provided.
+	instanceSecret := providerSecretName
+	if apiKey == "" {
+		instanceSecret = ""
 	}
 	// WhatsApp doesn't need a channel secret (QR pairing)
 	chSecret := channelSecretName
@@ -687,19 +683,6 @@ func runOnboard() error {
 		policyName, applyPolicy)
 	if err := kubectlApplyStdin(instanceYAML); err != nil {
 		return fmt.Errorf("apply instance: %w", err)
-	}
-	if secretEnvKey != "" {
-		if err := kubectlQuiet("get", "secret", providerSecretName, "-n", namespace); err != nil {
-			return fmt.Errorf("provider secret %q not found after apply: %w", providerSecretName, err)
-		}
-		checkAuth := fmt.Sprintf("{.spec.authRefs[?(@.secret==%q)].secret}", providerSecretName)
-		out, err := exec.Command("kubectl", "get", "sympoziuminstance", instanceName, "-n", namespace, "-o", "jsonpath="+checkAuth).Output()
-		if err != nil {
-			return fmt.Errorf("verify authRef link on instance %q: %w", instanceName, err)
-		}
-		if strings.TrimSpace(string(out)) == "" {
-			return fmt.Errorf("instance %q is missing authRef to secret %q", instanceName, providerSecretName)
-		}
 	}
 
 	// 5. Create heartbeat schedule (unless disabled).
@@ -966,14 +949,6 @@ spec:
   memory:
     enabled: true
     maxSizeKB: 256
-  observability:
-    enabled: true
-    otlpEndpoint: sympozium-otel-collector.sympozium-system.svc:4317
-    otlpProtocol: grpc
-    serviceName: sympozium
-    resourceAttributes:
-      deployment.environment: cluster
-      k8s.cluster.name: unknown
 `, name, ns, channelsBlock, model, baseURLLine, authRefsBlock, policyBlock)
 }
 
@@ -1150,19 +1125,15 @@ func runInstall(ver, imageTag string) error {
 	if _, err := os.Stat(observabilityDir); err == nil {
 		fmt.Println("  Deploying OpenTelemetry collector...")
 		if err := kubectl("apply", "-f", observabilityDir); err != nil {
-			// Non-fatal — the control plane should still come up.
 			fmt.Printf("  Warning: failed to deploy OpenTelemetry collector: %v\n", err)
 		}
 	} else {
-		// Older release bundles may not include config/observability.
-		// Fall back to a version-pinned raw manifest so telemetry works by default.
 		observabilityURL := fmt.Sprintf(
 			"https://raw.githubusercontent.com/%s/%s/config/observability/otel-collector.yaml",
 			ghRepo, ver,
 		)
 		fmt.Println("  Observability manifests missing in bundle; applying collector fallback...")
 		if err := kubectl("apply", "-f", observabilityURL); err != nil {
-			// Non-fatal — telemetry should not block installation.
 			fmt.Printf("  Warning: failed to deploy OpenTelemetry collector fallback: %v\n", err)
 		}
 	}
@@ -1569,6 +1540,22 @@ type whatsappQRPollMsg struct {
 	status  string   // human-readable status
 	err     error
 }
+type githubAuthDeviceCodeMsg struct {
+	deviceCode string
+	userCode   string
+	verifyURL  string
+	interval   int
+	err        error
+}
+type githubAuthPollMsg struct {
+	token string
+	done  bool
+	err   error
+}
+type githubAuthTokenWrittenMsg struct {
+	err         error
+	alreadyDone bool
+}
 type suggestionsMsg struct {
 	items []suggestion
 }
@@ -1809,6 +1796,124 @@ func filterChatModels(models []string) []string {
 	return filtered
 }
 
+// ── GitHub OAuth device-flow helpers ─────────────────────────────────────────
+
+// checkAndStartGithubAuthCmd checks whether the github-gitops-token secret
+// already exists. If it does, it signals "already done"; otherwise it starts
+// the GitHub OAuth 2.0 device flow.
+func checkAndStartGithubAuthCmd() tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		ex := &corev1.Secret{}
+		err := k8sClient.Get(ctx, types.NamespacedName{Name: "github-gitops-token", Namespace: "sympozium-system"}, ex)
+		if err == nil {
+			// Token secret already exists — nothing to do.
+			return githubAuthTokenWrittenMsg{alreadyDone: true}
+		}
+		clientID := os.Getenv("GITHUB_OAUTH_CLIENT_ID")
+		if clientID == "" {
+			return githubAuthDeviceCodeMsg{err: fmt.Errorf("GITHUB_OAUTH_CLIENT_ID env var not set — please configure it on the apiserver deployment")}
+		}
+		body := "client_id=" + clientID + "&scope=repo"
+		req, err := http.NewRequestWithContext(ctx, "POST", "https://github.com/login/device/code", strings.NewReader(body))
+		if err != nil {
+			return githubAuthDeviceCodeMsg{err: err}
+		}
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("Accept", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return githubAuthDeviceCodeMsg{err: err}
+		}
+		defer resp.Body.Close()
+		data, _ := io.ReadAll(resp.Body)
+		var result struct {
+			DeviceCode      string `json:"device_code"`
+			UserCode        string `json:"user_code"`
+			VerificationURI string `json:"verification_uri"`
+			Interval        int    `json:"interval"`
+		}
+		if err := json.Unmarshal(data, &result); err != nil {
+			return githubAuthDeviceCodeMsg{err: fmt.Errorf("parse response: %w", err)}
+		}
+		if result.DeviceCode == "" {
+			return githubAuthDeviceCodeMsg{err: fmt.Errorf("no device_code returned by GitHub")}
+		}
+		if result.Interval == 0 {
+			result.Interval = 5
+		}
+		return githubAuthDeviceCodeMsg{
+			deviceCode: result.DeviceCode,
+			userCode:   result.UserCode,
+			verifyURL:  result.VerificationURI,
+			interval:   result.Interval,
+		}
+	}
+}
+
+// pollGithubTokenCmd waits `interval` seconds then polls GitHub for the token.
+func pollGithubTokenCmd(deviceCode string, interval int) tea.Cmd {
+	delay := time.Duration(interval) * time.Second
+	if delay < 5*time.Second {
+		delay = 5 * time.Second
+	}
+	return tea.Tick(delay, func(_ time.Time) tea.Msg {
+		clientID := os.Getenv("GITHUB_OAUTH_CLIENT_ID")
+		body := "client_id=" + clientID +
+			"&device_code=" + deviceCode +
+			"&grant_type=urn:ietf:params:oauth:grant-type:device_code"
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		req, err := http.NewRequestWithContext(ctx, "POST", "https://github.com/login/oauth/access_token", strings.NewReader(body))
+		if err != nil {
+			return githubAuthPollMsg{err: err}
+		}
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("Accept", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return githubAuthPollMsg{err: err}
+		}
+		defer resp.Body.Close()
+		data, _ := io.ReadAll(resp.Body)
+		var result struct {
+			AccessToken string `json:"access_token"`
+			Error       string `json:"error"`
+		}
+		if err := json.Unmarshal(data, &result); err != nil {
+			return githubAuthPollMsg{err: fmt.Errorf("parse poll response: %w", err)}
+		}
+		if result.AccessToken != "" {
+			return githubAuthPollMsg{done: true, token: result.AccessToken}
+		}
+		if result.Error == "authorization_pending" || result.Error == "slow_down" {
+			return githubAuthPollMsg{done: false}
+		}
+		return githubAuthPollMsg{err: fmt.Errorf("GitHub auth error: %s", result.Error)}
+	})
+}
+
+// writeGithubTokenCmd writes the access token to the github-gitops-token Secret.
+func writeGithubTokenCmd(token string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		sec := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: "github-gitops-token", Namespace: "sympozium-system"},
+			Type:       corev1.SecretTypeOpaque,
+			StringData: map[string]string{"GH_TOKEN": token},
+		}
+		existing := &corev1.Secret{}
+		err := k8sClient.Get(ctx, types.NamespacedName{Name: "github-gitops-token", Namespace: "sympozium-system"}, existing)
+		if err == nil {
+			existing.StringData = map[string]string{"GH_TOKEN": token}
+			return githubAuthTokenWrittenMsg{err: k8sClient.Update(ctx, existing)}
+		}
+		return githubAuthTokenWrittenMsg{err: k8sClient.Create(ctx, sec)}
+	}
+}
+
 var tuiCommands = []struct{ cmd, desc string }{
 	{"/instances", "List SympoziumInstances"},
 	{"/runs", "List AgentRuns"},
@@ -1871,22 +1976,21 @@ type podRow struct {
 type wizardStep int
 
 const (
-	wizStepNone               wizardStep = iota
-	wizStepCheckCluster                  // auto — verify CRDs
-	wizStepNamespace                     // text/menu: target namespace
-	wizStepInstanceName                  // text: instance name
-	wizStepProvider                      // menu 1-6: provider
-	wizStepModel                         // text: model name
-	wizStepBaseURL                       // text: base URL (some providers)
-	wizStepAPIKey                        // text: API key (non-ollama)
-	wizStepChannel                       // menu 1-5: channel type
-	wizStepPolicy                        // y/n: apply default policy
-	wizStepHeartbeat                     // menu 1-5: heartbeat interval
-	wizStepConfirm                       // y/n: confirm summary
-	wizStepChannelActionToken            // text: channel token after confirm
-	wizStepApplying                      // auto — create resources
-	wizStepWhatsAppQR                    // auto — stream QR from pod logs
-	wizStepDone                          // auto — show result
+	wizStepNone         wizardStep = iota
+	wizStepCheckCluster            // auto — verify CRDs
+	wizStepInstanceName            // text: instance name
+	wizStepProvider                // menu 1-6: provider
+	wizStepModel                   // text: model name
+	wizStepBaseURL                 // text: base URL (some providers)
+	wizStepAPIKey                  // text: API key (non-ollama)
+	wizStepChannel                 // menu 1-5: channel type
+	wizStepChannelToken            // text: channel bot token
+	wizStepPolicy                  // y/n: apply default policy
+	wizStepHeartbeat               // menu 1-5: heartbeat interval
+	wizStepConfirm                 // y/n: confirm summary
+	wizStepApplying                // auto — create resources
+	wizStepWhatsAppQR              // auto — stream QR from pod logs
+	wizStepDone                    // auto — show result
 
 	// Persona wizard steps
 	wizStepPersonaPick         // menu: select a persona pack
@@ -1895,8 +1999,8 @@ const (
 	wizStepPersonaAPIKey       // text: API key
 	wizStepPersonaModel        // text: model name
 	wizStepPersonaChannels     // multi-toggle: channels to bind
+	wizStepPersonaChannelToken // text: channel token (per selected channel)
 	wizStepPersonaConfirm      // y/n: confirm summary
-	wizStepPersonaChannelToken // text: channel token (per selected channel, after confirm)
 	wizStepPersonaApplying     // auto — patch pack + create resources
 	wizStepPersonaDone         // auto — show result
 )
@@ -1908,8 +2012,6 @@ type wizardState struct {
 	resultMsgs []string
 
 	// Collected values
-	namespaceName   string
-	namespaceList   []string
 	instanceName    string
 	providerChoice  string // "1"–"6"
 	providerName    string
@@ -1947,23 +2049,6 @@ type wizardState struct {
 
 func (w *wizardState) reset() {
 	*w = wizardState{}
-}
-
-func (w *wizardState) onboardNamespace(fallback string) string {
-	ns := strings.TrimSpace(w.namespaceName)
-	if ns == "" {
-		return fallback
-	}
-	return ns
-}
-
-func (w *wizardState) personaHasEnabledChannel(chType string) bool {
-	for _, ch := range w.personaChannels {
-		if ch.enabled && ch.chType == chType {
-			return true
-		}
-	}
-	return false
 }
 
 // personaChannelChoice tracks a channel toggle during persona onboarding.
@@ -2043,6 +2128,19 @@ type tuiModel struct {
 	editChannelTokenTI    textinput.Model   // text input for channel token sub-modal
 	editChannelTokenIdx   int               // index into editChannels being configured
 	editChannelNewTokens  map[int]string    // idx → token for channels needing secret creation
+	editSkillGithubInput  bool              // sub-modal for github-gitops repo entry
+	editSkillGithubTI     textinput.Model   // text input for github repo
+	editSkillGithubIdx    int               // index into editSkills being configured
+
+	// GitHub OAuth device-flow auth state (displayed inline in the skills tab)
+	githubAuthActive     bool   // device-flow prompt is visible
+	githubAuthUserCode   string // e.g. "ABCD-1234" — user must enter at GitHub
+	githubAuthVerifyURL  string // URL shown to the user
+	githubAuthDeviceCode string // opaque code for polling
+	githubAuthInterval   int    // seconds between poll requests
+	githubAuthStatus     string // "pending" | "done" | "error"
+	githubAuthMessage    string // success note or error detail
+
 	editSkills            []editSkillItem   // toggleable skills list
 	editChannels          []editChannelItem // channel bindings
 	editPersonaPackName   string            // non-empty when editing a PersonaPack
@@ -2074,9 +2172,10 @@ type editHeartbeatForm struct {
 
 // editSkillItem represents a toggleable skill in the edit modal.
 type editSkillItem struct {
-	name     string // SkillPack name
-	enabled  bool   // whether it's in the instance's Skills list
-	category string // e.g. "kubernetes"
+	name     string            // SkillPack name
+	enabled  bool              // whether it's in the instance's Skills list
+	category string            // e.g. "kubernetes"
+	params   map[string]string // per-skill params (e.g. repo for github-gitops)
 }
 
 // editChannelItem represents a channel binding in the edit modal.
@@ -2462,6 +2561,38 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 
+			// GitHub-gitops repo sub-modal — intercept keys first.
+			if m.editSkillGithubInput {
+				switch msg.Type {
+				case tea.KeyEsc:
+					// Cancel — revert the toggle
+					m.editSkills[m.editSkillGithubIdx].enabled = false
+					m.editSkillGithubInput = false
+					return m, nil
+				case tea.KeyEnter:
+					repo := m.editSkillGithubTI.Value()
+					idx := m.editSkillGithubIdx
+					if repo != "" {
+						if m.editSkills[idx].params == nil {
+							m.editSkills[idx].params = make(map[string]string)
+						}
+						m.editSkills[idx].params["repo"] = repo
+						m.editSkillGithubInput = false
+						// Automatically start the GitHub auth flow if the token secret doesn't exist.
+						m.githubAuthActive = true
+						m.githubAuthStatus = "checking"
+						return m, checkAndStartGithubAuthCmd()
+					}
+					// No repo entered — revert toggle
+					m.editSkills[idx].enabled = false
+					m.editSkillGithubInput = false
+					return m, nil
+				default:
+					m.editSkillGithubTI, tiCmd = m.editSkillGithubTI.Update(msg)
+					return m, tiCmd
+				}
+			}
+
 			// Channel token sub-modal text input — intercept keys first.
 			if m.editChannelTokenInput {
 				switch msg.Type {
@@ -2551,7 +2682,21 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				} else if m.editTab == 2 {
 					if m.editField >= 0 && m.editField < len(m.editSkills) {
-						m.editSkills[m.editField].enabled = !m.editSkills[m.editField].enabled
+						sk := &m.editSkills[m.editField]
+						sk.enabled = !sk.enabled
+						if sk.enabled && sk.name == "github-gitops" {
+							m.editSkillGithubInput = true
+							m.editSkillGithubIdx = m.editField
+							ti := textinput.New()
+							ti.Placeholder = "owner/repo (e.g. myorg/platform)"
+							ti.CharLimit = 128
+							ti.Width = 50
+							if repo, ok := sk.params["repo"]; ok {
+								ti.SetValue(repo)
+							}
+							ti.Focus()
+							m.editSkillGithubTI = ti
+						}
 					}
 				} else if m.editTab == 3 {
 					if m.editField >= 0 && m.editField < len(m.editChannels) {
@@ -2646,7 +2791,21 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				} else if m.editTab == 2 {
 					if m.editField >= 0 && m.editField < len(m.editSkills) {
-						m.editSkills[m.editField].enabled = !m.editSkills[m.editField].enabled
+						sk := &m.editSkills[m.editField]
+						sk.enabled = !sk.enabled
+						if sk.enabled && sk.name == "github-gitops" {
+							m.editSkillGithubInput = true
+							m.editSkillGithubIdx = m.editField
+							ti := textinput.New()
+							ti.Placeholder = "owner/repo (e.g. myorg/platform)"
+							ti.CharLimit = 128
+							ti.Width = 50
+							if repo, ok := sk.params["repo"]; ok {
+								ti.SetValue(repo)
+							}
+							ti.Focus()
+							m.editSkillGithubTI = ti
+						}
 					}
 				} else if m.editTab == 3 {
 					if m.editField >= 0 && m.editField < len(m.editChannels) {
@@ -2667,6 +2826,18 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 								m.editChannelTokenTI.EchoMode = textinput.EchoPassword
 								m.editChannelTokenTI.Focus()
 							}
+						}
+					}
+				}
+				return m, nil
+			case "a":
+				// Start (or restart) GitHub OAuth device flow for github-gitops skill
+				if m.editTab == 2 {
+					for _, sk := range m.editSkills {
+						if sk.enabled && sk.name == "github-gitops" {
+							m.githubAuthActive = true
+							m.githubAuthStatus = "checking"
+							return m, checkAndStartGithubAuthCmd()
 						}
 					}
 				}
@@ -2806,10 +2977,9 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				case tea.KeyEsc:
 					// During WhatsApp QR step, Esc skips pairing but keeps results
 					if m.wizard.step == wizStepWhatsAppQR {
-						qrNS := m.wizard.onboardNamespace(m.namespace)
 						m.wizard.step = wizStepDone
 						m.wizard.resultMsgs = append(m.wizard.resultMsgs,
-							tuiDimStyle.Render("⚠ WhatsApp QR pairing skipped — scan later via: kubectl logs -l sympozium.ai/channel=whatsapp,sympozium.ai/instance="+m.wizard.instanceName+" -n "+qrNS))
+							tuiDimStyle.Render("⚠ WhatsApp QR pairing skipped — scan later via: kubectl logs -l sympozium.ai/channel=whatsapp,sympozium.ai/instance="+m.wizard.instanceName+" -n "+m.namespace))
 						m.input.Placeholder = "Press Enter to return"
 						return m, nil
 					}
@@ -3200,14 +3370,13 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			// Parse result messages from output (newline-separated).
 			m.wizard.resultMsgs = strings.Split(msg.output, "\n")
-			m.namespace = m.wizard.onboardNamespace(m.namespace)
 
 			// If WhatsApp channel, transition to QR pairing step
 			if m.wizard.channelType == "whatsapp" {
 				m.wizard.step = wizStepWhatsAppQR
 				m.wizard.qrStatus = "waiting"
 				m.input.Placeholder = "Waiting for WhatsApp pod... (press Esc to skip)"
-				return m, pollWhatsAppQRCmd(m.wizard.onboardNamespace(m.namespace), m.wizard.instanceName)
+				return m, pollWhatsAppQRCmd(m.namespace, m.wizard.instanceName)
 			}
 
 			m.wizard.step = wizStepDone
@@ -3222,19 +3391,9 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.input.Placeholder = "Press Enter to return"
 				return m, nil
 			}
+			// tuiPersonaApply already set resultMsgs and step on the wizardState.
+			// But the step mutation happened in the goroutine — re-apply here.
 			m.wizard.resultMsgs = strings.Split(msg.output, "\n")
-			if m.wizard.personaHasEnabledChannel("whatsapp") {
-				m.wizard.instanceName = m.firstPersonaInstanceName(m.wizard.personaPackName)
-				if m.wizard.instanceName == "" {
-					m.wizard.instanceName = m.wizard.personaPackName
-				}
-				m.wizard.step = wizStepWhatsAppQR
-				m.wizard.qrStatus = "waiting"
-				m.wizard.resultMsgs = append(m.wizard.resultMsgs,
-					tuiDimStyle.Render(fmt.Sprintf("Showing WhatsApp pairing for %s", m.wizard.instanceName)))
-				m.input.Placeholder = "Waiting for WhatsApp pod... (press Esc to skip)"
-				return m, pollWhatsAppQRCmd(m.namespace, m.wizard.instanceName)
-			}
 			m.wizard.step = wizStepPersonaDone
 			m.input.Placeholder = "Press Enter to switch to Instances"
 			return m, nil
@@ -3252,7 +3411,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.wizard.qrErr = msg.err.Error()
 				m.wizard.qrStatus = "error"
 				// Retry despite error
-				return m, pollWhatsAppQRCmd(m.wizard.onboardNamespace(m.namespace), m.wizard.instanceName)
+				return m, pollWhatsAppQRCmd(m.namespace, m.wizard.instanceName)
 			}
 			m.wizard.qrStatus = msg.status
 			if len(msg.qrLines) > 0 {
@@ -3267,13 +3426,52 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			// Keep polling
-			return m, pollWhatsAppQRCmd(m.wizard.onboardNamespace(m.namespace), m.wizard.instanceName)
+			return m, pollWhatsAppQRCmd(m.namespace, m.wizard.instanceName)
 		}
 		return m, nil
 
 	case suggestionsMsg:
 		m.suggestions = msg.items
 		m.suggestIdx = 0
+		return m, nil
+
+	case githubAuthDeviceCodeMsg:
+		if msg.err != nil {
+			m.githubAuthStatus = "error"
+			m.githubAuthMessage = msg.err.Error()
+			return m, nil
+		}
+		m.githubAuthDeviceCode = msg.deviceCode
+		m.githubAuthUserCode = msg.userCode
+		m.githubAuthVerifyURL = msg.verifyURL
+		m.githubAuthInterval = msg.interval
+		m.githubAuthStatus = "pending"
+		m.githubAuthMessage = ""
+		return m, pollGithubTokenCmd(msg.deviceCode, msg.interval)
+
+	case githubAuthPollMsg:
+		if msg.err != nil {
+			m.githubAuthStatus = "error"
+			m.githubAuthMessage = msg.err.Error()
+			return m, nil
+		}
+		if msg.done {
+			return m, writeGithubTokenCmd(msg.token)
+		}
+		// Still pending — keep polling
+		return m, pollGithubTokenCmd(m.githubAuthDeviceCode, m.githubAuthInterval)
+
+	case githubAuthTokenWrittenMsg:
+		if msg.err != nil {
+			m.githubAuthStatus = "error"
+			m.githubAuthMessage = "failed to save token: " + msg.err.Error()
+		} else if msg.alreadyDone {
+			m.githubAuthStatus = "done"
+			m.githubAuthMessage = "GitHub already authenticated"
+		} else {
+			m.githubAuthStatus = "done"
+			m.githubAuthMessage = "GitHub authenticated — token saved to cluster"
+		}
 		return m, nil
 
 	case tickMsg:
@@ -3706,11 +3904,19 @@ func (m tuiModel) handleRowEdit() (tea.Model, tea.Cmd) {
 			}
 		}
 		m.editSkills = nil
+		// Build map of existing params per skill for pre-population.
+		skillParams := make(map[string]map[string]string)
+		for _, sr := range inst.Spec.Skills {
+			if sr.SkillPackRef != "" && len(sr.Params) > 0 {
+				skillParams[sr.SkillPackRef] = sr.Params
+			}
+		}
 		for _, sp := range m.skills {
 			m.editSkills = append(m.editSkills, editSkillItem{
 				name:     sp.Name,
 				enabled:  enabledSkills[sp.Name],
 				category: sp.Spec.Category,
+				params:   skillParams[sp.Name],
 			})
 		}
 		// Populate channels tab: list all available channel types, mark those bound.
@@ -3770,9 +3976,13 @@ func (m tuiModel) handleRowEdit() (tea.Model, tea.Cmd) {
 					}
 				}
 				enabledSkills := make(map[string]bool)
+				skillParams := make(map[string]map[string]string)
 				for _, sr := range inst.Spec.Skills {
 					if sr.SkillPackRef != "" {
 						enabledSkills[sr.SkillPackRef] = true
+						if len(sr.Params) > 0 {
+							skillParams[sr.SkillPackRef] = sr.Params
+						}
 					}
 				}
 				for _, sp := range m.skills {
@@ -3780,6 +3990,7 @@ func (m tuiModel) handleRowEdit() (tea.Model, tea.Cmd) {
 						name:     sp.Name,
 						enabled:  enabledSkills[sp.Name],
 						category: sp.Spec.Category,
+						params:   skillParams[sp.Name],
 					})
 				}
 				boundChannels := make(map[string]string)
@@ -3890,13 +4101,17 @@ func (m tuiModel) applyEditModal() tea.Cmd {
 				SystemPrompt: mem.systemPrompt,
 			}
 
-			// Apply skill toggles to instance.
+			// Apply skill toggles to instance (include per-skill Params).
 			var skillRefs []sympoziumv1alpha1.SkillRef
 			for _, sk := range skills {
 				if sk.enabled {
-					skillRefs = append(skillRefs, sympoziumv1alpha1.SkillRef{
+					ref := sympoziumv1alpha1.SkillRef{
 						SkillPackRef: sk.name,
-					})
+					}
+					if len(sk.params) > 0 {
+						ref.Params = sk.params
+					}
+					skillRefs = append(skillRefs, ref)
 				}
 			}
 			inst.Spec.Skills = skillRefs
@@ -4025,16 +4240,6 @@ func (m tuiModel) applyPersonaPackEdit(packName string) tea.Cmd {
 			}
 		}
 		pack.Spec.ExcludePersonas = excludes
-
-		// If every persona is disabled, treat as pack disable and clean up auth secrets.
-		if len(personas) > 0 && len(excludes) == len(personas) {
-			pack.Spec.Enabled = false
-			if err := k8sClient.Update(ctx, &pack); err != nil {
-				return cmdResultMsg{err: fmt.Errorf("update PersonaPack %q: %w", packName, err)}
-			}
-			result := tuiSuccessStyle.Render(fmt.Sprintf("✓ PersonaPack %s disabled: 0/%d personas enabled", packName, len(personas)))
-			return cmdResultMsg{output: result}
-		}
 
 		if err := k8sClient.Update(ctx, &pack); err != nil {
 			return cmdResultMsg{err: fmt.Errorf("update PersonaPack %q: %w", packName, err)}
@@ -4668,16 +4873,6 @@ func (m tuiModel) startPersonaWizard(packName string) (tea.Model, tea.Cmd) {
 	// Pack specified — verify it exists and jump to provider.
 	m.wizard.step = wizStepPersonaPick
 	return m.advanceWizard(packName)
-}
-
-func (m tuiModel) firstPersonaInstanceName(packName string) string {
-	for _, pack := range m.personaPacks {
-		if pack.Name != packName || len(pack.Spec.Personas) == 0 {
-			continue
-		}
-		return fmt.Sprintf("%s-%s", packName, pack.Spec.Personas[0].Name)
-	}
-	return ""
 }
 
 // ── View ─────────────────────────────────────────────────────────────────────
@@ -6344,13 +6539,50 @@ func (m tuiModel) renderEditModal(base string) string {
 				if sk.category != "" {
 					cat = " (" + sk.category + ")"
 				}
+				// Show configured params inline (e.g. repo for github-gitops).
+				extra := ""
+				if sk.enabled && sk.name == "github-gitops" {
+					if repo, ok := sk.params["repo"]; ok && repo != "" {
+						extra = tuiDimStyle.Render(" → " + repo)
+					} else {
+						extra = tuiDimStyle.Render(" (no repo set — press enter to configure)")
+					}
+				}
 				lbl := fmt.Sprintf("  %s %s%s", tog, sk.name, cat)
 				if m.editField == i {
-					lbl = highlight.Render(fmt.Sprintf("▸ %s %s%s", tog, sk.name, cat))
+					lbl = highlight.Render(fmt.Sprintf("▸ %s %s%s", tog, sk.name, cat)) + extra
 				} else {
-					lbl = value.Render(lbl)
+					lbl = value.Render(lbl) + extra
 				}
 				content.WriteString("  " + lbl + "\n")
+			}
+			// GitHub auth status — shown below the skill list when active
+			if m.githubAuthActive {
+				content.WriteString("\n")
+				switch m.githubAuthStatus {
+				case "checking":
+					content.WriteString(tuiDimStyle.Render("  Checking GitHub auth status…") + "\n")
+				case "pending":
+					content.WriteString(tuiSuccessStyle.Render("  ┌─ GitHub Authorization Required ──────────────────┐") + "\n")
+					content.WriteString(tuiSuccessStyle.Render(fmt.Sprintf("  │  Enter code:  %-35s│", m.githubAuthUserCode)) + "\n")
+					content.WriteString(tuiSuccessStyle.Render(fmt.Sprintf("  │  at: %-44s│", m.githubAuthVerifyURL)) + "\n")
+					content.WriteString(tuiSuccessStyle.Render("  │  Waiting for authorization…                     │") + "\n")
+					content.WriteString(tuiSuccessStyle.Render("  └──────────────────────────────────────────────────┘") + "\n")
+				case "done":
+					content.WriteString(tuiSuccessStyle.Render("  ✓ "+m.githubAuthMessage) + "\n")
+				case "error":
+					content.WriteString(tuiErrorStyle.Render("  ✗ "+m.githubAuthMessage) + "\n")
+					content.WriteString(tuiDimStyle.Render("  Press 'a' to retry auth") + "\n")
+				}
+			} else {
+				// Nudge user if github-gitops is enabled but no auth attempted yet
+				for _, sk := range m.editSkills {
+					if sk.enabled && sk.name == "github-gitops" {
+						content.WriteString("\n")
+						content.WriteString(tuiDimStyle.Render("  ⚠  GitHub not yet authenticated — press 'a' to authorize") + "\n")
+						break
+					}
+				}
 			}
 		}
 	} else if m.editTab == 3 {
@@ -6392,6 +6624,15 @@ func (m tuiModel) renderEditModal(base string) string {
 		content.WriteString("  " + tiView)
 		content.WriteString("\n")
 		content.WriteString(tuiDimStyle.Render("  enter confirm · esc cancel"))
+	} else if m.editSkillGithubInput {
+		content.WriteString("\n")
+		content.WriteString(tuiModalTitleStyle.Render("  GitHub Repository"))
+		content.WriteString("\n")
+		content.WriteString(tuiDimStyle.Render("  Enter the GitHub repository the agent should target:") + "\n")
+		tiView := m.editSkillGithubTI.View()
+		content.WriteString("  " + tiView)
+		content.WriteString("\n")
+		content.WriteString(tuiDimStyle.Render("  enter confirm · esc cancel"))
 	} else if m.editChannelTokenInput {
 		chName := ""
 		if m.editChannelTokenIdx >= 0 && m.editChannelTokenIdx < len(m.editChannels) {
@@ -6411,7 +6652,11 @@ func (m tuiModel) renderEditModal(base string) string {
 		content.WriteString("\n")
 		content.WriteString(tuiDimStyle.Render("  tab switch tabs · ↑↓ navigate · enter toggle/edit"))
 		content.WriteString("\n")
-		content.WriteString(tuiDimStyle.Render("  ←→ cycle enums · type text fields · ctrl+s apply · esc cancel"))
+		if m.editTab == 2 {
+			content.WriteString(tuiDimStyle.Render("  ←→ cycle enums · type text fields · a auth github · ctrl+s apply · esc cancel"))
+		} else {
+			content.WriteString(tuiDimStyle.Render("  ←→ cycle enums · type text fields · ctrl+s apply · esc cancel"))
+		}
 	}
 
 	modal := tuiModalBorderStyle.Render(content.String())
@@ -6832,9 +7077,6 @@ func tuiDisableAllPackPersonas(ns, packName string, personaNames []string) (stri
 	for name := range excluded {
 		pack.Spec.ExcludePersonas = append(pack.Spec.ExcludePersonas, name)
 	}
-	// Mark pack disabled; controller will clean up instances/schedules first,
-	// then remove managed auth secrets.
-	pack.Spec.Enabled = false
 
 	if err := k8sClient.Update(ctx, &pack); err != nil {
 		return "", fmt.Errorf("update PersonaPack %q: %w", packName, err)
@@ -7083,34 +7325,6 @@ func (m tuiModel) advanceWizard(val string) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		w.err = ""
-		w.namespaceName = m.namespace
-		w.namespaceList = nil
-		for _, ns := range fetchNamespaceSuggestions("") {
-			w.namespaceList = append(w.namespaceList, ns.text)
-		}
-		sort.Strings(w.namespaceList)
-		w.step = wizStepNamespace
-		m.input.Placeholder = fmt.Sprintf("Namespace [name or number] (default: %s)", w.namespaceName)
-		return m, nil
-
-	case wizStepNamespace:
-		if val == "" {
-			val = w.onboardNamespace(m.namespace)
-		}
-		if idx, err := strconv.Atoi(val); err == nil && idx >= 1 && idx <= len(w.namespaceList) {
-			val = w.namespaceList[idx-1]
-		}
-		val = strings.TrimSpace(val)
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		defer cancel()
-		var ns corev1.Namespace
-		if err := k8sClient.Get(ctx, types.NamespacedName{Name: val}, &ns); err != nil {
-			w.err = fmt.Sprintf("namespace %q not found or inaccessible", val)
-			m.input.Placeholder = fmt.Sprintf("Namespace [name or number] (default: %s)", w.onboardNamespace(m.namespace))
-			return m, nil
-		}
-		w.err = ""
-		w.namespaceName = val
 		w.step = wizStepInstanceName
 		m.input.Placeholder = "Instance name (default: my-agent)"
 		return m, nil
@@ -7261,30 +7475,40 @@ func (m tuiModel) advanceWizard(val string) (tea.Model, tea.Cmd) {
 		case "1":
 			w.channelType = "telegram"
 			w.channelTokenKey = "TELEGRAM_BOT_TOKEN"
+			w.step = wizStepChannelToken
+			m.input.Placeholder = "Telegram Bot Token"
+			return m, nil
 		case "2":
 			w.channelType = "slack"
 			w.channelTokenKey = "SLACK_BOT_TOKEN"
+			w.step = wizStepChannelToken
+			m.input.Placeholder = "Slack Bot OAuth Token"
+			return m, nil
 		case "3":
 			w.channelType = "discord"
 			w.channelTokenKey = "DISCORD_BOT_TOKEN"
+			w.step = wizStepChannelToken
+			m.input.Placeholder = "Discord Bot Token"
+			return m, nil
 		case "4":
 			w.channelType = "whatsapp"
 			w.channelTokenKey = "" // WhatsApp uses QR pairing, no token needed
+			// Skip token step — go straight to policy
+			w.step = wizStepPolicy
+			m.input.Placeholder = "Apply default policy? [Y/n]"
+			return m, nil
 		default:
 			w.channelType = ""
-			w.channelTokenKey = ""
 		}
 		w.step = wizStepPolicy
 		m.input.Placeholder = "Apply default policy? [Y/n]"
 		return m, nil
 
-	case wizStepChannelActionToken:
+	case wizStepChannelToken:
 		w.channelToken = val
-		w.step = wizStepApplying
-		onboardNS := w.onboardNamespace(m.namespace)
-		return m, m.asyncCmd(func() (string, error) {
-			return tuiOnboardApply(onboardNS, w)
-		})
+		w.step = wizStepPolicy
+		m.input.Placeholder = "Apply default policy? [Y/n]"
+		return m, nil
 
 	case wizStepPolicy:
 		v := strings.ToLower(val)
@@ -7328,30 +7552,17 @@ func (m tuiModel) advanceWizard(val string) (tea.Model, tea.Cmd) {
 			m.addLog(tuiDimStyle.Render("Onboard wizard cancelled"))
 			return m, nil
 		}
-		// Channel-specific action happens at the end, right before apply.
-		if w.channelType != "" && w.channelType != "whatsapp" && w.channelTokenKey != "" {
-			w.step = wizStepChannelActionToken
-			m.input.Placeholder = fmt.Sprintf("%s token (%s, Enter to skip)", w.channelType, w.channelTokenKey)
-			return m, nil
-		}
 		w.step = wizStepApplying
-		onboardNS := w.onboardNamespace(m.namespace)
 		return m, m.asyncCmd(func() (string, error) {
-			return tuiOnboardApply(onboardNS, w)
+			return tuiOnboardApply(m.namespace, w)
 		})
 
 	case wizStepDone:
 		// User pressed Enter on final screen — close wizard.
-		personaMode := w.personaMode
 		w.reset()
 		m.inputFocused = false
 		m.input.Blur()
 		m.input.Placeholder = "Type / for commands or press ? for help..."
-		if personaMode {
-			m.activeView = viewInstances
-			m.selectedRow = 0
-			m.tableScroll = 0
-		}
 		return m, refreshDataCmd()
 
 	// ── Persona Wizard Steps ─────────────────────────────────────────────
@@ -7506,10 +7717,9 @@ func (m tuiModel) advanceWizard(val string) (tea.Model, tea.Cmd) {
 	case wizStepPersonaChannels:
 		val = strings.TrimSpace(val)
 		if val == "" {
-			// Done selecting channels — move to confirmation.
-			w.step = wizStepPersonaConfirm
-			m.input.Placeholder = "Proceed? [Y/n]"
-			return m, nil
+			// Done selecting channels — collect tokens for enabled channels.
+			w.personaChannelIdx = 0
+			return m.advancePersonaChannelToken()
 		}
 		// Toggle a channel by number.
 		if idx, err := strconv.Atoi(val); err == nil && idx >= 1 && idx <= len(w.personaChannels) {
@@ -7525,7 +7735,7 @@ func (m tuiModel) advanceWizard(val string) (tea.Model, tea.Cmd) {
 			w.personaChannels[w.personaChannelIdx].token = val
 		}
 		w.personaChannelIdx++
-		return m.advancePersonaChannelAction()
+		return m.advancePersonaChannelToken()
 
 	case wizStepPersonaConfirm:
 		v := strings.ToLower(val)
@@ -7537,8 +7747,11 @@ func (m tuiModel) advanceWizard(val string) (tea.Model, tea.Cmd) {
 			m.addLog(tuiDimStyle.Render("Persona wizard cancelled"))
 			return m, nil
 		}
-		w.personaChannelIdx = 0
-		return m.advancePersonaChannelAction()
+		w.step = wizStepPersonaApplying
+		ns := m.namespace
+		return m, m.asyncCmd(func() (string, error) {
+			return tuiPersonaApply(ns, w)
+		})
 
 	case wizStepPersonaDone:
 		w.reset()
@@ -7555,9 +7768,9 @@ func (m tuiModel) advanceWizard(val string) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// advancePersonaChannelAction runs post-confirm channel-specific actions.
-// It prompts for required channel tokens, then applies the PersonaPack.
-func (m tuiModel) advancePersonaChannelAction() (tea.Model, tea.Cmd) {
+// advancePersonaChannelToken skips to the next enabled channel that needs
+// a token, or advances to confirm once all tokens are collected.
+func (m tuiModel) advancePersonaChannelToken() (tea.Model, tea.Cmd) {
 	w := &m.wizard
 	for w.personaChannelIdx < len(w.personaChannels) {
 		ch := w.personaChannels[w.personaChannelIdx]
@@ -7565,17 +7778,15 @@ func (m tuiModel) advancePersonaChannelAction() (tea.Model, tea.Cmd) {
 			// This channel needs a token.
 			w.step = wizStepPersonaChannelToken
 			m.input.SetValue("")
-			m.input.Placeholder = fmt.Sprintf("%s token (%s, Enter to skip)", ch.chType, ch.tokenKey)
+			m.input.Placeholder = fmt.Sprintf("%s token (%s)", ch.chType, ch.tokenKey)
 			return m, nil
 		}
 		w.personaChannelIdx++
 	}
-	// All channel actions complete — apply.
-	w.step = wizStepPersonaApplying
-	ns := m.namespace
-	return m, m.asyncCmd(func() (string, error) {
-		return tuiPersonaApply(ns, w)
-	})
+	// All tokens collected — proceed to confirm.
+	w.step = wizStepPersonaConfirm
+	m.input.Placeholder = "Proceed? [Y/n]"
+	return m, nil
 }
 
 // renderWizardPanel renders the full wizard overlay panel.
@@ -7590,8 +7801,8 @@ func (m tuiModel) renderWizardPanel(h int) string {
 	hintStyle := tuiDimStyle
 	stepStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#FAB387")).Bold(true)
 
-	// Persona wizard has its own renderer, except for shared QR/done screens.
-	if w.personaMode && w.step != wizStepWhatsAppQR && w.step != wizStepDone {
+	// Persona wizard has its own renderer.
+	if w.personaMode {
 		return m.renderPersonaWizardPanel(h, titleStyle, labelStyle, valueStyle, menuStyle, menuNumStyle, hintStyle, stepStyle)
 	}
 
@@ -7609,10 +7820,6 @@ func (m tuiModel) renderWizardPanel(h int) string {
 		lines = append(lines, "")
 	}
 
-	if w.step > wizStepNamespace {
-		stepNum = 2
-		lines = append(lines, hintStyle.Render("  Namespace: ")+valueStyle.Render(w.onboardNamespace(m.namespace)))
-	}
 	if w.step > wizStepInstanceName {
 		stepNum = 2
 		lines = append(lines, hintStyle.Render("  Instance: ")+valueStyle.Render(w.instanceName))
@@ -7631,7 +7838,7 @@ func (m tuiModel) renderWizardPanel(h int) string {
 			lines = append(lines, hintStyle.Render("  API Key:  ")+valueStyle.Render("••••••••"))
 		}
 	}
-	if w.step > wizStepChannel {
+	if w.step > wizStepChannelToken && w.step > wizStepChannel {
 		stepNum = 4
 		if w.channelType != "" {
 			lines = append(lines, hintStyle.Render("  Channel:  ")+valueStyle.Render(w.channelType))
@@ -7663,37 +7870,16 @@ func (m tuiModel) renderWizardPanel(h int) string {
 	// Show current step prompt.
 	switch w.step {
 	case wizStepCheckCluster:
-		lines = append(lines, stepStyle.Render("  📋 Preflight — Checking cluster..."))
-
-	case wizStepNamespace:
-		lines = append(lines, stepStyle.Render("  📋 Step 1/7 — Choose Namespace"))
-		lines = append(lines, menuStyle.Render("  Select where onboarding resources should be created."))
-		lines = append(lines, hintStyle.Render("  Current: ")+valueStyle.Render(m.namespace))
-		if len(w.namespaceList) > 0 {
-			lines = append(lines, "")
-			show := len(w.namespaceList)
-			if show > 12 {
-				show = 12
-			}
-			for i := 0; i < show; i++ {
-				ns := w.namespaceList[i]
-				lines = append(lines, menuNumStyle.Render(fmt.Sprintf("  %d)", i+1))+menuStyle.Render(" "+ns))
-			}
-			if len(w.namespaceList) > show {
-				lines = append(lines, hintStyle.Render(fmt.Sprintf("  ...and %d more", len(w.namespaceList)-show)))
-			}
-		}
-		lines = append(lines, "")
-		lines = append(lines, labelStyle.Render("  Enter namespace name or number:"))
+		lines = append(lines, stepStyle.Render("  📋 Step 1/6 — Checking cluster..."))
 
 	case wizStepInstanceName:
-		lines = append(lines, stepStyle.Render("  📋 Step 2/7 — Create your SympoziumInstance"))
+		lines = append(lines, stepStyle.Render("  📋 Step 1/6 — Create your SympoziumInstance"))
 		lines = append(lines, menuStyle.Render("  An instance represents you (or a tenant) in the system."))
 		lines = append(lines, "")
 		lines = append(lines, labelStyle.Render("  Enter instance name:"))
 
 	case wizStepProvider:
-		lines = append(lines, stepStyle.Render("  📋 Step 3/7 — AI Provider"))
+		lines = append(lines, stepStyle.Render("  📋 Step 2/6 — AI Provider"))
 		lines = append(lines, menuStyle.Render("  Which model provider do you want to use?"))
 		lines = append(lines, "")
 		lines = append(lines, menuNumStyle.Render("  1)")+menuStyle.Render(" OpenAI"))
@@ -7703,23 +7889,22 @@ func (m tuiModel) renderWizardPanel(h int) string {
 		lines = append(lines, menuNumStyle.Render("  5)")+menuStyle.Render(" Other / OpenAI-compatible"))
 
 	case wizStepBaseURL:
-		lines = append(lines, stepStyle.Render("  📋 Step 3/7 — AI Provider (continued)"))
+		lines = append(lines, stepStyle.Render("  📋 Step 2/6 — AI Provider (continued)"))
 		lines = append(lines, labelStyle.Render("  Enter base URL:"))
 
 	case wizStepAPIKey:
-		lines = append(lines, stepStyle.Render("  📋 Step 3/7 — AI Provider (continued)"))
+		lines = append(lines, stepStyle.Render("  📋 Step 2/6 — AI Provider (continued)"))
 		lines = append(lines, labelStyle.Render(fmt.Sprintf("  Paste your %s:", w.secretEnvKey)))
 		envVal := os.Getenv(w.secretEnvKey)
 		if envVal != "" {
 			lines = append(lines, hintStyle.Render(fmt.Sprintf("  Press Enter to use %s from environment.", w.secretEnvKey)))
 		} else {
-			lines = append(lines, hintStyle.Render(fmt.Sprintf("  Press Enter to use existing secret %s-%s-key in this namespace (if present).", w.instanceName, w.providerName)))
+			lines = append(lines, hintStyle.Render("  Press Enter to skip — you can add it later."))
 		}
-		lines = append(lines, hintStyle.Render("  (a provider secret must exist before onboarding can complete)"))
 		lines = append(lines, hintStyle.Render("  (providing a key lets us fetch your available models)"))
 
 	case wizStepModel:
-		lines = append(lines, stepStyle.Render("  📋 Step 3/7 — Select Model"))
+		lines = append(lines, stepStyle.Render("  📋 Step 2/6 — Select Model"))
 		if len(w.fetchedModels) > 0 {
 			lines = append(lines, menuStyle.Render(fmt.Sprintf("  Found %d models from your %s account:", len(w.fetchedModels), w.providerName)))
 			lines = append(lines, "")
@@ -7784,7 +7969,7 @@ func (m tuiModel) renderWizardPanel(h int) string {
 		}
 
 	case wizStepChannel:
-		lines = append(lines, stepStyle.Render("  📋 Step 4/7 — Connect a Channel (optional)"))
+		lines = append(lines, stepStyle.Render("  📋 Step 3/6 — Connect a Channel (optional)"))
 		lines = append(lines, menuStyle.Render("  Channels let your agent receive messages from external platforms."))
 		lines = append(lines, "")
 		lines = append(lines, menuNumStyle.Render("  1)")+menuStyle.Render(" Telegram  — easiest, just talk to @BotFather"))
@@ -7793,18 +7978,17 @@ func (m tuiModel) renderWizardPanel(h int) string {
 		lines = append(lines, menuNumStyle.Render("  4)")+menuStyle.Render(" WhatsApp  — scan a QR code to link"))
 		lines = append(lines, menuNumStyle.Render("  5)")+menuStyle.Render(" Skip — I'll add a channel later"))
 
-	case wizStepChannelActionToken:
-		lines = append(lines, stepStyle.Render("  📋 Finalize Channel Setup"))
+	case wizStepChannelToken:
+		lines = append(lines, stepStyle.Render("  📋 Step 3/6 — Connect a Channel (continued)"))
 		lines = append(lines, labelStyle.Render(fmt.Sprintf("  Paste your %s token:", w.channelType)))
-		lines = append(lines, hintStyle.Render("  Press Enter to skip and configure it later."))
 
 	case wizStepPolicy:
-		lines = append(lines, stepStyle.Render("  📋 Step 5/7 — Default Policy"))
+		lines = append(lines, stepStyle.Render("  📋 Step 4/6 — Default Policy"))
 		lines = append(lines, menuStyle.Render("  A SympoziumPolicy controls what tools agents can use, sandboxing, etc."))
 		lines = append(lines, labelStyle.Render("  Apply the default policy?"))
 
 	case wizStepHeartbeat:
-		lines = append(lines, stepStyle.Render("  📋 Step 6/7 — Heartbeat Schedule"))
+		lines = append(lines, stepStyle.Render("  📋 Step 5/6 — Heartbeat Schedule"))
 		lines = append(lines, menuStyle.Render("  A heartbeat lets your agent wake up periodically to review memory"))
 		lines = append(lines, menuStyle.Render("  and note anything that needs attention."))
 		lines = append(lines, "")
@@ -7815,13 +7999,13 @@ func (m tuiModel) renderWizardPanel(h int) string {
 		lines = append(lines, menuNumStyle.Render("  5)")+menuStyle.Render(" Disabled — no heartbeat"))
 
 	case wizStepConfirm:
-		lines = append(lines, stepStyle.Render("  📋 Step 7/7 — Confirm"))
+		lines = append(lines, stepStyle.Render("  📋 Step 6/6 — Confirm"))
 		lines = append(lines, "")
 		lines = append(lines, tuiSepStyle.Render("  "+strings.Repeat("━", 50)))
 		lines = append(lines, labelStyle.Render("  Summary"))
 		lines = append(lines, tuiSepStyle.Render("  "+strings.Repeat("━", 50)))
 		lines = append(lines, hintStyle.Render("  Instance:  ")+valueStyle.Render(w.instanceName)+
-			hintStyle.Render("  (namespace: ")+valueStyle.Render(w.onboardNamespace(m.namespace))+hintStyle.Render(")"))
+			hintStyle.Render("  (namespace: ")+valueStyle.Render(m.namespace)+hintStyle.Render(")"))
 		lines = append(lines, hintStyle.Render("  Provider:  ")+valueStyle.Render(w.providerName)+
 			hintStyle.Render("  (model: ")+valueStyle.Render(w.modelName)+hintStyle.Render(")"))
 		if w.baseURL != "" {
@@ -8047,7 +8231,7 @@ func (m tuiModel) renderPersonaWizardPanel(h int,
 	case wizStepPersonaChannelToken:
 		if w.personaChannelIdx < len(w.personaChannels) {
 			ch := w.personaChannels[w.personaChannelIdx]
-			lines = append(lines, stepStyle.Render(fmt.Sprintf("  Step 6b: Finalize %s", strings.Title(ch.chType))))
+			lines = append(lines, stepStyle.Render(fmt.Sprintf("  Step 5b: %s Token", strings.Title(ch.chType))))
 			lines = append(lines, "")
 			lines = append(lines, hintStyle.Render(fmt.Sprintf("  Paste %s or press Enter to skip.", ch.tokenKey)))
 		}
@@ -8320,14 +8504,7 @@ func tuiPersonaApply(ns string, w *wizardState) (string, error) {
 			_ = k8sClient.Delete(ctx, existing)
 		}
 		secret := &corev1.Secret{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      secretName,
-				Namespace: ns,
-				Labels: map[string]string{
-					"app.kubernetes.io/managed-by": "sympozium",
-					"sympozium.ai/persona-pack":    w.personaPackName,
-				},
-			},
+			ObjectMeta: metav1.ObjectMeta{Name: secretName, Namespace: ns},
 			StringData: map[string]string{w.secretEnvKey: w.apiKey},
 		}
 		if err := k8sClient.Create(ctx, secret); err != nil {
@@ -8424,7 +8601,6 @@ func tuiOnboardApply(ns string, w *wizardState) (string, error) {
 	policyName := "default-policy"
 
 	// 1. Create AI provider secret.
-	authSecretName := ""
 	if w.apiKey != "" {
 		// Delete existing if present.
 		existing := &corev1.Secret{}
@@ -8438,17 +8614,10 @@ func tuiOnboardApply(ns string, w *wizardState) (string, error) {
 		if err := k8sClient.Create(ctx, secret); err != nil {
 			return "", fmt.Errorf("create provider secret: %w", err)
 		}
-		authSecretName = providerSecretName
 		msgs = append(msgs, tuiSuccessStyle.Render(fmt.Sprintf("✓ Created secret: %s", providerSecretName)))
 	} else if w.secretEnvKey != "" {
-		// Standalone instance onboarding must not complete without an auth secret.
-		existing := &corev1.Secret{}
-		if err := k8sClient.Get(ctx, types.NamespacedName{Name: providerSecretName, Namespace: ns}, existing); err != nil {
-			return "", fmt.Errorf("provider secret %q is required before creating instance %q; provide %s in the wizard or create secret %q in namespace %q",
-				providerSecretName, w.instanceName, w.secretEnvKey, providerSecretName, ns)
-		}
-		authSecretName = providerSecretName
-		msgs = append(msgs, tuiDimStyle.Render(fmt.Sprintf("ℹ Using existing provider secret: %s", providerSecretName)))
+		msgs = append(msgs, tuiDimStyle.Render(fmt.Sprintf("⚠ No API key — create secret later: kubectl create secret generic %s --from-literal=%s=<key>",
+			providerSecretName, w.secretEnvKey)))
 	}
 
 	// 2. Create channel secret.
@@ -8530,12 +8699,11 @@ func tuiOnboardApply(ns string, w *wizardState) (string, error) {
 		},
 	}
 
-	// Link auth for providers that require an API key.
-	if w.secretEnvKey != "" {
+	// Only add AuthRefs when an API key was provided.
+	if w.apiKey != "" {
 		inst.Spec.AuthRefs = []sympoziumv1alpha1.SecretRef{
 			{
-				Provider: w.providerName,
-				Secret:   providerSecretName,
+				Secret: providerSecretName,
 			},
 		}
 	}
@@ -8566,17 +8734,6 @@ func tuiOnboardApply(ns string, w *wizardState) (string, error) {
 		Enabled:   true,
 		MaxSizeKB: 256,
 	}
-	// Observability is on by default so runs appear in telemetry backends.
-	inst.Spec.Observability = &sympoziumv1alpha1.ObservabilitySpec{
-		Enabled:      true,
-		OTLPEndpoint: "sympozium-otel-collector.sympozium-system.svc:4317",
-		OTLPProtocol: "grpc",
-		ServiceName:  "sympozium",
-		ResourceAttributes: map[string]string{
-			"deployment.environment": "cluster",
-			"k8s.cluster.name":       "unknown",
-		},
-	}
 
 	// Try create; if it exists, update.
 	if err := k8sClient.Create(ctx, inst); err != nil {
@@ -8592,25 +8749,6 @@ func tuiOnboardApply(ns string, w *wizardState) (string, error) {
 		}
 	} else {
 		msgs = append(msgs, tuiSuccessStyle.Render(fmt.Sprintf("✓ Created SympoziumInstance: %s", w.instanceName)))
-	}
-	if w.secretEnvKey != "" {
-		if authSecretName == "" {
-			return "", fmt.Errorf("internal error: provider secret name not resolved for %q", w.instanceName)
-		}
-		linked := false
-		for _, ref := range inst.Spec.AuthRefs {
-			if ref.Secret == authSecretName {
-				linked = true
-				break
-			}
-		}
-		if !linked {
-			return "", fmt.Errorf("instance %q was created without authRef to provider secret %q", w.instanceName, authSecretName)
-		}
-		existing := &corev1.Secret{}
-		if err := k8sClient.Get(ctx, types.NamespacedName{Name: authSecretName, Namespace: ns}, existing); err != nil {
-			return "", fmt.Errorf("provider secret %q not found after instance apply: %w", authSecretName, err)
-		}
 	}
 
 	// 5. Create a heartbeat schedule (unless disabled).

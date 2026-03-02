@@ -158,6 +158,12 @@ type SkillRef struct {
 	// ConfigMapRef references a ConfigMap by name.
 	// +optional
 	ConfigMapRef string `json:"configMapRef,omitempty"`
+
+	// Params are per-instance key/value pairs injected as SKILL_<KEY> environment
+	// variables into the skill sidecar container. This allows the same SkillPack to
+	// be configured differently per SympoziumInstance (e.g. different GitHub repos).
+	// +optional
+	Params map[string]string `json:"params,omitempty"`
 }
 
 // SecretRef references a Kubernetes Secret.

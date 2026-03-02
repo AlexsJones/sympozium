@@ -73,15 +73,6 @@ export function useRun(name: string) {
   });
 }
 
-export function useRunTelemetry(name: string) {
-  return useQuery({
-    queryKey: ["runs", name, "telemetry"],
-    queryFn: () => api.runs.telemetry(name),
-    enabled: !!name,
-    refetchInterval: 5000,
-  });
-}
-
 export function useCreateRun() {
   const qc = useQueryClient();
   return useMutation({
@@ -227,32 +218,12 @@ export function useActivatePersonaPack() {
       apiKey?: string;
       model?: string;
       baseURL?: string;
-      channels?: string[];
       channelConfigs?: Record<string, string>;
       policyRef?: string;
-      skills?: string[];
     }) => api.personaPacks.patch(name, data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["personaPacks"] });
       toast.success("Persona pack updated");
-    },
-    onError: toastError,
-  });
-}
-
-export function useInstallDefaultPersonaPacks() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: api.personaPacks.installDefaults,
-    onSuccess: (result) => {
-      qc.invalidateQueries({ queryKey: ["personaPacks"] });
-      const copied = result.copied.length;
-      const existing = result.alreadyPresent.length;
-      toast.success(
-        copied > 0
-          ? `Installed ${copied} default pack${copied === 1 ? "" : "s"} (${existing} already present)`
-          : `No packs installed (${existing} already present)`
-      );
     },
     onError: toastError,
   });

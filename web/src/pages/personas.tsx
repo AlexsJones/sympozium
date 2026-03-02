@@ -3,12 +3,12 @@ import { Link } from "react-router-dom";
 import {
   usePersonaPacks,
   useActivatePersonaPack,
-  useInstallDefaultPersonaPacks,
   useSkills,
 } from "@/hooks/use-api";
 import { StatusBadge } from "@/components/status-badge";
 import { OnboardingWizard, type WizardResult } from "@/components/onboarding-wizard";
 import { WhatsAppQRModal } from "@/components/whatsapp-qr-modal";
+import { GithubAuthDialog } from "@/components/github-auth-dialog";
 import {
   Dialog,
   DialogContent,
@@ -28,7 +28,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
-import { ExternalLink, Sparkles, PowerOff, Download } from "lucide-react";
+import { ExternalLink, Sparkles, PowerOff } from "lucide-react";
 import { formatAge } from "@/lib/utils";
 import type { PersonaPack } from "@/lib/api";
 
@@ -36,13 +36,13 @@ export function PersonasPage() {
   const { data, isLoading } = usePersonaPacks();
   const { data: skillPacks } = useSkills();
   const activatePack = useActivatePersonaPack();
-  const installDefaults = useInstallDefaultPersonaPacks();
   const [search, setSearch] = useState("");
 
   // Wizard state
   const [wizardOpen, setWizardOpen] = useState(false);
   const [wizardPack, setWizardPack] = useState<PersonaPack | null>(null);
   const [whatsAppPack, setWhatsAppPack] = useState<string | null>(null);
+  const [githubAuthOpen, setGithubAuthOpen] = useState(false);
 
   // Disable confirmation state
   const [disablePack, setDisablePack] = useState<PersonaPack | null>(null);
@@ -72,16 +72,18 @@ export function PersonasPage() {
         apiKey: result.apiKey || undefined,
         model: result.model,
         baseURL: result.baseURL || undefined,
-        channels: result.channels,
         channelConfigs:
           Object.keys(result.channelConfigs).length > 0
             ? result.channelConfigs
             : undefined,
-        skills: result.skills,
       },
       {
         onSuccess: () => {
           closeWizard();
+          if (result.skills.includes("github-gitops")) {
+            setGithubAuthOpen(true);
+            return;
+          }
           if (result.channels.includes("whatsapp")) {
             setWhatsAppPack(wizardPack.metadata.name);
           }
@@ -115,15 +117,6 @@ export function PersonasPage() {
             memory automatically
           </p>
         </div>
-        <Button
-          variant="outline"
-          className="gap-2"
-          onClick={() => installDefaults.mutate()}
-          disabled={installDefaults.isPending}
-        >
-          <Download className="h-4 w-4" />
-          Install Default Packs
-        </Button>
       </div>
 
       <Input
@@ -263,6 +256,11 @@ export function PersonasPage() {
         open={!!whatsAppPack}
         onClose={() => setWhatsAppPack(null)}
         personaPackName={whatsAppPack || undefined}
+      />
+
+      <GithubAuthDialog
+        open={githubAuthOpen}
+        onClose={() => setGithubAuthOpen(false)}
       />
 
       {/* Disable confirmation dialog */}
