@@ -1,5 +1,5 @@
 import { useParams, Link } from "react-router-dom";
-import { useRun, useRunTelemetry } from "@/hooks/use-api";
+import { useRun } from "@/hooks/use-api";
 import { StatusBadge } from "@/components/status-badge";
 import {
   Card,
@@ -17,7 +17,6 @@ import { formatAge } from "@/lib/utils";
 export function RunDetailPage() {
   const { name } = useParams<{ name: string }>();
   const { data: run, isLoading } = useRun(name || "");
-  const telemetry = useRunTelemetry(name || "");
 
   if (isLoading) {
     return (
@@ -107,7 +106,6 @@ export function RunDetailPage() {
         <TabsList>
           <TabsTrigger value="task">Task</TabsTrigger>
           <TabsTrigger value="result">Result</TabsTrigger>
-          <TabsTrigger value="telemetry">Telemetry</TabsTrigger>
           <TabsTrigger value="spec">Spec</TabsTrigger>
         </TabsList>
 
@@ -139,91 +137,6 @@ export function RunDetailPage() {
                     ? "Run is still in progress…"
                     : "No result available"}
                 </p>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="telemetry">
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Trace Correlation</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {!telemetry.data ? (
-                <p className="text-sm text-muted-foreground">
-                  Telemetry not available yet. If this is a fresh run, wait a few seconds.
-                </p>
-              ) : (
-                <>
-                  <div className="space-y-2">
-                    <p className="text-xs uppercase tracking-wide text-muted-foreground">
-                      Trace IDs
-                    </p>
-                    {telemetry.data.traceIds?.length ? (
-                      <div className="space-y-1">
-                        {telemetry.data.traceIds.map((id) => (
-                          <div key={id} className="font-mono text-xs rounded bg-muted/40 p-2">
-                            {id}
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="text-sm text-muted-foreground">No trace IDs found in logs yet.</p>
-                    )}
-                  </div>
-
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    <div className="space-y-2">
-                      <p className="text-xs uppercase tracking-wide text-muted-foreground">Spans Seen</p>
-                      {telemetry.data.spanNames?.length ? (
-                        <div className="flex flex-wrap gap-2">
-                          {telemetry.data.spanNames.map((span) => (
-                            <Badge key={span} variant="secondary">{span}</Badge>
-                          ))}
-                        </div>
-                      ) : (
-                        <p className="text-sm text-muted-foreground">No collector span evidence yet.</p>
-                      )}
-                    </div>
-                    <div className="space-y-2">
-                      <p className="text-xs uppercase tracking-wide text-muted-foreground">Metrics Seen</p>
-                      {telemetry.data.metricNames?.length ? (
-                        <div className="flex flex-wrap gap-2">
-                          {telemetry.data.metricNames.map((metric) => (
-                            <Badge key={metric} variant="outline">{metric}</Badge>
-                          ))}
-                        </div>
-                      ) : (
-                        <p className="text-sm text-muted-foreground">No collector metric evidence yet.</p>
-                      )}
-                    </div>
-                  </div>
-
-                  <Separator />
-
-                  <div className="space-y-2">
-                    <p className="text-xs uppercase tracking-wide text-muted-foreground">
-                      Recent Trace Events
-                    </p>
-                    {telemetry.data.events?.length ? (
-                      <div className="max-h-80 overflow-auto space-y-2">
-                        {telemetry.data.events.slice(-25).map((ev, i) => (
-                          <div key={`${ev.time || i}-${ev.spanId || i}`} className="rounded border p-2 text-xs">
-                            <div className="flex flex-wrap items-center gap-2 text-muted-foreground">
-                              <span>{ev.time || "—"}</span>
-                              {ev.level && <Badge variant="outline">{ev.level}</Badge>}
-                              {ev.spanId && <span className="font-mono">span={ev.spanId}</span>}
-                            </div>
-                            <p className="mt-1">{ev.message || "event"}</p>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="text-sm text-muted-foreground">No structured trace events found in agent logs.</p>
-                    )}
-                  </div>
-                </>
               )}
             </CardContent>
           </Card>

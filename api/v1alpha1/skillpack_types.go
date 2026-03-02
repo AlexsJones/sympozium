@@ -113,6 +113,19 @@ type SkillSidecar struct {
 	// Use for read-only cluster-wide access (e.g. listing nodes, namespaces).
 	// +optional
 	ClusterRBAC []RBACRule `json:"clusterRBAC,omitempty"`
+
+	// SecretRef is the name of a Kubernetes Secret whose keys are mounted as files
+	// inside the sidecar at SecretMountPath. Use this to supply credentials such as
+	// API tokens that the sidecar needs at runtime (e.g. GH_TOKEN for github-gitops).
+	// The Secret must exist in sympozium-system and will be mirrored into the
+	// AgentRun namespace automatically.
+	// +optional
+	SecretRef string `json:"secretRef,omitempty"`
+
+	// SecretMountPath is the directory inside the sidecar where the Secret keys are
+	// projected as individual files. Defaults to /secrets/<SecretRef>.
+	// +optional
+	SecretMountPath string `json:"secretMountPath,omitempty"`
 }
 
 // EnvVar is a simplified environment variable (name + value).

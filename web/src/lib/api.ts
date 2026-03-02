@@ -22,7 +22,7 @@ export interface Condition {
 // ── SympoziumInstance ────────────────────────────────────────────────────────
 
 export interface SecretRef {
-  provider: string;
+  provider?: string;
   secret: string;
 }
 
@@ -50,6 +50,7 @@ export interface AgentsSpec {
 export interface SkillRef {
   skillPackRef: string;
   configMapRef?: string;
+  params?: Record<string, string>;
 }
 
 export interface ChannelStatus {
@@ -73,7 +74,6 @@ export interface SympoziumInstanceStatus {
   channels?: ChannelStatus[];
   activeAgentPods?: number;
   totalAgentRuns?: number;
-  tokenUsage?: TokenUsage;
   conditions?: Condition[];
 }
 
@@ -208,6 +208,41 @@ export interface SkillSidecar {
   mountWorkspace?: boolean;
   rbac?: RBACRule[];
   clusterRBAC?: RBACRule[];
+  secretRef?: string;
+  secretMountPath?: string;
+}
+
+export interface GithubAuthStartResponse {
+  userCode: string;
+  verificationUri: string;
+  expiresIn: number;
+  interval: number;
+  status: string;
+}
+
+export interface GithubAuthStatusResponse {
+  status: string;
+}
+
+export interface MetricBreakdown {
+  label: string;
+  value: number;
+}
+
+export interface ObservabilityMetricsResponse {
+  collectorReachable: boolean;
+  collectorError?: string;
+  collectedAt: string;
+  namespace: string;
+  agentRunsTotal: number;
+  inputTokensTotal: number;
+  outputTokensTotal: number;
+  toolInvocations: number;
+  runStatus?: Record<string, number>;
+  inputByModel?: MetricBreakdown[];
+  outputByModel?: MetricBreakdown[];
+  toolsByName?: MetricBreakdown[];
+  rawMetricNames?: string[];
 }
 
 export interface SkillPackSpec {
@@ -321,13 +356,6 @@ export interface PersonaPack {
   status?: PersonaPackStatus;
 }
 
-export interface InstallDefaultPersonaPacksResponse {
-  sourceNamespace: string;
-  targetNamespace: string;
-  copied: string[];
-  alreadyPresent: string[];
-}
-
 // ── Pod info (returned by /api/v1/pods) ──────────────────────────────────────
 
 export interface PodInfo {
@@ -338,50 +366,8 @@ export interface PodInfo {
   podIP?: string;
   startTime?: string;
   restartCount: number;
-  instanceRef?: string;
   labels?: Record<string, string>;
-}
-
-export interface RunTraceEvent {
-  time?: string;
-  level?: string;
-  message?: string;
-  traceId?: string;
-  spanId?: string;
-  fields?: Record<string, unknown>;
-}
-
-export interface RunTelemetryResponse {
-  runName: string;
-  namespace: string;
-  podName?: string;
-  phase?: string;
-  traceIds?: string[];
-  events?: RunTraceEvent[];
-  spanNames?: string[];
-  metricNames?: string[];
-  collectorSample?: string[];
-}
-
-export interface MetricBreakdown {
-  label: string;
-  value: number;
-}
-
-export interface ObservabilityMetricsResponse {
-  collectorReachable: boolean;
-  collectorError?: string;
-  collectedAt: string;
-  namespace: string;
-  agentRunsTotal: number;
-  inputTokensTotal: number;
-  outputTokensTotal: number;
-  toolInvocations: number;
-  runStatus?: Record<string, number>;
-  inputByModel?: MetricBreakdown[];
-  outputByModel?: MetricBreakdown[];
-  toolsByName?: MetricBreakdown[];
-  rawMetricNames?: string[];
+  instanceRef?: string;
 }
 
 // ── API client ───────────────────────────────────────────────────────────────
@@ -398,7 +384,12 @@ export class ApiError extends Error {
 
 const TOKEN_KEY = "sympozium_token";
 const NS_KEY = "sympozium_namespace";
-export const AUTH_UNAUTHORIZED_EVENT = "sympozium:auth-unauthorized";
+export const AUTH_UNAUTHORIZED_EVENT = "sympozium-auth-unauthorized";
+
+function handleUnauthorized() {
+  clearToken();
+  window.dispatchEvent(new Event(AUTH_UNAUTHORIZED_EVENT));
+}
 
 export function getToken(): string | null {
   return localStorage.getItem(TOKEN_KEY);
@@ -410,11 +401,6 @@ export function setToken(token: string) {
 
 export function clearToken() {
   localStorage.removeItem(TOKEN_KEY);
-}
-
-function handleUnauthorized() {
-  clearToken();
-  window.dispatchEvent(new Event(AUTH_UNAUTHORIZED_EVENT));
 }
 
 export function getNamespace(): string {
@@ -496,9 +482,8 @@ export const api = {
       secretName?: string;
       apiKey?: string;
       policyRef?: string;
-      skills?: string[];
-      channels?: string[];
-      channelConfigs?: Record<string, string>;
+      skills?: SkillRef[];
+      channels?: ChannelSpec[];
     }) =>
       apiFetch<SympoziumInstance>("/api/v1/instances", {
         method: "POST",
@@ -509,8 +494,6 @@ export const api = {
   runs: {
     list: () => apiFetch<AgentRun[]>("/api/v1/runs"),
     get: (name: string) => apiFetch<AgentRun>(`/api/v1/runs/${name}`),
-    telemetry: (name: string) =>
-      apiFetch<RunTelemetryResponse>(`/api/v1/runs/${name}/telemetry`),
     create: (data: {
       instanceRef: string;
       task: string;
@@ -572,23 +555,14 @@ export const api = {
         apiKey?: string;
         model?: string;
         baseURL?: string;
-        channels?: string[];
         channelConfigs?: Record<string, string>;
         policyRef?: string;
-        skills?: string[];
       }
     ) =>
       apiFetch<PersonaPack>(`/api/v1/personapacks/${name}`, {
         method: "PATCH",
         body: JSON.stringify(data),
       }),
-    installDefaults: () =>
-      apiFetch<InstallDefaultPersonaPacksResponse>(
-        "/api/v1/personapacks/install-defaults",
-        {
-          method: "POST",
-        }
-      ),
   },
 
   pods: {
@@ -604,5 +578,21 @@ export const api = {
   observability: {
     metrics: () =>
       apiFetch<ObservabilityMetricsResponse>("/api/v1/observability/metrics"),
+  },
+
+  githubAuth: {
+    start: () =>
+      apiFetch<GithubAuthStartResponse>("/api/v1/skills/github-gitops/auth", {
+        method: "POST",
+      }),
+    setToken: (token: string) =>
+      apiFetch<GithubAuthStatusResponse>("/api/v1/skills/github-gitops/auth/token", {
+        method: "POST",
+        body: JSON.stringify({ token }),
+      }),
+    status: () =>
+      apiFetch<GithubAuthStatusResponse>(
+        "/api/v1/skills/github-gitops/auth/status",
+      ),
   },
 };

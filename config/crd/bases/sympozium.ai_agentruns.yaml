@@ -189,6 +189,14 @@ spec:
                     configMapRef:
                       description: ConfigMapRef references a ConfigMap by name.
                       type: string
+                    params:
+                      additionalProperties:
+                        type: string
+                      description: |-
+                        Params are per-instance key/value pairs injected as SKILL_<KEY> environment
+                        variables into the skill sidecar container. This allows the same SkillPack to
+                        be configured differently per SympoziumInstance (e.g. different GitHub repos).
+                      type: object
                     skillPackRef:
                       description: SkillPackRef references a SkillPack CRD by name.
                       type: string

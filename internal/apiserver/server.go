@@ -2,16 +2,12 @@
 package apiserver
 
 import (
-	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"io/fs"
 	"net/http"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -107,6 +103,11 @@ func (s *Server) buildMux(frontendFS fs.FS, token string) http.Handler {
 	// Skill endpoints
 	mux.HandleFunc("GET /api/v1/skills", s.listSkills)
 	mux.HandleFunc("GET /api/v1/skills/{name}", s.getSkill)
+
+	// GitHub GitOps skill auth endpoints (device-flow OAuth)
+	mux.HandleFunc("POST /api/v1/skills/github-gitops/auth", s.handleGithubAuth)
+	mux.HandleFunc("POST /api/v1/skills/github-gitops/auth/token", s.handleGithubAuthToken)
+	mux.HandleFunc("GET /api/v1/skills/github-gitops/auth/status", s.handleGithubAuthStatus)
 
 	// Schedule endpoints
 	mux.HandleFunc("GET /api/v1/schedules", s.listSchedules)
@@ -215,45 +216,6 @@ func (s *Server) spaHandler(frontendFS fs.FS) http.HandlerFunc {
 
 // --- Instance handlers ---
 
-type InstanceStatusWithUsage struct {
-	sympoziumv1alpha1.SympoziumInstanceStatus `json:",inline"`
-	TokenUsage                                *sympoziumv1alpha1.TokenUsage `json:"tokenUsage,omitempty"`
-}
-
-type InstanceWithUsage struct {
-	metav1.TypeMeta   `json:",inline"`
-	metav1.ObjectMeta `json:"metadata,omitempty"`
-	Spec              sympoziumv1alpha1.SympoziumInstanceSpec `json:"spec,omitempty"`
-	Status            InstanceStatusWithUsage                 `json:"status,omitempty"`
-}
-
-func aggregateTokenUsageByInstance(runs []sympoziumv1alpha1.AgentRun) map[string]*sympoziumv1alpha1.TokenUsage {
-	agg := make(map[string]*sympoziumv1alpha1.TokenUsage)
-	for i := range runs {
-		run := runs[i]
-		if run.Spec.InstanceRef == "" || run.Status.TokenUsage == nil {
-			continue
-		}
-		curr, ok := agg[run.Spec.InstanceRef]
-		if !ok {
-			agg[run.Spec.InstanceRef] = &sympoziumv1alpha1.TokenUsage{
-				InputTokens:  run.Status.TokenUsage.InputTokens,
-				OutputTokens: run.Status.TokenUsage.OutputTokens,
-				TotalTokens:  run.Status.TokenUsage.TotalTokens,
-				ToolCalls:    run.Status.TokenUsage.ToolCalls,
-				DurationMs:   run.Status.TokenUsage.DurationMs,
-			}
-			continue
-		}
-		curr.InputTokens += run.Status.TokenUsage.InputTokens
-		curr.OutputTokens += run.Status.TokenUsage.OutputTokens
-		curr.TotalTokens += run.Status.TokenUsage.TotalTokens
-		curr.ToolCalls += run.Status.TokenUsage.ToolCalls
-		curr.DurationMs += run.Status.TokenUsage.DurationMs
-	}
-	return agg
-}
-
 func (s *Server) listInstances(w http.ResponseWriter, r *http.Request) {
 	ns := r.URL.Query().Get("namespace")
 	if ns == "" {
@@ -266,31 +228,7 @@ func (s *Server) listInstances(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var runs sympoziumv1alpha1.AgentRunList
-	if err := s.client.List(r.Context(), &runs, client.InNamespace(ns)); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	usageByInstance := aggregateTokenUsageByInstance(runs.Items)
-
-	out := make([]InstanceWithUsage, 0, len(list.Items))
-	for i := range list.Items {
-		inst := list.Items[i]
-		out = append(out, InstanceWithUsage{
-			TypeMeta:   inst.TypeMeta,
-			ObjectMeta: inst.ObjectMeta,
-			Spec:       inst.Spec,
-			Status: InstanceStatusWithUsage{
-				SympoziumInstanceStatus: inst.Status,
-				TokenUsage:              usageByInstance[inst.Name],
-			},
-		})
-	}
-	sort.SliceStable(out, func(i, j int) bool {
-		return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name)
-	})
-
-	writeJSON(w, out)
+	writeJSON(w, list.Items)
 }
 
 func (s *Server) getInstance(w http.ResponseWriter, r *http.Request) {
@@ -306,22 +244,7 @@ func (s *Server) getInstance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var runs sympoziumv1alpha1.AgentRunList
-	if err := s.client.List(r.Context(), &runs, client.InNamespace(ns)); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	usageByInstance := aggregateTokenUsageByInstance(runs.Items)
-
-	writeJSON(w, InstanceWithUsage{
-		TypeMeta:   inst.TypeMeta,
-		ObjectMeta: inst.ObjectMeta,
-		Spec:       inst.Spec,
-		Status: InstanceStatusWithUsage{
-			SympoziumInstanceStatus: inst.Status,
-			TokenUsage:              usageByInstance[name],
-		},
-	})
+	writeJSON(w, inst)
 }
 
 func (s *Server) deleteInstance(w http.ResponseWriter, r *http.Request) {
@@ -344,16 +267,15 @@ func (s *Server) deleteInstance(w http.ResponseWriter, r *http.Request) {
 
 // CreateInstanceRequest is the request body for creating a new SympoziumInstance.
 type CreateInstanceRequest struct {
-	Name           string            `json:"name"`
-	Provider       string            `json:"provider"`
-	Model          string            `json:"model"`
-	BaseURL        string            `json:"baseURL,omitempty"`
-	SecretName     string            `json:"secretName,omitempty"`
-	APIKey         string            `json:"apiKey,omitempty"`
-	PolicyRef      string            `json:"policyRef,omitempty"`
-	Skills         []string          `json:"skills,omitempty"`
-	Channels       []string          `json:"channels,omitempty"`
-	ChannelConfigs map[string]string `json:"channelConfigs,omitempty"`
+	Name       string `json:"name"`
+	Provider   string `json:"provider"`
+	Model      string `json:"model"`
+	BaseURL    string `json:"baseURL,omitempty"`
+	SecretName string `json:"secretName,omitempty"`
+	APIKey     string `json:"apiKey,omitempty"`
+	PolicyRef  string `json:"policyRef,omitempty"`
+	Skills     []sympoziumv1alpha1.SkillRef   `json:"skills,omitempty"`
+	Channels   []sympoziumv1alpha1.ChannelSpec `json:"channels,omitempty"`
 }
 
 func (s *Server) createInstance(w http.ResponseWriter, r *http.Request) {
@@ -391,7 +313,6 @@ func (s *Server) createInstance(w http.ResponseWriter, r *http.Request) {
 		inst.Spec.Agents.Default.BaseURL = req.BaseURL
 	}
 
-	// Auto-create a K8s Secret when the user provides a raw API key.
 	if req.Provider != "" && req.APIKey != "" && req.SecretName == "" {
 		req.SecretName = defaultProviderSecretName(req.Name, req.Provider)
 		envKey := providerEnvKey(req.Provider)
@@ -412,7 +333,6 @@ func (s *Server) createInstance(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if k8serrors.IsAlreadyExists(createErr) {
-			// Update the existing secret with the new key.
 			existing := &corev1.Secret{}
 			if err := s.client.Get(r.Context(), types.NamespacedName{Name: req.SecretName, Namespace: ns}, existing); err != nil {
 				http.Error(w, "failed to get existing secret: "+err.Error(), http.StatusInternalServerError)
@@ -428,6 +348,7 @@ func (s *Server) createInstance(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+
 	if req.Provider != "" && req.SecretName != "" {
 		existing := &corev1.Secret{}
 		if err := s.client.Get(r.Context(), types.NamespacedName{Name: req.SecretName, Namespace: ns}, existing); err != nil {
@@ -449,43 +370,13 @@ func (s *Server) createInstance(w http.ResponseWriter, r *http.Request) {
 	if req.PolicyRef != "" {
 		inst.Spec.PolicyRef = req.PolicyRef
 	}
+
 	if len(req.Skills) > 0 {
-		inst.Spec.Skills = make([]sympoziumv1alpha1.SkillRef, 0, len(req.Skills))
-		seen := make(map[string]struct{}, len(req.Skills))
-		for _, sk := range req.Skills {
-			sk = strings.TrimSpace(sk)
-			if sk == "" {
-				continue
-			}
-			if _, ok := seen[sk]; ok {
-				continue
-			}
-			seen[sk] = struct{}{}
-			inst.Spec.Skills = append(inst.Spec.Skills, sympoziumv1alpha1.SkillRef{
-				SkillPackRef: sk,
-			})
-		}
+		inst.Spec.Skills = req.Skills
 	}
+
 	if len(req.Channels) > 0 {
-		inst.Spec.Channels = make([]sympoziumv1alpha1.ChannelSpec, 0, len(req.Channels))
-		seen := make(map[string]struct{}, len(req.Channels))
-		for _, ch := range req.Channels {
-			ch = strings.TrimSpace(ch)
-			if ch == "" {
-				continue
-			}
-			if _, ok := seen[ch]; ok {
-				continue
-			}
-			seen[ch] = struct{}{}
-			cs := sympoziumv1alpha1.ChannelSpec{Type: ch}
-			if req.ChannelConfigs != nil {
-				if secret := strings.TrimSpace(req.ChannelConfigs[ch]); secret != "" {
-					cs.ConfigRef = sympoziumv1alpha1.SecretRef{Secret: secret}
-				}
-			}
-			inst.Spec.Channels = append(inst.Spec.Channels, cs)
-		}
+		inst.Spec.Channels = req.Channels
 	}
 
 	if err := s.client.Create(r.Context(), inst); err != nil {
@@ -528,588 +419,6 @@ func (s *Server) getRun(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, run)
-}
-
-type RunTraceEvent struct {
-	Time    string         `json:"time,omitempty"`
-	Level   string         `json:"level,omitempty"`
-	Message string         `json:"message,omitempty"`
-	TraceID string         `json:"traceId,omitempty"`
-	SpanID  string         `json:"spanId,omitempty"`
-	Fields  map[string]any `json:"fields,omitempty"`
-}
-
-type RunTelemetryResponse struct {
-	RunName         string          `json:"runName"`
-	Namespace       string          `json:"namespace"`
-	PodName         string          `json:"podName,omitempty"`
-	Phase           string          `json:"phase,omitempty"`
-	TraceIDs        []string        `json:"traceIds,omitempty"`
-	Events          []RunTraceEvent `json:"events,omitempty"`
-	SpanNames       []string        `json:"spanNames,omitempty"`
-	MetricNames     []string        `json:"metricNames,omitempty"`
-	CollectorSample []string        `json:"collectorSample,omitempty"`
-}
-
-type MetricBreakdown struct {
-	Label string  `json:"label"`
-	Value float64 `json:"value"`
-}
-
-type ObservabilityMetricsResponse struct {
-	CollectorReachable bool                 `json:"collectorReachable"`
-	CollectorError     string               `json:"collectorError,omitempty"`
-	CollectedAt        string               `json:"collectedAt"`
-	Namespace          string               `json:"namespace"`
-	AgentRunsTotal     float64              `json:"agentRunsTotal"`
-	InputTokensTotal   float64              `json:"inputTokensTotal"`
-	OutputTokensTotal  float64              `json:"outputTokensTotal"`
-	ToolInvocations    float64              `json:"toolInvocations"`
-	RunStatus          map[string]float64   `json:"runStatus,omitempty"`
-	InputByModel       []MetricBreakdown    `json:"inputByModel,omitempty"`
-	OutputByModel      []MetricBreakdown    `json:"outputByModel,omitempty"`
-	ToolsByName        []MetricBreakdown    `json:"toolsByName,omitempty"`
-	RawMetricNames     []string             `json:"rawMetricNames,omitempty"`
-	Samples            map[string][]float64 `json:"samples,omitempty"`
-}
-
-func (s *Server) getRunTelemetry(w http.ResponseWriter, r *http.Request) {
-	if s.kube == nil {
-		http.Error(w, "telemetry unavailable", http.StatusServiceUnavailable)
-		return
-	}
-
-	name := r.PathValue("name")
-	ns := r.URL.Query().Get("namespace")
-	if ns == "" {
-		ns = "default"
-	}
-
-	var run sympoziumv1alpha1.AgentRun
-	if err := s.client.Get(r.Context(), types.NamespacedName{Name: name, Namespace: ns}, &run); err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
-		return
-	}
-
-	resp := RunTelemetryResponse{
-		RunName:   name,
-		Namespace: ns,
-		PodName:   run.Status.PodName,
-		Phase:     string(run.Status.Phase),
-	}
-
-	// Parse agent logs for structured trace events.
-	if run.Status.PodName != "" {
-		tail := int64(2000)
-		req := s.kube.CoreV1().Pods(ns).GetLogs(run.Status.PodName, &corev1.PodLogOptions{
-			Container: "agent",
-			TailLines: &tail,
-		})
-		if raw, err := req.Do(r.Context()).Raw(); err == nil {
-			resp.Events, resp.TraceIDs = parseTraceEventsFromAgentLogs(string(raw))
-		}
-	}
-
-	// Scan collector logs for span/metric names tied to this run ID.
-	if lines, err := s.readCollectorLogs(r.Context(), 4000); err == nil {
-		spanNames, metricNames, sample := parseCollectorRunEvidence(lines, name)
-		resp.SpanNames = spanNames
-		resp.MetricNames = metricNames
-		resp.CollectorSample = sample
-	}
-
-	// Fallback: expose useful timeline/usage details even when pods are gone
-	// (cleanup=delete) and log-based trace extraction isn't possible.
-	if len(resp.Events) == 0 {
-		if run.Status.StartedAt != nil {
-			resp.Events = append(resp.Events, RunTraceEvent{
-				Time:    run.Status.StartedAt.UTC().Format(time.RFC3339),
-				Level:   "info",
-				Message: "agent run started",
-			})
-		}
-		if run.Status.CompletedAt != nil {
-			resp.Events = append(resp.Events, RunTraceEvent{
-				Time:    run.Status.CompletedAt.UTC().Format(time.RFC3339),
-				Level:   "info",
-				Message: "agent run completed",
-			})
-		}
-		if run.Status.TokenUsage != nil {
-			resp.Events = append(resp.Events, RunTraceEvent{
-				Level:   "info",
-				Message: "token usage captured",
-				Fields: map[string]any{
-					"input_tokens":  run.Status.TokenUsage.InputTokens,
-					"output_tokens": run.Status.TokenUsage.OutputTokens,
-					"total_tokens":  run.Status.TokenUsage.TotalTokens,
-					"tool_calls":    run.Status.TokenUsage.ToolCalls,
-					"duration_ms":   run.Status.TokenUsage.DurationMs,
-				},
-			})
-			if len(resp.MetricNames) == 0 {
-				resp.MetricNames = []string{
-					"gen_ai.usage.input_tokens",
-					"gen_ai.usage.output_tokens",
-					"sympozium.agent.run.duration",
-					"sympozium.tool.invocations",
-				}
-			}
-		}
-		if run.Status.Error != "" {
-			resp.Events = append(resp.Events, RunTraceEvent{
-				Level:   "error",
-				Message: "run error",
-				Fields: map[string]any{
-					"error": truncateForSample(run.Status.Error, 512),
-				},
-			})
-		}
-	}
-
-	writeJSON(w, resp)
-}
-
-func (s *Server) getObservabilityMetrics(w http.ResponseWriter, r *http.Request) {
-	resp := ObservabilityMetricsResponse{
-		CollectedAt: time.Now().UTC().Format(time.RFC3339),
-		Namespace:   r.URL.Query().Get("namespace"),
-		RunStatus:   map[string]float64{},
-		Samples:     map[string][]float64{},
-	}
-	if resp.Namespace == "" {
-		resp.Namespace = "default"
-	}
-	if s.kube == nil {
-		resp.CollectorError = "kubernetes client unavailable"
-		writeJSON(w, resp)
-		return
-	}
-
-	raw, err := s.readCollectorMetrics(r.Context())
-	if err != nil {
-		resp.CollectorError = err.Error()
-		s.fillObservabilityFromRuns(r.Context(), resp.Namespace, &resp)
-		writeJSON(w, resp)
-		return
-	}
-	resp.CollectorReachable = true
-
-	samples := parsePrometheusSamples(raw)
-	metricNames := map[string]struct{}{}
-	inputByModel := map[string]float64{}
-	outputByModel := map[string]float64{}
-	toolsByName := map[string]float64{}
-
-	for i := range samples {
-		sample := samples[i]
-		metricNames[sample.Name] = struct{}{}
-		switch sample.Name {
-		case "sympozium_agent_runs_total":
-			resp.AgentRunsTotal += sample.Value
-			status := sample.Labels["status"]
-			if status != "" {
-				resp.RunStatus[status] += sample.Value
-			}
-			resp.Samples[sample.Name] = append(resp.Samples[sample.Name], sample.Value)
-		case "gen_ai_usage_input_tokens_total":
-			resp.InputTokensTotal += sample.Value
-			model := sample.Labels["model"]
-			if model != "" {
-				inputByModel[model] += sample.Value
-			}
-			resp.Samples[sample.Name] = append(resp.Samples[sample.Name], sample.Value)
-		case "gen_ai_usage_output_tokens_total":
-			resp.OutputTokensTotal += sample.Value
-			model := sample.Labels["model"]
-			if model != "" {
-				outputByModel[model] += sample.Value
-			}
-			resp.Samples[sample.Name] = append(resp.Samples[sample.Name], sample.Value)
-		case "sympozium_tool_invocations_total":
-			resp.ToolInvocations += sample.Value
-			tool := sample.Labels["tool_name"]
-			if tool == "" {
-				tool = "unknown"
-			}
-			toolsByName[tool] += sample.Value
-			resp.Samples[sample.Name] = append(resp.Samples[sample.Name], sample.Value)
-		}
-	}
-
-	resp.InputByModel = mapToMetricBreakdown(inputByModel)
-	resp.OutputByModel = mapToMetricBreakdown(outputByModel)
-	resp.ToolsByName = mapToMetricBreakdown(toolsByName)
-	resp.RawMetricNames = sortedKeys(metricNames)
-	if resp.AgentRunsTotal == 0 && resp.InputTokensTotal == 0 && resp.OutputTokensTotal == 0 {
-		s.fillObservabilityFromRuns(r.Context(), resp.Namespace, &resp)
-	}
-	writeJSON(w, resp)
-}
-
-func (s *Server) fillObservabilityFromRuns(ctx context.Context, namespace string, resp *ObservabilityMetricsResponse) {
-	if resp == nil {
-		return
-	}
-	var list sympoziumv1alpha1.AgentRunList
-	if err := s.client.List(ctx, &list, client.InNamespace(namespace)); err != nil {
-		return
-	}
-
-	inputByModel := map[string]float64{}
-	outputByModel := map[string]float64{}
-	if resp.RunStatus == nil {
-		resp.RunStatus = map[string]float64{}
-	}
-
-	for i := range list.Items {
-		run := list.Items[i]
-		resp.AgentRunsTotal++
-		phase := strings.TrimSpace(strings.ToLower(string(run.Status.Phase)))
-		if phase == "" {
-			phase = "unknown"
-		}
-		resp.RunStatus[phase]++
-
-		model := strings.TrimSpace(run.Spec.Model.Model)
-		if model == "" {
-			model = "unknown"
-		}
-		if run.Status.TokenUsage != nil {
-			in := float64(run.Status.TokenUsage.InputTokens)
-			out := float64(run.Status.TokenUsage.OutputTokens)
-			tools := float64(run.Status.TokenUsage.ToolCalls)
-			resp.InputTokensTotal += in
-			resp.OutputTokensTotal += out
-			resp.ToolInvocations += tools
-			inputByModel[model] += in
-			outputByModel[model] += out
-		}
-	}
-
-	if len(resp.InputByModel) == 0 {
-		resp.InputByModel = mapToMetricBreakdown(inputByModel)
-	}
-	if len(resp.OutputByModel) == 0 {
-		resp.OutputByModel = mapToMetricBreakdown(outputByModel)
-	}
-}
-
-func (s *Server) readCollectorMetrics(ctx context.Context) (string, error) {
-	if s.kube == nil {
-		return "", fmt.Errorf("kubernetes client unavailable")
-	}
-
-	req, err := http.NewRequestWithContext(
-		ctx,
-		http.MethodGet,
-		"http://sympozium-otel-collector.sympozium-system.svc:8889/metrics",
-		nil,
-	)
-	if err != nil {
-		return "", fmt.Errorf("failed to create collector metrics request: %w", err)
-	}
-	res, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("failed to query collector metrics: %w", err)
-	}
-	defer res.Body.Close()
-	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		return "", fmt.Errorf("collector metrics request failed: HTTP %d", res.StatusCode)
-	}
-	raw, err := io.ReadAll(res.Body)
-	if err != nil {
-		return "", fmt.Errorf("failed to read collector metrics body: %w", err)
-	}
-	return string(raw), nil
-}
-
-func (s *Server) readCollectorLogs(ctx context.Context, maxLines int) ([]string, error) {
-	if s.kube == nil {
-		return nil, fmt.Errorf("kubernetes client unavailable")
-	}
-
-	pods, err := s.kube.CoreV1().Pods("sympozium-system").List(ctx, metav1.ListOptions{
-		LabelSelector: "app.kubernetes.io/name=sympozium-otel-collector",
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to list collector pods: %w", err)
-	}
-	if len(pods.Items) == 0 {
-		return nil, fmt.Errorf("collector pod not found")
-	}
-
-	sort.Slice(pods.Items, func(i, j int) bool {
-		return pods.Items[i].CreationTimestamp.After(pods.Items[j].CreationTimestamp.Time)
-	})
-	pod := pods.Items[0]
-
-	tail := int64(maxLines)
-	if tail <= 0 {
-		tail = 2000
-	}
-	req := s.kube.CoreV1().Pods("sympozium-system").GetLogs(pod.Name, &corev1.PodLogOptions{
-		Container: "otel-collector",
-		TailLines: &tail,
-	})
-	stream, err := req.Stream(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to stream collector logs: %w", err)
-	}
-	defer stream.Close()
-
-	data, err := io.ReadAll(stream)
-	if err != nil {
-		return nil, fmt.Errorf("failed reading collector logs: %w", err)
-	}
-	lines := []string{}
-	scanner := bufio.NewScanner(bytes.NewReader(data))
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
-		}
-		lines = append(lines, line)
-	}
-	return lines, nil
-}
-
-func parseTraceEventsFromAgentLogs(raw string) ([]RunTraceEvent, []string) {
-	events := []RunTraceEvent{}
-	traceIDs := map[string]struct{}{}
-	scanner := bufio.NewScanner(strings.NewReader(raw))
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
-		}
-
-		if idx := strings.Index(line, "{"); idx >= 0 {
-			line = line[idx:]
-		}
-		var m map[string]any
-		if err := json.Unmarshal([]byte(line), &m); err != nil {
-			continue
-		}
-
-		ev := RunTraceEvent{
-			Time:    lookupString(m, "time", "timestamp", "ts"),
-			Level:   lookupString(m, "level"),
-			Message: lookupString(m, "msg", "message"),
-			TraceID: lookupString(m, "trace_id", "traceId", "traceid"),
-			SpanID:  lookupString(m, "span_id", "spanId", "spanid"),
-			Fields:  map[string]any{},
-		}
-		if ev.TraceID == "" && ev.SpanID == "" {
-			continue
-		}
-		if ev.TraceID != "" {
-			traceIDs[ev.TraceID] = struct{}{}
-		}
-
-		for k, v := range m {
-			switch k {
-			case "time", "timestamp", "ts", "level", "msg", "message", "trace_id", "traceId", "traceid", "span_id", "spanId", "spanid":
-				continue
-			default:
-				ev.Fields[k] = v
-			}
-		}
-		if len(ev.Fields) == 0 {
-			ev.Fields = nil
-		}
-		events = append(events, ev)
-		if len(events) >= 300 {
-			break
-		}
-	}
-	return events, sortedKeys(traceIDs)
-}
-
-func parseCollectorRunEvidence(lines []string, runName string) ([]string, []string, []string) {
-	knownSpans := []string{
-		"sympozium.agent.run",
-		"gen_ai.chat",
-		"gen_ai.execute_tool",
-		"sympozium.skill.exec",
-		"mcp.tools/call",
-	}
-	knownMetrics := []string{
-		"sympozium.agent.runs",
-		"sympozium.agent.run.duration",
-		"gen_ai.usage.input_tokens",
-		"gen_ai.usage.output_tokens",
-		"sympozium.tool.invocations",
-		"sympozium.skill.duration",
-	}
-	spanSet := map[string]struct{}{}
-	metricSet := map[string]struct{}{}
-	sample := []string{}
-
-	for i := range lines {
-		line := lines[i]
-		if runName != "" && !strings.Contains(line, runName) {
-			continue
-		}
-		for _, span := range knownSpans {
-			if strings.Contains(line, span) {
-				spanSet[span] = struct{}{}
-			}
-		}
-		for _, metricName := range knownMetrics {
-			if strings.Contains(line, metricName) {
-				metricSet[metricName] = struct{}{}
-			}
-		}
-		if len(sample) < 12 {
-			sample = append(sample, truncateForSample(line, 240))
-		}
-	}
-
-	return sortedKeys(spanSet), sortedKeys(metricSet), sample
-}
-
-type promSample struct {
-	Name   string
-	Labels map[string]string
-	Value  float64
-}
-
-func parsePrometheusSamples(raw string) []promSample {
-	out := []promSample{}
-	scanner := bufio.NewScanner(strings.NewReader(raw))
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		fields := strings.Fields(line)
-		if len(fields) < 2 {
-			continue
-		}
-		value, err := strconv.ParseFloat(fields[1], 64)
-		if err != nil {
-			continue
-		}
-		name, labels := parsePromMetricSelector(fields[0])
-		out = append(out, promSample{Name: name, Labels: labels, Value: value})
-	}
-	return out
-}
-
-func parsePromMetricSelector(selector string) (string, map[string]string) {
-	start := strings.Index(selector, "{")
-	end := strings.LastIndex(selector, "}")
-	if start < 0 || end < 0 || end <= start {
-		return selector, map[string]string{}
-	}
-	name := selector[:start]
-	return name, parsePromLabels(selector[start+1 : end])
-}
-
-func parsePromLabels(raw string) map[string]string {
-	out := map[string]string{}
-	for _, part := range splitCommaRespectQuotes(raw) {
-		kv := strings.SplitN(part, "=", 2)
-		if len(kv) != 2 {
-			continue
-		}
-		k := strings.TrimSpace(kv[0])
-		v := strings.TrimSpace(kv[1])
-		v = strings.Trim(v, "\"")
-		v = strings.ReplaceAll(v, `\"`, `"`)
-		if k != "" {
-			out[k] = v
-		}
-	}
-	return out
-}
-
-func splitCommaRespectQuotes(s string) []string {
-	parts := []string{}
-	var b strings.Builder
-	inQuotes := false
-	escaped := false
-	for _, r := range s {
-		switch {
-		case escaped:
-			b.WriteRune(r)
-			escaped = false
-		case r == '\\':
-			b.WriteRune(r)
-			escaped = true
-		case r == '"':
-			b.WriteRune(r)
-			inQuotes = !inQuotes
-		case r == ',' && !inQuotes:
-			part := strings.TrimSpace(b.String())
-			if part != "" {
-				parts = append(parts, part)
-			}
-			b.Reset()
-		default:
-			b.WriteRune(r)
-		}
-	}
-	last := strings.TrimSpace(b.String())
-	if last != "" {
-		parts = append(parts, last)
-	}
-	return parts
-}
-
-func lookupString(m map[string]any, keys ...string) string {
-	for _, key := range keys {
-		v, ok := m[key]
-		if !ok || v == nil {
-			continue
-		}
-		switch t := v.(type) {
-		case string:
-			if strings.TrimSpace(t) != "" {
-				return t
-			}
-		default:
-			s := fmt.Sprintf("%v", t)
-			if strings.TrimSpace(s) != "" {
-				return s
-			}
-		}
-	}
-	return ""
-}
-
-func mapToMetricBreakdown(m map[string]float64) []MetricBreakdown {
-	out := make([]MetricBreakdown, 0, len(m))
-	for k, v := range m {
-		out = append(out, MetricBreakdown{Label: k, Value: v})
-	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Value == out[j].Value {
-			return out[i].Label < out[j].Label
-		}
-		return out[i].Value > out[j].Value
-	})
-	return out
-}
-
-func sortedKeys[T any](m map[string]T) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
-}
-
-func truncateForSample(s string, max int) string {
-	if max <= 0 || len(s) <= max {
-		return s
-	}
-	if max <= 3 {
-		return s[:max]
-	}
-	return s[:max-3] + "..."
 }
 
 // CreateRunRequest is the request body for creating a new AgentRun.
@@ -1425,72 +734,6 @@ func (s *Server) listPersonaPacks(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, list.Items)
 }
 
-// InstallDefaultPersonaPacksResponse describes what was copied from the source namespace.
-type InstallDefaultPersonaPacksResponse struct {
-	SourceNamespace string   `json:"sourceNamespace"`
-	TargetNamespace string   `json:"targetNamespace"`
-	Copied          []string `json:"copied"`
-	AlreadyPresent  []string `json:"alreadyPresent"`
-}
-
-func (s *Server) installDefaultPersonaPacks(w http.ResponseWriter, r *http.Request) {
-	targetNS := r.URL.Query().Get("namespace")
-	if targetNS == "" {
-		targetNS = "default"
-	}
-	sourceNS := "sympozium-system"
-
-	var sourceList sympoziumv1alpha1.PersonaPackList
-	if err := s.client.List(r.Context(), &sourceList, client.InNamespace(sourceNS)); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	resp := InstallDefaultPersonaPacksResponse{
-		SourceNamespace: sourceNS,
-		TargetNamespace: targetNS,
-		Copied:          []string{},
-		AlreadyPresent:  []string{},
-	}
-
-	for _, src := range sourceList.Items {
-		var existing sympoziumv1alpha1.PersonaPack
-		err := s.client.Get(r.Context(), types.NamespacedName{Name: src.Name, Namespace: targetNS}, &existing)
-		switch {
-		case err == nil:
-			resp.AlreadyPresent = append(resp.AlreadyPresent, src.Name)
-			continue
-		case err != nil && !k8serrors.IsNotFound(err):
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		pack := &sympoziumv1alpha1.PersonaPack{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:        src.Name,
-				Namespace:   targetNS,
-				Labels:      src.Labels,
-				Annotations: src.Annotations,
-			},
-			Spec: src.Spec,
-		}
-		// Always copy packs in disabled state for safe namespace onboarding.
-		pack.Spec.Enabled = false
-
-		if err := s.client.Create(r.Context(), pack); err != nil {
-			if k8serrors.IsAlreadyExists(err) {
-				resp.AlreadyPresent = append(resp.AlreadyPresent, src.Name)
-				continue
-			}
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		resp.Copied = append(resp.Copied, src.Name)
-	}
-
-	writeJSON(w, resp)
-}
-
 func (s *Server) getPersonaPack(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	ns := r.URL.Query().Get("namespace")
@@ -1515,10 +758,8 @@ type PatchPersonaPackRequest struct {
 	APIKey         string            `json:"apiKey,omitempty"`
 	Model          string            `json:"model,omitempty"`
 	BaseURL        string            `json:"baseURL,omitempty"`
-	Channels       []string          `json:"channels,omitempty"`
 	ChannelConfigs map[string]string `json:"channelConfigs,omitempty"`
 	PolicyRef      string            `json:"policyRef,omitempty"`
-	Skills         []string          `json:"skills,omitempty"`
 }
 
 func (s *Server) patchPersonaPack(w http.ResponseWriter, r *http.Request) {
@@ -1581,6 +822,7 @@ func (s *Server) patchPersonaPack(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+
 	if req.Provider != "" && req.SecretName != "" {
 		existing := &corev1.Secret{}
 		if err := s.client.Get(r.Context(), types.NamespacedName{Name: req.SecretName, Namespace: ns}, existing); err != nil {
@@ -1604,45 +846,9 @@ func (s *Server) patchPersonaPack(w http.ResponseWriter, r *http.Request) {
 			pp.Spec.Personas[i].Model = req.Model
 		}
 	}
-	if req.Skills != nil {
-		normalized := make([]string, 0, len(req.Skills))
-		seen := make(map[string]struct{}, len(req.Skills))
-		for _, sk := range req.Skills {
-			sk = strings.TrimSpace(sk)
-			if sk == "" {
-				continue
-			}
-			if _, ok := seen[sk]; ok {
-				continue
-			}
-			seen[sk] = struct{}{}
-			normalized = append(normalized, sk)
-		}
-		for i := range pp.Spec.Personas {
-			pp.Spec.Personas[i].Skills = append([]string(nil), normalized...)
-		}
-	}
 
 	if req.ChannelConfigs != nil {
 		pp.Spec.ChannelConfigs = req.ChannelConfigs
-	}
-	if req.Channels != nil {
-		normalized := make([]string, 0, len(req.Channels))
-		seen := make(map[string]struct{}, len(req.Channels))
-		for _, ch := range req.Channels {
-			ch = strings.TrimSpace(ch)
-			if ch == "" {
-				continue
-			}
-			if _, ok := seen[ch]; ok {
-				continue
-			}
-			seen[ch] = struct{}{}
-			normalized = append(normalized, ch)
-		}
-		for i := range pp.Spec.Personas {
-			pp.Spec.Personas[i].Channels = append([]string(nil), normalized...)
-		}
 	}
 
 	if req.PolicyRef != "" {
@@ -1771,12 +977,6 @@ func (s *Server) listNamespaces(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, names)
 }
 
-func writeJSON(w http.ResponseWriter, v interface{}) {
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(v)
-}
-
-// PodInfo is a flattened pod representation for the web UI.
 type PodInfo struct {
 	Name         string            `json:"name"`
 	Namespace    string            `json:"namespace"`
@@ -1847,4 +1047,173 @@ func (s *Server) getPodLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]string{"logs": string(raw)})
+}
+
+type ObservabilityMetricsResponse struct {
+	CollectorReachable bool               `json:"collectorReachable"`
+	CollectorError     string             `json:"collectorError,omitempty"`
+	CollectedAt        string             `json:"collectedAt"`
+	Namespace          string             `json:"namespace"`
+	AgentRunsTotal     float64            `json:"agentRunsTotal"`
+	InputTokensTotal   float64            `json:"inputTokensTotal"`
+	OutputTokensTotal  float64            `json:"outputTokensTotal"`
+	ToolInvocations    float64            `json:"toolInvocations"`
+	RunStatus          map[string]float64 `json:"runStatus,omitempty"`
+	InputByModel       []MetricBreakdown  `json:"inputByModel,omitempty"`
+	OutputByModel      []MetricBreakdown  `json:"outputByModel,omitempty"`
+	ToolsByName        []MetricBreakdown  `json:"toolsByName,omitempty"`
+	RawMetricNames     []string           `json:"rawMetricNames,omitempty"`
+}
+
+type MetricBreakdown struct {
+	Label string  `json:"label"`
+	Value float64 `json:"value"`
+}
+
+func (s *Server) getObservabilityMetrics(w http.ResponseWriter, r *http.Request) {
+	namespace := r.URL.Query().Get("namespace")
+	if namespace == "" {
+		namespace = "default"
+	}
+
+	resp := ObservabilityMetricsResponse{
+		CollectorReachable: false,
+		CollectedAt:        time.Now().UTC().Format(time.RFC3339),
+		Namespace:          namespace,
+		RunStatus:          map[string]float64{},
+	}
+
+	var runs sympoziumv1alpha1.AgentRunList
+	if err := s.client.List(r.Context(), &runs, client.InNamespace(namespace)); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	inputByModel := map[string]float64{}
+	outputByModel := map[string]float64{}
+	toolsByName := map[string]float64{"tool_calls": 0}
+
+	for i := range runs.Items {
+		run := runs.Items[i]
+		resp.AgentRunsTotal++
+		phase := strings.TrimSpace(strings.ToLower(string(run.Status.Phase)))
+		if phase == "" {
+			phase = "unknown"
+		}
+		resp.RunStatus[phase]++
+
+		model := strings.TrimSpace(run.Spec.Model.Model)
+		if model == "" {
+			model = "unknown"
+		}
+		if run.Status.TokenUsage != nil {
+			in := float64(run.Status.TokenUsage.InputTokens)
+			out := float64(run.Status.TokenUsage.OutputTokens)
+			tools := float64(run.Status.TokenUsage.ToolCalls)
+			resp.InputTokensTotal += in
+			resp.OutputTokensTotal += out
+			resp.ToolInvocations += tools
+			inputByModel[model] += in
+			outputByModel[model] += out
+			toolsByName["tool_calls"] += tools
+		}
+	}
+
+	resp.InputByModel = mapToMetricBreakdown(inputByModel)
+	resp.OutputByModel = mapToMetricBreakdown(outputByModel)
+	resp.ToolsByName = mapToMetricBreakdown(toolsByName)
+	resp.RawMetricNames = []string{"sympozium.agent.runs", "gen_ai.usage.input_tokens", "gen_ai.usage.output_tokens", "sympozium.tool.invocations"}
+
+	writeJSON(w, resp)
+}
+
+func mapToMetricBreakdown(m map[string]float64) []MetricBreakdown {
+	out := make([]MetricBreakdown, 0, len(m))
+	for k, v := range m {
+		out = append(out, MetricBreakdown{Label: k, Value: v})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Value == out[j].Value {
+			return out[i].Label < out[j].Label
+		}
+		return out[i].Value > out[j].Value
+	})
+	return out
+}
+
+func (s *Server) getRunTelemetry(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	ns := r.URL.Query().Get("namespace")
+	if ns == "" {
+		ns = "default"
+	}
+
+	var run sympoziumv1alpha1.AgentRun
+	if err := s.client.Get(r.Context(), types.NamespacedName{Name: name, Namespace: ns}, &run); err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+
+	writeJSON(w, map[string]interface{}{
+		"runName":   name,
+		"namespace": ns,
+		"podName":   run.Status.PodName,
+		"phase":     run.Status.Phase,
+		"traceIds":  []string{},
+		"events":    []interface{}{},
+	})
+}
+
+type InstallDefaultPersonaPacksResponse struct {
+	SourceNamespace string   `json:"sourceNamespace"`
+	TargetNamespace string   `json:"targetNamespace"`
+	Copied          []string `json:"copied"`
+	AlreadyPresent  []string `json:"alreadyPresent"`
+}
+
+func (s *Server) installDefaultPersonaPacks(w http.ResponseWriter, r *http.Request) {
+	targetNS := r.URL.Query().Get("namespace")
+	if targetNS == "" {
+		targetNS = "default"
+	}
+	sourceNS := "sympozium-system"
+
+	var sourceList sympoziumv1alpha1.PersonaPackList
+	if err := s.client.List(r.Context(), &sourceList, client.InNamespace(sourceNS)); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	resp := InstallDefaultPersonaPacksResponse{SourceNamespace: sourceNS, TargetNamespace: targetNS, Copied: []string{}, AlreadyPresent: []string{}}
+	for _, src := range sourceList.Items {
+		var existing sympoziumv1alpha1.PersonaPack
+		err := s.client.Get(r.Context(), types.NamespacedName{Name: src.Name, Namespace: targetNS}, &existing)
+		switch {
+		case err == nil:
+			resp.AlreadyPresent = append(resp.AlreadyPresent, src.Name)
+			continue
+		case err != nil && !k8serrors.IsNotFound(err):
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		pack := &sympoziumv1alpha1.PersonaPack{ObjectMeta: metav1.ObjectMeta{Name: src.Name, Namespace: targetNS, Labels: src.Labels, Annotations: src.Annotations}, Spec: src.Spec}
+		pack.Spec.Enabled = false
+		if err := s.client.Create(r.Context(), pack); err != nil {
+			if k8serrors.IsAlreadyExists(err) {
+				resp.AlreadyPresent = append(resp.AlreadyPresent, src.Name)
+				continue
+			}
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		resp.Copied = append(resp.Copied, src.Name)
+	}
+
+	writeJSON(w, resp)
+}
+
+func writeJSON(w http.ResponseWriter, v interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(v)
 }
