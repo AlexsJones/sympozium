@@ -306,6 +306,10 @@ func (s *Server) createInstance(w http.ResponseWriter, r *http.Request) {
 					Model: req.Model,
 				},
 			},
+			Memory: &sympoziumv1alpha1.MemorySpec{
+				Enabled:   true,
+				MaxSizeKB: 256,
+			},
 		},
 	}
 

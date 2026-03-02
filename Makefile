@@ -126,10 +126,39 @@ web-dev-serve: ## Vite hot-reload + port-forward to in-cluster apiserver (no reb
 	echo "==> API token (from apiserver): $$APISERVER_TOKEN"; \
 	echo "==> Edit web/src/ and changes hot-reload instantly."; \
 	echo ""; \
+	if ! kubectl get svc -n $(SYMPOZIUM_NAMESPACE) sympozium-apiserver >/dev/null 2>&1; then \
+		echo "ERROR: Service sympozium-apiserver not found in namespace $(SYMPOZIUM_NAMESPACE)."; \
+		exit 1; \
+	fi; \
+	PF_LOG=/tmp/sympozium-web-dev-serve-portforward.log; \
+	rm -f $$PF_LOG; \
 	trap 'kill 0' EXIT; \
-		kubectl port-forward -n $(SYMPOZIUM_NAMESPACE) svc/sympozium-apiserver 8080:8080 & \
-		cd web && npx vite --port $(VITE_PORT); \
-		wait
+	kubectl port-forward -n $(SYMPOZIUM_NAMESPACE) svc/sympozium-apiserver 8080:8080 >$$PF_LOG 2>&1 & \
+	PF_PID=$$!; \
+	READY=0; \
+	for i in $$(seq 1 30); do \
+		if ! kill -0 $$PF_PID >/dev/null 2>&1; then \
+			echo "ERROR: kubectl port-forward exited early."; \
+			echo "---- port-forward log ----"; \
+			cat $$PF_LOG; \
+			echo "--------------------------"; \
+			exit 1; \
+		fi; \
+		if curl -fsS http://127.0.0.1:8080/healthz >/dev/null 2>&1; then \
+			READY=1; \
+			break; \
+		fi; \
+		sleep 1; \
+	done; \
+	if [ $$READY -ne 1 ]; then \
+		echo "ERROR: Timed out waiting for apiserver on localhost:8080."; \
+		echo "---- port-forward log ----"; \
+		cat $$PF_LOG; \
+		echo "--------------------------"; \
+		exit 1; \
+	fi; \
+	echo "==> Port-forward ready (localhost:8080)."; \
+	cd web && npx vite --port $(VITE_PORT)
 
 web-clean: ## Remove frontend build artifacts
 	rm -rf web/dist web/node_modules
