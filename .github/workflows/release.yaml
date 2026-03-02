@@ -104,6 +104,7 @@ jobs:
           - channel-slack
           - skill-k8s-ops
           - skill-sre-observability
+          - skill-github-gitops
     steps:
       - uses: actions/checkout@v4
 
@@ -134,6 +135,7 @@ jobs:
           context: .
           file: images/${{ matrix.image }}/Dockerfile
           push: true
+          platforms: linux/amd64,linux/arm64
           build-args: |
             IMAGE_TAG=${{ github.ref_name }}
           tags: ${{ steps.meta.outputs.tags }}
