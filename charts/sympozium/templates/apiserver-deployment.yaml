@@ -25,7 +25,7 @@ spec:
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           args:
             - --event-bus-url={{ include "sympozium.natsUrl" . }}
-{{- if .Values.apiserver.webUI.enabled }}
+          {{- if .Values.apiserver.webUI.enabled }}
             - --serve-ui
           {{- end }}
           env:
@@ -33,19 +33,26 @@ spec:
             - name: SYMPOZIUM_UI_TOKEN
               value: {{ .Values.apiserver.webUI.token | quote }}
           {{- else }}
+            - name: SYMPOZIUM_UI_TOKEN
               valueFrom:
                 secretKeyRef:
                   name: {{ include "sympozium.fullname" . }}-ui-token
                   key: token
                   optional: true
+          {{- end }}
             - name: POD_NAME
+              valueFrom:
                 fieldRef:
                   fieldPath: metadata.name
             - name: NAMESPACE
+              valueFrom:
+                fieldRef:
                   fieldPath: metadata.namespace
             - name: NODE_NAME
+              valueFrom:
+                fieldRef:
                   fieldPath: spec.nodeName
-            {{- if .Values.observability.enabled }}
+          {{- if .Values.observability.enabled }}
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
               value: {{ .Values.observability.endpoint | quote }}
             - name: OTEL_EXPORTER_OTLP_PROTOCOL
@@ -61,9 +68,12 @@ spec:
             {{- if .Values.observability.headers }}
             - name: OTEL_EXPORTER_OTLP_HEADERS
               value: {{ include "sympozium.otelHeaders" . | quote }}
+            {{- end }}
             {{- if .Values.observability.resourceAttributes }}
             - name: OTEL_RESOURCE_ATTRIBUTES
               value: {{ include "sympozium.otelResourceAttrs" . | quote }}
+            {{- end }}
+          {{- end }}
           ports:
             - containerPort: 8080
               name: http

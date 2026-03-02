@@ -612,11 +612,11 @@ func TestBuildJob_WithSkillSidecars(t *testing.T) {
 func TestBuildContainers_ObservabilityEnv(t *testing.T) {
 	r := &AgentRunReconciler{}
 	run := newTestRun()
-	enabled := true
 	obs := &sympoziumv1alpha1.ObservabilitySpec{
-		Enabled:  &enabled,
-		Endpoint: "otel-collector.observability.svc:4317",
-		Protocol: "grpc",
+		Enabled:      true,
+		OTLPEndpoint: "otel-collector.observability.svc:4317",
+		OTLPProtocol: "grpc",
+		ServiceName:  "sympozium",
 		ResourceAttributes: map[string]string{
 			"deployment.environment": "production",
 		},
@@ -631,7 +631,7 @@ func TestBuildContainers_ObservabilityEnv(t *testing.T) {
 	if agentEnv["SYMPOZIUM_OTEL_ENABLED"] != "true" {
 		t.Fatalf("SYMPOZIUM_OTEL_ENABLED not injected")
 	}
-	if agentEnv["SYMPOZIUM_OTEL_OTLP_ENDPOINT"] != obs.Endpoint {
+	if agentEnv["SYMPOZIUM_OTEL_OTLP_ENDPOINT"] != obs.OTLPEndpoint {
 		t.Fatalf("SYMPOZIUM_OTEL_OTLP_ENDPOINT = %q", agentEnv["SYMPOZIUM_OTEL_OTLP_ENDPOINT"])
 	}
 	if !strings.Contains(agentEnv["SYMPOZIUM_OTEL_RESOURCE_ATTRIBUTES"], "sympozium.agent_run.id=test-run") {

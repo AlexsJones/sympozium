@@ -177,16 +177,7 @@ observability:
     shutdownTimeout: "10s"
   apiServer:
     batchTimeout: "5s"
-
-# -- ServiceMonitor for Prometheus (requires prometheus-operator)
-serviceMonitor:
-  enabled: false
-  interval: 30s
-  labels: {}
-
-# -- Built-in OpenTelemetry collector (enabled by default)
-observability:
-  enabled: true
+  # -- Built-in OpenTelemetry collector
   collector:
     image:
       repository: otel/opentelemetry-collector
@@ -203,6 +194,7 @@ observability:
       otlpHttpPort: 4318
       metricsPort: 8889
       healthPort: 13133
+  # -- Default instance observability settings (used when creating new instances)
   defaultInstance:
     enabled: true
     otlpEndpoint: "sympozium-otel-collector.sympozium-system.svc:4317"
@@ -211,3 +203,9 @@ observability:
     resourceAttributes:
       deployment.environment: "cluster"
       k8s.cluster.name: "unknown"
+
+# -- ServiceMonitor for Prometheus (requires prometheus-operator)
+serviceMonitor:
+  enabled: false
+  interval: 30s
+  labels: {}

@@ -348,18 +348,16 @@ func (r *PersonaPackReconciler) buildInstance(
 				MaxSizeKB:    256,
 				SystemPrompt: persona.SystemPrompt,
 			},
-			Observability: func() *sympoziumv1alpha1.ObservabilitySpec {
-				enabled := true
-				return &sympoziumv1alpha1.ObservabilitySpec{
-					Enabled:  &enabled,
-					Endpoint: "sympozium-otel-collector.sympozium-system.svc:4317",
-					Protocol: "grpc",
-					ResourceAttributes: map[string]string{
-						"deployment.environment": "cluster",
-						"k8s.cluster.name":       "unknown",
-					},
-				}
-			}(),
+			Observability: &sympoziumv1alpha1.ObservabilitySpec{
+				Enabled:      true,
+				OTLPEndpoint: "sympozium-otel-collector.sympozium-system.svc:4317",
+				OTLPProtocol: "grpc",
+				ServiceName:  "sympozium",
+				ResourceAttributes: map[string]string{
+					"deployment.environment": "cluster",
+					"k8s.cluster.name":       "unknown",
+				},
+			},
 		},
 	}
 

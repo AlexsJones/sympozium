@@ -56,23 +56,26 @@ type MemorySpec struct {
 	SystemPrompt string `json:"systemPrompt,omitempty"`
 }
 
-// ObservabilitySpec controls OTel instrumentation for a specific instance.
+// ObservabilitySpec configures OpenTelemetry for agent runs.
 type ObservabilitySpec struct {
-	// Enabled controls whether OTel instrumentation is active for this instance.
-	// Overrides the global Helm value when set.
-	// +optional
-	Enabled *bool `json:"enabled,omitempty"`
+	// Enabled turns OpenTelemetry tracing/metrics on for this instance.
+	// +kubebuilder:default=false
+	Enabled bool `json:"enabled"`
 
-	// Endpoint is the OTLP collector endpoint (gRPC).
-	// Example: "http://otel-collector.monitoring:4317"
-	// Overrides the global Helm value when set.
+	// OTLPEndpoint is the collector endpoint (for example:
+	// "otel-collector.observability.svc:4317" for gRPC or
+	// "http://otel-collector.observability.svc:4318" for HTTP/protobuf).
 	// +optional
-	Endpoint string `json:"endpoint,omitempty"`
+	OTLPEndpoint string `json:"otlpEndpoint,omitempty"`
 
-	// Protocol is the OTLP transport protocol.
+	// OTLPProtocol is "grpc" or "http/protobuf".
+	// +kubebuilder:validation:Enum=grpc;http/protobuf
 	// +optional
-	// +kubebuilder:validation:Enum=grpc;"http/protobuf"
-	Protocol string `json:"protocol,omitempty"`
+	OTLPProtocol string `json:"otlpProtocol,omitempty"`
+
+	// ServiceName overrides the OTel service name (default: "sympozium-agent-runner").
+	// +optional
+	ServiceName string `json:"serviceName,omitempty"`
 
 	// Headers are additional OTLP export headers (e.g., auth tokens).
 	// +optional
@@ -88,7 +91,7 @@ type ObservabilitySpec struct {
 	// +kubebuilder:validation:Maximum=1.0
 	SamplingRatio *float64 `json:"samplingRatio,omitempty"`
 
-	// ResourceAttributes are additional OTel resource attributes.
+	// ResourceAttributes are additional OTel resource attributes (key/value).
 	// +optional
 	ResourceAttributes map[string]string `json:"resourceAttributes,omitempty"`
 }
