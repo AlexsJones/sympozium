@@ -239,7 +239,7 @@ func (r *AgentRunReconciler) reconcilePending(ctx context.Context, log logr.Logg
 		if instance.Spec.Memory != nil && instance.Spec.Memory.Enabled {
 			memoryEnabled = true
 		}
-		if instance.Spec.Observability != nil && instance.Spec.Observability.Enabled {
+		if instance.Spec.Observability != nil && instance.Spec.Observability.Enabled != nil && *instance.Spec.Observability.Enabled {
 			obsCopy := *instance.Spec.Observability
 			if len(instance.Spec.Observability.ResourceAttributes) > 0 {
 				obsCopy.ResourceAttributes = make(map[string]string, len(instance.Spec.Observability.ResourceAttributes))
@@ -256,9 +256,6 @@ func (r *AgentRunReconciler) reconcilePending(ctx context.Context, log logr.Logg
 			agentRun.Spec.Skills = instance.Spec.Skills
 		}
 	}
-
-	// Resolve OTel endpoint: instance CRD → controller env → empty (noop).
-	otelEndpoint := resolveOTelEndpoint(instance)
 
 	// Write traceparent annotation so buildContainers can inject TRACEPARENT env var.
 	traceparent := formatTraceparent(span.SpanContext())
@@ -732,13 +729,13 @@ func (r *AgentRunReconciler) buildContainers(
 		agentEnv = append(agentEnv, corev1.EnvVar{Name: "TRACEPARENT", Value: tp})
 		ipcEnv = append(ipcEnv, corev1.EnvVar{Name: "TRACEPARENT", Value: tp})
 	}
-	if otelEndpoint != "" {
+	if observability != nil && observability.Endpoint != "" {
 		agentEnv = append(agentEnv,
-			corev1.EnvVar{Name: "OTEL_EXPORTER_OTLP_ENDPOINT", Value: otelEndpoint},
+			corev1.EnvVar{Name: "OTEL_EXPORTER_OTLP_ENDPOINT", Value: observability.Endpoint},
 			corev1.EnvVar{Name: "OTEL_SERVICE_NAME", Value: "sympozium-agent-runner"},
 		)
 		ipcEnv = append(ipcEnv,
-			corev1.EnvVar{Name: "OTEL_EXPORTER_OTLP_ENDPOINT", Value: otelEndpoint},
+			corev1.EnvVar{Name: "OTEL_EXPORTER_OTLP_ENDPOINT", Value: observability.Endpoint},
 			corev1.EnvVar{Name: "OTEL_SERVICE_NAME", Value: "sympozium-ipc-bridge"},
 		)
 	}
@@ -893,7 +890,7 @@ func (r *AgentRunReconciler) buildContainers(
 	}
 
 	// Inject per-instance OpenTelemetry configuration.
-	if observability != nil && observability.Enabled {
+	if observability != nil && observability.Enabled != nil && *observability.Enabled {
 		containers[0].Env = append(containers[0].Env, buildObservabilityEnv(agentRun, observability)...)
 		containers[1].Env = append(containers[1].Env, buildObservabilityEnv(agentRun, observability)...)
 	}
@@ -980,22 +977,16 @@ func buildObservabilityEnv(agentRun *sympoziumv1alpha1.AgentRun, obs *sympoziumv
 		{Name: "SYMPOZIUM_OTEL_ENABLED", Value: "true"},
 	}
 
-	if obs.OTLPEndpoint != "" {
+	if obs.Endpoint != "" {
 		env = append(env,
-			corev1.EnvVar{Name: "SYMPOZIUM_OTEL_OTLP_ENDPOINT", Value: obs.OTLPEndpoint},
-			corev1.EnvVar{Name: "OTEL_EXPORTER_OTLP_ENDPOINT", Value: obs.OTLPEndpoint},
+			corev1.EnvVar{Name: "SYMPOZIUM_OTEL_OTLP_ENDPOINT", Value: obs.Endpoint},
+			corev1.EnvVar{Name: "OTEL_EXPORTER_OTLP_ENDPOINT", Value: obs.Endpoint},
 		)
 	}
-	if obs.OTLPProtocol != "" {
+	if obs.Protocol != "" {
 		env = append(env,
-			corev1.EnvVar{Name: "SYMPOZIUM_OTEL_OTLP_PROTOCOL", Value: obs.OTLPProtocol},
-			corev1.EnvVar{Name: "OTEL_EXPORTER_OTLP_PROTOCOL", Value: obs.OTLPProtocol},
-		)
-	}
-	if obs.ServiceName != "" {
-		env = append(env,
-			corev1.EnvVar{Name: "SYMPOZIUM_OTEL_SERVICE_NAME", Value: obs.ServiceName},
-			corev1.EnvVar{Name: "OTEL_SERVICE_NAME", Value: obs.ServiceName},
+			corev1.EnvVar{Name: "SYMPOZIUM_OTEL_OTLP_PROTOCOL", Value: obs.Protocol},
+			corev1.EnvVar{Name: "OTEL_EXPORTER_OTLP_PROTOCOL", Value: obs.Protocol},
 		)
 	}
 
