@@ -1,0 +1,13 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - rbac/service_account.yaml
+  - rbac/role.yaml
+  - rbac/role_binding.yaml
+  - nats/nats.yaml
+  - manager/manager.yaml
+  - webhook/manifests.yaml
+  - network/policies.yaml
+  - cert/certificate.yaml
+  - observability/otel-collector.yaml

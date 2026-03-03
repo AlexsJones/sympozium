@@ -956,6 +956,7 @@ spec:
       model: %s
 %s%s%s  skills:
     - skillPackRef: k8s-ops
+		- skillPackRef: llmfit
   memory:
     enabled: true
     maxSizeKB: 256
@@ -8734,9 +8735,10 @@ func tuiOnboardApply(ns string, w *wizardState) (string, error) {
 		inst.Spec.PolicyRef = policyName
 	}
 
-	// Default skills: k8s-ops.
+	// Default skills: k8s-ops + llmfit.
 	inst.Spec.Skills = []sympoziumv1alpha1.SkillRef{
 		{SkillPackRef: "k8s-ops"},
+		{SkillPackRef: "llmfit"},
 	}
 
 	// Memory is on by default.

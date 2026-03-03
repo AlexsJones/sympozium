@@ -6,7 +6,7 @@ WORKDIR /workspace
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /channel-whatsapp ./channels/whatsapp
+RUN CGO_ENABLED=0 GOOS=linux go build -mod=mod -ldflags="-s -w" -o /channel-whatsapp ./channels/whatsapp
 RUN mkdir -p /data-seed && chown 65532:65532 /data-seed
 
 FROM gcr.io/distroless/static:nonroot

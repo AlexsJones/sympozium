@@ -133,7 +133,7 @@ defaultPolicies:
   # -- Install built-in policy presets
   enabled: true
 
-# -- Default SkillPacks to install (code-review, incident-response, k8s-ops, sre-observability)
+# -- Default SkillPacks to install (code-review, incident-response, k8s-ops, sre-observability, llmfit)
 defaultSkills:
   enabled: true
   # -- List of SkillPack specs
