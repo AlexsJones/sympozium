@@ -126,6 +126,56 @@ type SkillSidecar struct {
 	// projected as individual files. Defaults to /secrets/<SecretRef>.
 	// +optional
 	SecretMountPath string `json:"secretMountPath,omitempty"`
+
+	// HostAccess enables explicit host-level access for this sidecar.
+	// This is disabled by default and should only be used when a skill
+	// must inspect node-local host resources (for example, hardware probes).
+	// +optional
+	HostAccess *HostAccessSpec `json:"hostAccess,omitempty"`
+}
+
+// HostAccessSpec defines opt-in host-level pod settings and hostPath mounts
+// for a skill sidecar.
+type HostAccessSpec struct {
+	// Enabled controls whether host access settings are applied.
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
+
+	// HostNetwork enables host network namespace for the pod.
+	// Applied at pod level when any enabled sidecar requests it.
+	// +optional
+	HostNetwork bool `json:"hostNetwork,omitempty"`
+
+	// HostPID enables host PID namespace for the pod.
+	// Applied at pod level when any enabled sidecar requests it.
+	// +optional
+	HostPID bool `json:"hostPID,omitempty"`
+
+	// Privileged runs the sidecar in privileged mode.
+	// +optional
+	Privileged bool `json:"privileged,omitempty"`
+
+	// RunAsRoot runs the sidecar as UID 0.
+	// +optional
+	RunAsRoot bool `json:"runAsRoot,omitempty"`
+
+	// Mounts are hostPath mounts injected into this sidecar.
+	// +optional
+	Mounts []HostPathMount `json:"mounts,omitempty"`
+}
+
+// HostPathMount defines one hostPath volume mount for a sidecar.
+type HostPathMount struct {
+	// HostPath is the absolute path on the node host.
+	HostPath string `json:"hostPath"`
+
+	// MountPath is the path inside the sidecar container.
+	MountPath string `json:"mountPath"`
+
+	// ReadOnly controls whether the mount is read-only.
+	// +kubebuilder:default=true
+	// +optional
+	ReadOnly *bool `json:"readOnly,omitempty"`
 }
 
 // EnvVar is a simplified environment variable (name + value).

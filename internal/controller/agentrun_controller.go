@@ -551,6 +551,11 @@ func (r *AgentRunReconciler) buildJob(
 	// Build containers
 	containers := r.buildContainers(agentRun, memoryEnabled, observability, sidecars)
 	volumes := r.buildVolumes(agentRun, memoryEnabled, sidecars)
+	hostNetwork, hostPID := derivePodHostAccess(sidecars)
+	dnsPolicy := corev1.DNSClusterFirst
+	if hostNetwork {
+		dnsPolicy = corev1.DNSClusterFirstWithHostNet
+	}
 
 	runAsNonRoot := true
 	runAsUser := int64(1000)
@@ -573,6 +578,9 @@ func (r *AgentRunReconciler) buildJob(
 				Spec: corev1.PodSpec{
 					RestartPolicy:      corev1.RestartPolicyNever,
 					ServiceAccountName: "sympozium-agent",
+					HostNetwork:        hostNetwork,
+					HostPID:            hostPID,
+					DNSPolicy:          dnsPolicy,
 					SecurityContext: &corev1.PodSecurityContext{
 						RunAsNonRoot: &runAsNonRoot,
 						RunAsUser:    &runAsUser,
@@ -768,6 +776,24 @@ func (r *AgentRunReconciler) buildContainers(
 			mounts = append(mounts, corev1.VolumeMount{Name: "workspace", MountPath: "/workspace"})
 		}
 
+		hostAccessEnabled := sc.sidecar.HostAccess != nil && sc.sidecar.HostAccess.Enabled
+		if hostAccessEnabled {
+			for idx, hostMount := range sc.sidecar.HostAccess.Mounts {
+				if hostMount.HostPath == "" || hostMount.MountPath == "" {
+					continue
+				}
+				readOnly := true
+				if hostMount.ReadOnly != nil {
+					readOnly = *hostMount.ReadOnly
+				}
+				mounts = append(mounts, corev1.VolumeMount{
+					Name:      hostAccessVolumeName(sc.skillPackName, idx),
+					MountPath: hostMount.MountPath,
+					ReadOnly:  readOnly,
+				})
+			}
+		}
+
 		cpuReq := "100m"
 		memReq := "128Mi"
 		if sc.sidecar.Resources != nil {
@@ -795,6 +821,25 @@ func (r *AgentRunReconciler) buildContainers(
 					corev1.ResourceMemory: resource.MustParse(memReq),
 				},
 			},
+		}
+
+		if hostAccessEnabled {
+			sidecarSC := &corev1.SecurityContext{}
+			if sc.sidecar.HostAccess.Privileged {
+				privileged := true
+				allowPrivEsc := true
+				sidecarSC.Privileged = &privileged
+				sidecarSC.AllowPrivilegeEscalation = &allowPrivEsc
+			}
+			if sc.sidecar.HostAccess.RunAsRoot {
+				runAsUser := int64(0)
+				runAsNonRoot := false
+				sidecarSC.RunAsUser = &runAsUser
+				sidecarSC.RunAsNonRoot = &runAsNonRoot
+			}
+			if sidecarSC.Privileged != nil || sidecarSC.RunAsUser != nil || sidecarSC.RunAsNonRoot != nil {
+				container.SecurityContext = sidecarSC
+			}
 		}
 		// Only set Command if the SkillPack specifies one; otherwise
 		// let the container image's default CMD (tool-executor) run.
@@ -989,7 +1034,66 @@ func (r *AgentRunReconciler) buildVolumes(agentRun *sympoziumv1alpha1.AgentRun, 
 		})
 	}
 
+	// Add hostPath volumes for skill sidecars with host access enabled.
+	for _, sc := range sidecars {
+		if sc.sidecar.HostAccess == nil || !sc.sidecar.HostAccess.Enabled {
+			continue
+		}
+		for idx, mount := range sc.sidecar.HostAccess.Mounts {
+			if mount.HostPath == "" || mount.MountPath == "" {
+				continue
+			}
+			hostPath := mount.HostPath
+			volumes = append(volumes, corev1.Volume{
+				Name: hostAccessVolumeName(sc.skillPackName, idx),
+				VolumeSource: corev1.VolumeSource{
+					HostPath: &corev1.HostPathVolumeSource{
+						Path: hostPath,
+					},
+				},
+			})
+		}
+	}
+
 	return volumes
+}
+
+func derivePodHostAccess(sidecars []resolvedSidecar) (hostNetwork bool, hostPID bool) {
+	for _, sc := range sidecars {
+		if sc.sidecar.HostAccess == nil || !sc.sidecar.HostAccess.Enabled {
+			continue
+		}
+		if sc.sidecar.HostAccess.HostNetwork {
+			hostNetwork = true
+		}
+		if sc.sidecar.HostAccess.HostPID {
+			hostPID = true
+		}
+	}
+	return hostNetwork, hostPID
+}
+
+func hostAccessVolumeName(skillPackName string, index int) string {
+	raw := strings.ToLower(fmt.Sprintf("host-%s-%d", skillPackName, index))
+	var b strings.Builder
+	for _, ch := range raw {
+		switch {
+		case ch >= 'a' && ch <= 'z':
+			b.WriteRune(ch)
+		case ch >= '0' && ch <= '9':
+			b.WriteRune(ch)
+		default:
+			b.WriteByte('-')
+		}
+	}
+	name := strings.Trim(b.String(), "-")
+	if name == "" {
+		name = "host-mount"
+	}
+	if len(name) > 63 {
+		name = name[:63]
+	}
+	return name
 }
 
 // boolPtr returns a pointer to a bool.

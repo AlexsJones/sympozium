@@ -73,6 +73,7 @@ export function SkillsPage() {
               <TableHead>Skills</TableHead>
               <TableHead>Has Sidecar</TableHead>
               <TableHead>RBAC</TableHead>
+              <TableHead>Host Access</TableHead>
               <TableHead>Age</TableHead>
               <TableHead className="w-20" />
             </TableRow>
@@ -98,6 +99,13 @@ export function SkillsPage() {
                     <Badge variant="secondary" className="text-xs">
                       {sk.spec.sidecar.rbac.length} rules
                     </Badge>
+                  ) : (
+                    <span className="text-muted-foreground text-xs">—</span>
+                  )}
+                </TableCell>
+                <TableCell>
+                  {sk.spec.sidecar?.hostAccess?.enabled ? (
+                    <Badge variant="destructive" className="text-xs">Enabled</Badge>
                   ) : (
                     <span className="text-muted-foreground text-xs">—</span>
                   )}
@@ -190,6 +198,41 @@ function SkillDetail({ skill }: { skill: SkillPack }) {
               <pre className="text-xs font-mono whitespace-pre-wrap rounded bg-muted/50 p-3 overflow-auto max-h-64">
                 {JSON.stringify(skill.spec.sidecar.rbac, null, 2)}
               </pre>
+            </CardContent>
+          </Card>
+        </>
+      )}
+
+      {skill.spec.sidecar?.hostAccess?.enabled && (
+        <>
+          <Separator />
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-sm">Host Access</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3 text-sm">
+              <div className="flex flex-wrap gap-2">
+                {skill.spec.sidecar.hostAccess.hostPID && (
+                  <Badge variant="outline" className="text-xs">hostPID</Badge>
+                )}
+                {skill.spec.sidecar.hostAccess.hostNetwork && (
+                  <Badge variant="outline" className="text-xs">hostNetwork</Badge>
+                )}
+                {skill.spec.sidecar.hostAccess.runAsRoot && (
+                  <Badge variant="outline" className="text-xs">runAsRoot</Badge>
+                )}
+                {skill.spec.sidecar.hostAccess.privileged && (
+                  <Badge variant="outline" className="text-xs">privileged</Badge>
+                )}
+              </div>
+              {skill.spec.sidecar.hostAccess.mounts && skill.spec.sidecar.hostAccess.mounts.length > 0 && (
+                <div>
+                  <p className="text-muted-foreground mb-1">HostPath Mounts</p>
+                  <pre className="text-xs font-mono whitespace-pre-wrap rounded bg-muted/50 p-3 overflow-auto max-h-64">
+                    {JSON.stringify(skill.spec.sidecar.hostAccess.mounts, null, 2)}
+                  </pre>
+                </div>
+              )}
             </CardContent>
           </Card>
         </>

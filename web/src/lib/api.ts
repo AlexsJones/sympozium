@@ -202,6 +202,21 @@ export interface RBACRule {
   verbs: string[];
 }
 
+export interface HostPathMount {
+  hostPath: string;
+  mountPath: string;
+  readOnly?: boolean;
+}
+
+export interface HostAccessSpec {
+  enabled?: boolean;
+  hostNetwork?: boolean;
+  hostPID?: boolean;
+  privileged?: boolean;
+  runAsRoot?: boolean;
+  mounts?: HostPathMount[];
+}
+
 export interface SkillSidecar {
   image: string;
   command?: string[];
@@ -210,6 +225,7 @@ export interface SkillSidecar {
   clusterRBAC?: RBACRule[];
   secretRef?: string;
   secretMountPath?: string;
+  hostAccess?: HostAccessSpec;
 }
 
 export interface GithubAuthStartResponse {

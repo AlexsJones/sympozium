@@ -20,6 +20,16 @@ spec:
 
         You can use `llmfit` to score model placement per Kubernetes node.
 
+        ## Mandatory preflight (run first)
+
+        Before any recommendation query, verify runtime availability in the skill sidecar:
+
+        ```bash
+        which llmfit && llmfit --version && which kubectl && which jq
+        ```
+
+        If this fails, report **runtime image mismatch / stale sidecar image** and stop. Do not claim model-fit results without a passing preflight.
+
         ## Primary workflow (recommended)
 
         Use the built-in cluster probe wrapper:
@@ -34,6 +44,25 @@ spec:
         3. Runs `llmfit` on each node.
         4. Returns aggregated JSON with ranked node recommendations.
 
+        ## "Top models on default settings" workflow
+
+        For broad top-model discovery (no specific model requested), use:
+
+        ```bash
+        llmfit-cluster-fit.sh --model "*" --min-fit good --limit 10
+        ```
+
+        This returns top-ranked candidates from each node using default fit thresholds.
+
+        If `ranked_nodes` is empty, retry in order:
+
+        ```bash
+        llmfit-cluster-fit.sh --model "*" --min-fit marginal --limit 10
+        llmfit-cluster-fit.sh --model "*" --min-fit too_tight --limit 10
+        ```
+
+        Include which threshold produced results.
+
         ## Output handling
 
         - Use `jq` to inspect top ranked nodes:
@@ -45,6 +74,8 @@ spec:
         - Include both summary and evidence in your answer:
           - `ranked_nodes` for recommendation
           - `node_results` for per-node fit details and failures
+
+        - If a run returns no candidates, include probe evidence from `node_results` (e.g. missing VRAM, empty candidate set), not just a generic failure statement.
 
         ## Safe operating defaults
 
@@ -103,12 +134,37 @@ spec:
   sidecar:
     image: ghcr.io/alexsjones/sympozium/skill-llmfit:latest
     mountWorkspace: true
+    hostAccess:
+      enabled: true
+      runAsRoot: true
+      hostPID: true
+      mounts:
+        - hostPath: /proc
+          mountPath: /host/proc
+          readOnly: true
+        - hostPath: /sys
+          mountPath: /host/sys
+          readOnly: true
+        - hostPath: /dev
+          mountPath: /host/dev
+          readOnly: true
+        - hostPath: /run/udev
+          mountPath: /host/run/udev
+          readOnly: true
     resources:
       cpu: "150m"
       memory: "256Mi"
     env:
       - name: LLMFIT_PROBE_IMAGE
         value: ghcr.io/alexsjones/sympozium/skill-llmfit:latest
+      - name: LLMFIT_HOST_PROC
+        value: /host/proc
+      - name: LLMFIT_HOST_SYS
+        value: /host/sys
+      - name: LLMFIT_HOST_DEV
+        value: /host/dev
+      - name: LLMFIT_HOST_UDEV
+        value: /host/run/udev
     # Namespace-scoped probe pod management.
     rbac:
       - apiGroups: [""]

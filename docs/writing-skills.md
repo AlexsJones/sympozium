@@ -15,6 +15,7 @@ There are three layers to a skill, each optional beyond the first:
 | **Skills** (Markdown) | Instructions the agent reads at `/skills/` | Always — this is the core of every SkillPack |
 | **Sidecar** (Container) | Runtime tools injected as a pod sidecar | When the skill needs binaries like `kubectl`, `helm`, `terraform` |
 | **RBAC** (Roles) | Kubernetes permissions auto-provisioned per run | When the sidecar needs to talk to the Kubernetes API |
+| **Host access** (optional) | Explicit host namespace and hostPath mounts | When the sidecar must inspect node-local host files/devices |
 
 ```
 ┌─────────────────────────────────────────────────────────┐
@@ -260,7 +261,39 @@ RoleBinding/ClusterRoleBinding: sympozium-skill-<skillpack>-<agentrun>
 
 ---
 
-## Step 5: Toggle the Skill
+## Step 5: Configure host access (optional)
+
+If your sidecar must inspect host-local files/devices (for example hardware probes), use `sidecar.hostAccess`.
+
+```yaml
+spec:
+  sidecar:
+    image: ghcr.io/yourorg/skill-my-tool:latest
+    hostAccess:
+      enabled: true
+      hostPID: true
+      runAsRoot: true
+      mounts:
+        - hostPath: /proc
+          mountPath: /host/proc
+          readOnly: true
+        - hostPath: /sys
+          mountPath: /host/sys
+          readOnly: true
+```
+
+### Host-access behavior
+
+- `enabled` gates all host access behavior (default off).
+- `hostPID` and `hostNetwork` are pod-level and applied if any enabled sidecar requests them.
+- `runAsRoot` and `privileged` are sidecar-level settings.
+- `mounts` creates hostPath volumes and mounts them only into that sidecar.
+
+Use this sparingly and prefer read-only mounts whenever possible.
+
+---
+
+## Step 6: Toggle the Skill
 
 ### Via the TUI
 

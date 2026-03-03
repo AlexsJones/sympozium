@@ -4,7 +4,14 @@
 
 set -euo pipefail
 
-NAMESPACE="${POD_NAMESPACE:-sympozium-system}"
+SERVICEACCOUNT_NS_FILE="/var/run/secrets/kubernetes.io/serviceaccount/namespace"
+if [[ -n "${POD_NAMESPACE:-}" ]]; then
+  NAMESPACE="${POD_NAMESPACE}"
+elif [[ -r "$SERVICEACCOUNT_NS_FILE" ]]; then
+  NAMESPACE="$(cat "$SERVICEACCOUNT_NS_FILE")"
+else
+  NAMESPACE="sympozium-system"
+fi
 MODEL_QUERY=""
 LIMIT="5"
 MIN_FIT="good"

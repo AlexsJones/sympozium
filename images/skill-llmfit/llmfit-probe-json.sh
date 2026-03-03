@@ -20,6 +20,11 @@ if [[ -z "${MODEL_QUERY}" ]]; then
   exit 2
 fi
 
+MODEL_QUERY_NORMALIZED="$(printf '%s' "${MODEL_QUERY}" | tr '[:upper:]' '[:lower:]')"
+if [[ "${MODEL_QUERY_NORMALIZED}" == "*" || "${MODEL_QUERY_NORMALIZED}" == "any" || "${MODEL_QUERY_NORMALIZED}" == "all" ]]; then
+  MODEL_QUERY="*"
+fi
+
 tmp_system=$(mktemp)
 tmp_models=$(mktemp)
 trap 'rm -f "$tmp_system" "$tmp_models"' EXIT
@@ -67,8 +72,12 @@ jq -n \
     | map(select(fitrank(.fit_level) >= fitrank($minFit | ascii_downcase)));
 
   def matches:
-    filtered
-    | map(select((.name // "" | tostring | ascii_downcase) | contains($modelQuery | ascii_downcase)));
+    if ($modelQuery == "*") then
+      filtered
+    else
+      filtered
+      | map(select((.name // "" | tostring | ascii_downcase) | contains($modelQuery | ascii_downcase)))
+    end;
 
   def picks:
     if (matches | length) > 0 then matches else filtered end;
