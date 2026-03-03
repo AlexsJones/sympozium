@@ -17,7 +17,7 @@ RUN go mod download
 COPY . .
 # Copy built frontend into the embed directory
 COPY --from=frontend /web/dist ./web/dist
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /apiserver ./cmd/apiserver
+RUN CGO_ENABLED=0 GOOS=linux go build -mod=mod -ldflags="-s -w" -o /apiserver ./cmd/apiserver
 
 FROM gcr.io/distroless/static:nonroot
 COPY --from=builder /apiserver /apiserver

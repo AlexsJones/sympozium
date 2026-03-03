@@ -136,6 +136,58 @@ spec:
                       - value
                       type: object
                     type: array
+                  hostAccess:
+                    description: |-
+                      HostAccess enables explicit host-level access for this sidecar.
+                      This is disabled by default and should only be used when a skill
+                      must inspect node-local host resources (for example, hardware probes).
+                    properties:
+                      enabled:
+                        description: Enabled controls whether host access settings
+                          are applied.
+                        type: boolean
+                      hostNetwork:
+                        description: |-
+                          HostNetwork enables host network namespace for the pod.
+                          Applied at pod level when any enabled sidecar requests it.
+                        type: boolean
+                      hostPID:
+                        description: |-
+                          HostPID enables host PID namespace for the pod.
+                          Applied at pod level when any enabled sidecar requests it.
+                        type: boolean
+                      mounts:
+                        description: Mounts are hostPath mounts injected into this
+                          sidecar.
+                        items:
+                          description: HostPathMount defines one hostPath volume mount
+                            for a sidecar.
+                          properties:
+                            hostPath:
+                              description: HostPath is the absolute path on the node
+                                host.
+                              type: string
+                            mountPath:
+                              description: MountPath is the path inside the sidecar
+                                container.
+                              type: string
+                            readOnly:
+                              default: true
+                              description: ReadOnly controls whether the mount is
+                                read-only.
+                              type: boolean
+                          required:
+                          - hostPath
+                          - mountPath
+                          type: object
+                        type: array
+                      privileged:
+                        description: Privileged runs the sidecar in privileged mode.
+                        type: boolean
+                      runAsRoot:
+                        description: RunAsRoot runs the sidecar as UID 0.
+                        type: boolean
+                    type: object
                   image:
                     description: Image is the container image for this skill sidecar.
                     type: string

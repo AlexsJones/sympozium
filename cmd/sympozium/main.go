@@ -956,6 +956,7 @@ spec:
       model: %s
 %s%s%s  skills:
     - skillPackRef: k8s-ops
+		- skillPackRef: llmfit
   memory:
     enabled: true
     maxSizeKB: 256
@@ -2186,6 +2187,8 @@ type editSkillItem struct {
 	enabled  bool              // whether it's in the instance's Skills list
 	category string            // e.g. "kubernetes"
 	params   map[string]string // per-skill params (e.g. repo for github-gitops)
+	hostReq  bool              // whether this skill requests host access
+	hostInfo string            // concise host access summary (pid/net/root/priv/mounts)
 }
 
 // editChannelItem represents a channel binding in the edit modal.
@@ -3922,11 +3925,19 @@ func (m tuiModel) handleRowEdit() (tea.Model, tea.Cmd) {
 			}
 		}
 		for _, sp := range m.skills {
+			hostReq := false
+			hostInfo := ""
+			if sp.Spec.Sidecar != nil && sp.Spec.Sidecar.HostAccess != nil && sp.Spec.Sidecar.HostAccess.Enabled {
+				hostReq = true
+				hostInfo = summarizeSkillHostAccess(sp.Spec.Sidecar.HostAccess)
+			}
 			m.editSkills = append(m.editSkills, editSkillItem{
 				name:     sp.Name,
 				enabled:  enabledSkills[sp.Name],
 				category: sp.Spec.Category,
 				params:   skillParams[sp.Name],
+				hostReq:  hostReq,
+				hostInfo: hostInfo,
 			})
 		}
 		// Populate channels tab: list all available channel types, mark those bound.
@@ -3996,11 +4007,19 @@ func (m tuiModel) handleRowEdit() (tea.Model, tea.Cmd) {
 					}
 				}
 				for _, sp := range m.skills {
+					hostReq := false
+					hostInfo := ""
+					if sp.Spec.Sidecar != nil && sp.Spec.Sidecar.HostAccess != nil && sp.Spec.Sidecar.HostAccess.Enabled {
+						hostReq = true
+						hostInfo = summarizeSkillHostAccess(sp.Spec.Sidecar.HostAccess)
+					}
 					m.editSkills = append(m.editSkills, editSkillItem{
 						name:     sp.Name,
 						enabled:  enabledSkills[sp.Name],
 						category: sp.Spec.Category,
 						params:   skillParams[sp.Name],
+						hostReq:  hostReq,
+						hostInfo: hostInfo,
 					})
 				}
 				boundChannels := make(map[string]string)
@@ -5333,7 +5352,7 @@ func (m tuiModel) renderPoliciesTable(tableH int) string {
 func (m tuiModel) renderSkillsTable(tableH int) string {
 	var b strings.Builder
 
-	header := fmt.Sprintf(" %-26s %-10s %-26s %-8s", "NAME", "SKILLS", "CONFIGMAP", "AGE")
+	header := fmt.Sprintf(" %-24s %-8s %-22s %-8s %-8s", "NAME", "SKILLS", "CONFIGMAP", "HOST", "AGE")
 	b.WriteString(tuiColHeaderStyle.Render(padRight(header, m.width)))
 	b.WriteString("\n")
 
@@ -5351,14 +5370,41 @@ func (m tuiModel) renderSkillsTable(tableH int) string {
 		sk := m.skills[idx]
 		age := shortDuration(time.Since(sk.CreationTimestamp.Time))
 		cm := sk.Status.ConfigMapName
+		host := "-"
+		if sk.Spec.Sidecar != nil && sk.Spec.Sidecar.HostAccess != nil && sk.Spec.Sidecar.HostAccess.Enabled {
+			host = "required"
+		}
 		if cm == "" {
 			cm = "-"
 		}
-		row := fmt.Sprintf(" %-26s %-10d %-26s %-8s", truncate(sk.Name, 26), len(sk.Spec.Skills), truncate(cm, 26), age)
+		row := fmt.Sprintf(" %-24s %-8d %-22s %-8s %-8s", truncate(sk.Name, 24), len(sk.Spec.Skills), truncate(cm, 22), host, age)
 		b.WriteString(m.styleRow(idx, row))
 		b.WriteString("\n")
 	}
 	return b.String()
+}
+
+func summarizeSkillHostAccess(ha *sympoziumv1alpha1.HostAccessSpec) string {
+	if ha == nil || !ha.Enabled {
+		return ""
+	}
+	parts := make([]string, 0, 5)
+	if ha.HostPID {
+		parts = append(parts, "pid")
+	}
+	if ha.HostNetwork {
+		parts = append(parts, "net")
+	}
+	if ha.RunAsRoot {
+		parts = append(parts, "root")
+	}
+	if ha.Privileged {
+		parts = append(parts, "priv")
+	}
+	if len(ha.Mounts) > 0 {
+		parts = append(parts, fmt.Sprintf("mounts:%d", len(ha.Mounts)))
+	}
+	return strings.Join(parts, ",")
 }
 
 func (m tuiModel) renderChannelsTable(tableH int) string {
@@ -6549,6 +6595,10 @@ func (m tuiModel) renderEditModal(base string) string {
 				if sk.category != "" {
 					cat = " (" + sk.category + ")"
 				}
+				host := ""
+				if sk.hostReq {
+					host = tuiDimStyle.Render(" [host: " + sk.hostInfo + "]")
+				}
 				// Show configured params inline (e.g. repo for github-gitops).
 				extra := ""
 				if sk.enabled && sk.name == "github-gitops" {
@@ -6560,9 +6610,9 @@ func (m tuiModel) renderEditModal(base string) string {
 				}
 				lbl := fmt.Sprintf("  %s %s%s", tog, sk.name, cat)
 				if m.editField == i {
-					lbl = highlight.Render(fmt.Sprintf("▸ %s %s%s", tog, sk.name, cat)) + extra
+					lbl = highlight.Render(fmt.Sprintf("▸ %s %s%s", tog, sk.name, cat)) + host + extra
 				} else {
-					lbl = value.Render(lbl) + extra
+					lbl = value.Render(lbl) + host + extra
 				}
 				content.WriteString("  " + lbl + "\n")
 			}
@@ -8734,9 +8784,10 @@ func tuiOnboardApply(ns string, w *wizardState) (string, error) {
 		inst.Spec.PolicyRef = policyName
 	}
 
-	// Default skills: k8s-ops.
+	// Default skills: k8s-ops + llmfit.
 	inst.Spec.Skills = []sympoziumv1alpha1.SkillRef{
 		{SkillPackRef: "k8s-ops"},
+		{SkillPackRef: "llmfit"},
 	}
 
 	// Memory is on by default.

@@ -46,9 +46,12 @@ spec:
         You monitor pod status, resource pressure, pending PVCs, and node
         conditions. When you detect issues, you investigate root causes
         and suggest remediation steps. You proactively alert on degraded
-        services before they become outages.
+        services before they become outages. You also advise model placement
+        by using llmfit-based node recommendations when users ask where a
+        model should run.
       skills:
         - k8s-ops
+        - llmfit
       toolPolicy:
         allow:
           - read_file

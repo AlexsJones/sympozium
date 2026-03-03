@@ -1,0 +1,177 @@
+---
+# Sympozium built-in SkillPack: llmfit
+apiVersion: sympozium.ai/v1alpha1
+kind: SkillPack
+metadata:
+  name: llmfit
+  namespace: sympozium-system
+  labels:
+    sympozium.ai/builtin: "true"
+    sympozium.ai/category: sre
+spec:
+  category: sre
+  version: "0.1.0"
+  source: builtin
+  skills:
+    - name: llmfit-cluster-placement
+      description: Determine which Kubernetes node is best for a requested model using per-node llmfit probes
+      content: |
+        # LLMFit Cluster Placement
+
+        You can use `llmfit` to score model placement per Kubernetes node.
+
+        ## Mandatory preflight (run first)
+
+        Before any recommendation query, verify runtime availability in the skill sidecar:
+
+        ```bash
+        which llmfit && llmfit --version && which kubectl && which jq
+        ```
+
+        If this fails, report **runtime image mismatch / stale sidecar image** and stop. Do not claim model-fit results without a passing preflight.
+
+        ## Primary workflow (recommended)
+
+        Use the built-in cluster probe wrapper:
+
+        ```bash
+        llmfit-cluster-fit.sh --model "Qwen/Qwen2.5-Coder-14B-Instruct" --use-case coding --min-fit good --limit 10
+        ```
+
+        The command:
+        1. Lists all cluster nodes.
+        2. Schedules short-lived probe pods pinned to each node.
+        3. Runs `llmfit` on each node.
+        4. Returns aggregated JSON with ranked node recommendations.
+
+        ## "Top models on default settings" workflow
+
+        For broad top-model discovery (no specific model requested), use:
+
+        ```bash
+        llmfit-cluster-fit.sh --model "*" --min-fit good --limit 10
+        ```
+
+        This returns top-ranked candidates from each node using default fit thresholds.
+
+        If `ranked_nodes` is empty, retry in order:
+
+        ```bash
+        llmfit-cluster-fit.sh --model "*" --min-fit marginal --limit 10
+        llmfit-cluster-fit.sh --model "*" --min-fit too_tight --limit 10
+        ```
+
+        Include which threshold produced results.
+
+        ## Output handling
+
+        - Use `jq` to inspect top ranked nodes:
+
+        ```bash
+        llmfit-cluster-fit.sh --model "Qwen2.5" --use-case coding | jq '.ranked_nodes[:5]'
+        ```
+
+        - Include both summary and evidence in your answer:
+          - `ranked_nodes` for recommendation
+          - `node_results` for per-node fit details and failures
+
+        - If a run returns no candidates, include probe evidence from `node_results` (e.g. missing VRAM, empty candidate set), not just a generic failure statement.
+
+        ## Safe operating defaults
+
+        - Default `min-fit`: `good`
+        - Default `limit`: `5`
+        - Raise `--timeout` when the cluster is large or nodes are slow.
+
+      requires:
+        bins:
+          - llmfit
+          - kubectl
+          - jq
+        tools:
+          - execute_command
+
+    - name: llmfit-rest-api-usage
+      description: Use llmfit REST API endpoints for node-local model-fit queries when llmfit daemons are available
+      content: |
+        # LLMFit REST API
+
+        If a node-local `llmfit serve` endpoint is already running (v0.5.8+), query it directly.
+
+        ## Common endpoints
+
+        ```bash
+        curl -s http://127.0.0.1:8787/health | jq .
+        curl -s http://127.0.0.1:8787/api/v1/system | jq .
+        curl -s "http://127.0.0.1:8787/api/v1/models/top?limit=5&min_fit=good&use_case=coding" | jq .
+        curl -s "http://127.0.0.1:8787/api/v1/models/Qwen2.5?runtime=any" | jq .
+        ```
+
+        ## Placement guidance
+
+        For scheduling decisions, prefer:
+
+        - `min_fit=good`
+        - `include_too_tight=false`
+        - `sort=score`
+        - `limit=5..20`
+
+        ## When to use API vs probes
+
+        - Use `llmfit-cluster-fit.sh` when no daemon is running on nodes.
+        - Use REST API when your platform already exposes node-local llmfit services.
+      requires:
+        bins:
+          - curl
+          - jq
+        tools:
+          - execute_command
+
+  runtimeRequirements:
+    minMemory: 384Mi
+    minCPU: 150m
+
+  sidecar:
+    image: ghcr.io/alexsjones/sympozium/skill-llmfit:latest
+    mountWorkspace: true
+    hostAccess:
+      enabled: true
+      runAsRoot: true
+      hostPID: true
+      mounts:
+        - hostPath: /proc
+          mountPath: /host/proc
+          readOnly: true
+        - hostPath: /sys
+          mountPath: /host/sys
+          readOnly: true
+        - hostPath: /dev
+          mountPath: /host/dev
+          readOnly: true
+        - hostPath: /run/udev
+          mountPath: /host/run/udev
+          readOnly: true
+    resources:
+      cpu: "150m"
+      memory: "256Mi"
+    env:
+      - name: LLMFIT_PROBE_IMAGE
+        value: ghcr.io/alexsjones/sympozium/skill-llmfit:latest
+      - name: LLMFIT_HOST_PROC
+        value: /host/proc
+      - name: LLMFIT_HOST_SYS
+        value: /host/sys
+      - name: LLMFIT_HOST_DEV
+        value: /host/dev
+      - name: LLMFIT_HOST_UDEV
+        value: /host/run/udev
+    # Namespace-scoped probe pod management.
+    rbac:
+      - apiGroups: [""]
+        resources: ["pods", "pods/log"]
+        verbs: ["get", "list", "watch", "create", "delete"]
+    # Cluster-scoped node discovery.
+    clusterRBAC:
+      - apiGroups: [""]
+        resources: ["nodes"]
+        verbs: ["get", "list", "watch"]

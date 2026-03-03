@@ -5,7 +5,7 @@ WORKDIR /workspace
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /channel-slack ./channels/slack
+RUN CGO_ENABLED=0 GOOS=linux go build -mod=mod -ldflags="-s -w" -o /channel-slack ./channels/slack
 
 FROM gcr.io/distroless/static:nonroot
 COPY --from=builder /channel-slack /channel-slack

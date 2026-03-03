@@ -101,7 +101,7 @@ make docker-build TAG=v0.0.32
 # Load images into Kind (all components)
 for img in controller apiserver ipc-bridge webhook agent-runner \
            channel-telegram channel-slack channel-discord channel-whatsapp \
-           skill-k8s-ops skill-sre-observability; do
+           skill-k8s-ops skill-sre-observability skill-llmfit; do
   kind load docker-image ghcr.io/alexsjones/sympozium/$img:v0.0.32 --name kind
 done
 
@@ -171,6 +171,7 @@ TEST_MODEL=gpt-5.2 TEST_TIMEOUT=180 ./test/integration/test-write-file.sh
 | `test-write-file.sh` | `write_file` tool — agent writes a file, script verifies content |
 | `test-anthropic-write-file.sh` | `write_file` tool using Anthropic provider — validates provider parity |
 | `test-k8s-ops-nodes.sh` | `k8s-ops` skill — agent runs kubectl via sidecar |
+| `test-llmfit-cluster-fit.sh` | `llmfit` skill — agent runs node-level llmfit placement probe workflow |
 | `test-telegram-channel.sh` | Telegram channel deployment + message flow |
 | `test-slack-channel.sh` | Slack channel deployment (Socket Mode) |
 
