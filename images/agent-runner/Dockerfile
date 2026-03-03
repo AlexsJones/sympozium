@@ -5,7 +5,7 @@ WORKDIR /workspace
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /agent-runner ./cmd/agent-runner
+RUN CGO_ENABLED=0 GOOS=linux go build -mod=mod -ldflags="-s -w" -o /agent-runner ./cmd/agent-runner
 
 FROM gcr.io/distroless/static:nonroot
 COPY --from=builder /agent-runner /agent-runner

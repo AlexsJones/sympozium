@@ -31,7 +31,7 @@ CHANNELS = telegram whatsapp discord slack
 # All images
 IMAGES = controller apiserver ipc-bridge webhook agent-runner \
          channel-telegram channel-whatsapp channel-discord channel-slack \
-		 skill-k8s-ops skill-sre-observability skill-github-gitops
+		 skill-k8s-ops skill-sre-observability skill-github-gitops skill-llmfit
 
 .PHONY: all build test clean generate manifests docker-build docker-push install help web-build web-dev web-dev-serve web-clean web-install setup-hooks integration-tests
 
@@ -65,6 +65,7 @@ test-integration: ## Run integration tests (requires Kind cluster + API keys)
 	./test/integration/test-write-file.sh
 	./test/integration/test-anthropic-write-file.sh
 	./test/integration/test-k8s-ops-nodes.sh
+	./test/integration/test-llmfit-cluster-fit.sh
 	./test/integration/test-telegram-channel.sh
 	./test/integration/test-slack-channel.sh
 
@@ -99,12 +100,12 @@ $(CONTROLLER_GEN):
 	GOBIN=$(LOCALBIN) $(GOCMD) install sigs.k8s.io/controller-tools/cmd/controller-gen@$(CONTROLLER_GEN_VERSION)
 
 generate: controller-gen ## Generate code (deepcopy, CRD manifests)
-	$(CONTROLLER_GEN) object:headerFile="hack/boilerplate.go.txt" paths="./api/..."
-	$(CONTROLLER_GEN) rbac:roleName=sympozium-manager-role crd webhook paths="./..." output:crd:artifacts:config=config/crd/bases
+	GOFLAGS=-mod=mod $(CONTROLLER_GEN) object:headerFile="hack/boilerplate.go.txt" paths="./api/..."
+	GOFLAGS=-mod=mod $(CONTROLLER_GEN) rbac:roleName=sympozium-manager-role crd webhook paths="./..." output:crd:artifacts:config=config/crd/bases
 	@$(MAKE) helm-sync
 
 manifests: controller-gen ## Generate CRD manifests
-	$(CONTROLLER_GEN) crd paths="./api/..." output:crd:artifacts:config=config/crd/bases
+	GOFLAGS=-mod=mod $(CONTROLLER_GEN) crd paths="./api/..." output:crd:artifacts:config=config/crd/bases
 	@$(MAKE) helm-sync
 
 ##@ Web UI

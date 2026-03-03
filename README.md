@@ -303,6 +303,7 @@ Skills are mounted as files into agent pods and optionally inject sidecar contai
 |-----------|----------|---------|-------------|--------|
 | `k8s-ops` | Kubernetes | ✅ `kubectl`, `curl`, `jq` | Cluster inspection, workload management, troubleshooting, scaling. Full admin RBAC auto-provisioned per run. | **Stable** |
 | `sre-observability` | SRE | ✅ `kubectl`, `curl`, `jq` | Prometheus/Loki/Kubernetes observability workflows: health triage, metrics queries, and deep log/event correlation. Read-only observability RBAC auto-provisioned per run. | **Alpha** |
+| `llmfit` | SRE | ✅ `llmfit`, `kubectl`, `jq` | Node-level model placement analysis. Runs llmfit probes per node and ranks best nodes for requested models. | **Alpha** |
 | `incident-response` | SRE | ✅ | Structured incident triage — gather context, diagnose root cause, suggest remediation. | **Alpha** |
 | `code-review` | Development | — | Code review guidelines and best practices for pull request analysis. | **Alpha** |
 
@@ -448,12 +449,12 @@ SympoziumInstance has skills: [k8s-ops]
     → On completion/deletion: all skill RBAC cleaned up
 ```
 
-The `k8s-ops` and `sre-observability` built-in skills provide sidecars with `kubectl`, `curl`, and `jq` for cluster operations and observability runbooks. `k8s-ops` is designed for active workload management, while `sre-observability` is read-only for metrics/logs/events triage. See the **[Skill Authoring Guide](docs/writing-skills.md)** for a full walkthrough of building your own skills. To enable a skill, toggle it on your instance:
+The `k8s-ops`, `sre-observability`, and `llmfit` built-in skills provide sidecars for cluster operations and placement analysis. `k8s-ops` is designed for active workload management, `sre-observability` is read-only for metrics/logs/events triage, and `llmfit` probes each node to rank the best placement for a target model. See the **[Skill Authoring Guide](docs/writing-skills.md)** for a full walkthrough of building your own skills. To enable a skill, toggle it on your instance:
 
 ```
-# In the TUI: press 's' on an instance → Space to toggle k8s-ops
+# In the TUI: press 's' on an instance → Space to toggle k8s-ops / llmfit
 # Or via kubectl:
-kubectl patch sympoziuminstance <name> --type=merge -p '{"spec":{"skills":[{"skillPackRef":"k8s-ops"}]}}'
+kubectl patch sympoziuminstance <name> --type=merge -p '{"spec":{"skills":[{"skillPackRef":"k8s-ops"},{"skillPackRef":"llmfit"}]}}'
 ```
 
 ### Security

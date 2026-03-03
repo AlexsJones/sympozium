@@ -6,7 +6,7 @@ WORKDIR /workspace
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w -X main.imageTag=${IMAGE_TAG}" -o /controller ./cmd/controller
+RUN CGO_ENABLED=0 GOOS=linux go build -mod=mod -ldflags="-s -w -X main.imageTag=${IMAGE_TAG}" -o /controller ./cmd/controller
 
 FROM gcr.io/distroless/static:nonroot
 COPY --from=builder /controller /controller
