@@ -528,6 +528,21 @@ func (r *AgentRunReconciler) ensureAgentServiceAccount(ctx context.Context, name
 	return nil
 }
 
+// seccompProfileForPod determines the pod-level seccomp profile.
+// Priority: AgentRun spec > default (RuntimeDefault).
+func seccompProfileForPod(agentRun *sympoziumv1alpha1.AgentRun) *corev1.SeccompProfile {
+	if agentRun.Spec.Sandbox != nil &&
+		agentRun.Spec.Sandbox.SecurityContext != nil &&
+		agentRun.Spec.Sandbox.SecurityContext.SeccompProfile != nil {
+		return &corev1.SeccompProfile{
+			Type: corev1.SeccompProfileType(agentRun.Spec.Sandbox.SecurityContext.SeccompProfile.Type),
+		}
+	}
+	return &corev1.SeccompProfile{
+		Type: corev1.SeccompProfileTypeRuntimeDefault,
+	}
+}
+
 // buildJob constructs the Kubernetes Job for an AgentRun.
 func (r *AgentRunReconciler) buildJob(
 	agentRun *sympoziumv1alpha1.AgentRun,
@@ -582,9 +597,10 @@ func (r *AgentRunReconciler) buildJob(
 					HostPID:            hostPID,
 					DNSPolicy:          dnsPolicy,
 					SecurityContext: &corev1.PodSecurityContext{
-						RunAsNonRoot: &runAsNonRoot,
-						RunAsUser:    &runAsUser,
-						FSGroup:      &fsGroup,
+						RunAsNonRoot:   &runAsNonRoot,
+						RunAsUser:      &runAsUser,
+						FSGroup:        &fsGroup,
+						SeccompProfile: seccompProfileForPod(agentRun),
 					},
 					Containers: containers,
 					Volumes:    volumes,
@@ -652,6 +668,13 @@ func (r *AgentRunReconciler) buildContainers(
 			Name:            "ipc-bridge",
 			Image:           r.imageRef("ipc-bridge"),
 			ImagePullPolicy: corev1.PullIfNotPresent,
+			SecurityContext: &corev1.SecurityContext{
+				ReadOnlyRootFilesystem:   &readOnly,
+				AllowPrivilegeEscalation: &noPrivEsc,
+				Capabilities: &corev1.Capabilities{
+					Drop: []corev1.Capability{"ALL"},
+				},
+			},
 			Env: []corev1.EnvVar{
 				{Name: "AGENT_RUN_ID", Value: agentRun.Name},
 				{Name: "INSTANCE_NAME", Value: agentRun.Spec.InstanceRef},
@@ -830,6 +853,11 @@ func (r *AgentRunReconciler) buildContainers(
 				allowPrivEsc := true
 				sidecarSC.Privileged = &privileged
 				sidecarSC.AllowPrivilegeEscalation = &allowPrivEsc
+				// Privileged sidecars need Unconfined seccomp to
+				// avoid blocking syscalls required for node-level operations.
+				sidecarSC.SeccompProfile = &corev1.SeccompProfile{
+					Type: corev1.SeccompProfileTypeUnconfined,
+				}
 			}
 			if sc.sidecar.HostAccess.RunAsRoot {
 				runAsUser := int64(0)

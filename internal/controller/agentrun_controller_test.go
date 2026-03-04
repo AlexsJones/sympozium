@@ -134,6 +134,44 @@ func TestBuildJob_RestartPolicy(t *testing.T) {
 	}
 }
 
+func TestBuildJob_DefaultSeccompProfile(t *testing.T) {
+	r := &AgentRunReconciler{}
+	job := r.buildJob(newTestRun(), false, nil, nil)
+
+	psc := job.Spec.Template.Spec.SecurityContext
+	if psc == nil {
+		t.Fatal("pod security context is nil")
+	}
+	if psc.SeccompProfile == nil {
+		t.Fatal("seccomp profile is nil, want RuntimeDefault")
+	}
+	if psc.SeccompProfile.Type != corev1.SeccompProfileTypeRuntimeDefault {
+		t.Errorf("seccomp type = %q, want RuntimeDefault", psc.SeccompProfile.Type)
+	}
+}
+
+func TestBuildJob_CustomSeccompProfile(t *testing.T) {
+	r := &AgentRunReconciler{}
+	run := newTestRun()
+	run.Spec.Sandbox = &sympoziumv1alpha1.AgentRunSandboxSpec{
+		Enabled: true,
+		SecurityContext: &sympoziumv1alpha1.SandboxSecurityContext{
+			SeccompProfile: &sympoziumv1alpha1.SeccompProfileSpec{
+				Type: "Unconfined",
+			},
+		},
+	}
+	job := r.buildJob(run, false, nil, nil)
+
+	psc := job.Spec.Template.Spec.SecurityContext
+	if psc.SeccompProfile == nil {
+		t.Fatal("seccomp profile is nil")
+	}
+	if psc.SeccompProfile.Type != corev1.SeccompProfileTypeUnconfined {
+		t.Errorf("seccomp type = %q, want Unconfined", psc.SeccompProfile.Type)
+	}
+}
+
 // ── buildContainers tests ────────────────────────────────────────────────────
 
 func TestBuildContainers_BasicCount(t *testing.T) {
@@ -636,5 +674,74 @@ func TestBuildContainers_ObservabilityEnv(t *testing.T) {
 	}
 	if !strings.Contains(agentEnv["SYMPOZIUM_OTEL_RESOURCE_ATTRIBUTES"], "sympozium.agent_run.id=test-run") {
 		t.Fatalf("missing run id in resource attributes: %q", agentEnv["SYMPOZIUM_OTEL_RESOURCE_ATTRIBUTES"])
+	}
+}
+
+// ── Seccomp profile tests ────────────────────────────────────────────────────
+
+func TestBuildContainers_PrivilegedSidecarUnconfinedSeccomp(t *testing.T) {
+	r := &AgentRunReconciler{}
+	sidecars := []resolvedSidecar{
+		{
+			skillPackName: "llmfit",
+			sidecar: sympoziumv1alpha1.SkillSidecar{
+				Image:          "llmfit:latest",
+				MountWorkspace: true,
+				HostAccess: &sympoziumv1alpha1.HostAccessSpec{
+					Enabled:    true,
+					Privileged: true,
+				},
+			},
+		},
+	}
+	cs := r.buildContainers(newTestRun(), false, nil, sidecars)
+
+	sidecar := cs[2] // agent, ipc-bridge, then skill sidecar
+	if sidecar.SecurityContext == nil {
+		t.Fatal("privileged sidecar security context is nil")
+	}
+	if sidecar.SecurityContext.SeccompProfile == nil {
+		t.Fatal("privileged sidecar seccomp profile is nil")
+	}
+	if sidecar.SecurityContext.SeccompProfile.Type != corev1.SeccompProfileTypeUnconfined {
+		t.Errorf("sidecar seccomp = %q, want Unconfined", sidecar.SecurityContext.SeccompProfile.Type)
+	}
+}
+
+func TestBuildContainers_NonPrivilegedSidecarNoSeccompOverride(t *testing.T) {
+	r := &AgentRunReconciler{}
+	sidecars := []resolvedSidecar{
+		{
+			skillPackName: "basic-skill",
+			sidecar: sympoziumv1alpha1.SkillSidecar{
+				Image:          "basic:latest",
+				MountWorkspace: true,
+			},
+		},
+	}
+	cs := r.buildContainers(newTestRun(), false, nil, sidecars)
+
+	sidecar := cs[2]
+	if sidecar.SecurityContext != nil {
+		t.Errorf("non-privileged sidecar should have nil SecurityContext, got %+v", sidecar.SecurityContext)
+	}
+}
+
+func TestBuildContainers_IPCBridgeSecurityContext(t *testing.T) {
+	r := &AgentRunReconciler{}
+	cs := r.buildContainers(newTestRun(), false, nil, nil)
+
+	ipc := cs[1]
+	if ipc.SecurityContext == nil {
+		t.Fatal("ipc-bridge security context is nil")
+	}
+	if ipc.SecurityContext.ReadOnlyRootFilesystem == nil || !*ipc.SecurityContext.ReadOnlyRootFilesystem {
+		t.Error("ipc-bridge ReadOnlyRootFilesystem should be true")
+	}
+	if ipc.SecurityContext.AllowPrivilegeEscalation == nil || *ipc.SecurityContext.AllowPrivilegeEscalation {
+		t.Error("ipc-bridge AllowPrivilegeEscalation should be false")
+	}
+	if ipc.SecurityContext.Capabilities == nil || len(ipc.SecurityContext.Capabilities.Drop) == 0 {
+		t.Error("ipc-bridge should drop ALL capabilities")
 	}
 }

@@ -2,12 +2,15 @@
 package apiserver
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -762,8 +765,9 @@ type PatchPersonaPackRequest struct {
 	APIKey         string            `json:"apiKey,omitempty"`
 	Model          string            `json:"model,omitempty"`
 	BaseURL        string            `json:"baseURL,omitempty"`
-	ChannelConfigs map[string]string `json:"channelConfigs,omitempty"`
-	PolicyRef      string            `json:"policyRef,omitempty"`
+	ChannelConfigs    map[string]string `json:"channelConfigs,omitempty"`
+	PolicyRef         string            `json:"policyRef,omitempty"`
+	HeartbeatInterval string            `json:"heartbeatInterval,omitempty"`
 }
 
 func (s *Server) patchPersonaPack(w http.ResponseWriter, r *http.Request) {
@@ -857,6 +861,15 @@ func (s *Server) patchPersonaPack(w http.ResponseWriter, r *http.Request) {
 
 	if req.PolicyRef != "" {
 		pp.Spec.PolicyRef = req.PolicyRef
+	}
+
+	if req.HeartbeatInterval != "" {
+		for i := range pp.Spec.Personas {
+			if pp.Spec.Personas[i].Schedule != nil {
+				pp.Spec.Personas[i].Schedule.Interval = req.HeartbeatInterval
+				pp.Spec.Personas[i].Schedule.Cron = "" // clear cron so interval takes precedence
+			}
+		}
 	}
 
 	if err := s.client.Update(r.Context(), &pp); err != nil {
@@ -1074,6 +1087,12 @@ type MetricBreakdown struct {
 	Value float64 `json:"value"`
 }
 
+type promSample struct {
+	Name   string
+	Labels map[string]string
+	Value  float64
+}
+
 func (s *Server) getObservabilityMetrics(w http.ResponseWriter, r *http.Request) {
 	namespace := r.URL.Query().Get("namespace")
 	if namespace == "" {
@@ -1086,6 +1105,61 @@ func (s *Server) getObservabilityMetrics(w http.ResponseWriter, r *http.Request)
 		Namespace:          namespace,
 		RunStatus:          map[string]float64{},
 	}
+
+	// Try the OTel collector first.
+	raw, err := s.readCollectorMetrics(r.Context())
+	if err == nil {
+		resp.CollectorReachable = true
+		samples := parsePrometheusSamples(raw)
+
+		inputByModel := map[string]float64{}
+		outputByModel := map[string]float64{}
+		toolsByName := map[string]float64{}
+		metricNames := map[string]struct{}{}
+
+		for _, sample := range samples {
+			metricNames[sample.Name] = struct{}{}
+			switch sample.Name {
+			case "sympozium_agent_runs_total":
+				resp.AgentRunsTotal += sample.Value
+				if status := sample.Labels["status"]; status != "" {
+					resp.RunStatus[status] += sample.Value
+				}
+			case "gen_ai_usage_input_tokens_total":
+				resp.InputTokensTotal += sample.Value
+				if model := sample.Labels["model"]; model != "" {
+					inputByModel[model] += sample.Value
+				}
+			case "gen_ai_usage_output_tokens_total":
+				resp.OutputTokensTotal += sample.Value
+				if model := sample.Labels["model"]; model != "" {
+					outputByModel[model] += sample.Value
+				}
+			case "sympozium_tool_invocations_total":
+				resp.ToolInvocations += sample.Value
+				if toolName := sample.Labels["tool_name"]; toolName != "" {
+					toolsByName[toolName] += sample.Value
+				}
+			}
+		}
+
+		resp.InputByModel = mapToMetricBreakdown(inputByModel)
+		resp.OutputByModel = mapToMetricBreakdown(outputByModel)
+		resp.ToolsByName = mapToMetricBreakdown(toolsByName)
+
+		names := make([]string, 0, len(metricNames))
+		for n := range metricNames {
+			names = append(names, n)
+		}
+		sort.Strings(names)
+		resp.RawMetricNames = names
+
+		writeJSON(w, resp)
+		return
+	}
+
+	// Collector unreachable — fall back to AgentRun CRD aggregation.
+	resp.CollectorError = err.Error()
 
 	var runs sympoziumv1alpha1.AgentRunList
 	if err := s.client.List(r.Context(), &runs, client.InNamespace(namespace)); err != nil {
@@ -1143,6 +1217,119 @@ func mapToMetricBreakdown(m map[string]float64) []MetricBreakdown {
 		return out[i].Value > out[j].Value
 	})
 	return out
+}
+
+func (s *Server) readCollectorMetrics(ctx context.Context) (string, error) {
+	if s.kube == nil {
+		return "", fmt.Errorf("kubernetes client unavailable")
+	}
+
+	httpClient := &http.Client{Timeout: 5 * time.Second}
+	req, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodGet,
+		"http://sympozium-otel-collector.sympozium-system.svc:8889/metrics",
+		nil,
+	)
+	if err != nil {
+		return "", fmt.Errorf("failed to create collector metrics request: %w", err)
+	}
+	res, err := httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("failed to query collector metrics: %w", err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		return "", fmt.Errorf("collector metrics request failed: HTTP %d", res.StatusCode)
+	}
+	raw, err := io.ReadAll(res.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed to read collector metrics body: %w", err)
+	}
+	return string(raw), nil
+}
+
+func parsePrometheusSamples(raw string) []promSample {
+	out := []promSample{}
+	scanner := bufio.NewScanner(strings.NewReader(raw))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		value, err := strconv.ParseFloat(fields[1], 64)
+		if err != nil {
+			continue
+		}
+		name, labels := parsePromMetricSelector(fields[0])
+		out = append(out, promSample{Name: name, Labels: labels, Value: value})
+	}
+	return out
+}
+
+func parsePromMetricSelector(selector string) (string, map[string]string) {
+	start := strings.Index(selector, "{")
+	end := strings.LastIndex(selector, "}")
+	if start < 0 || end < 0 || end <= start {
+		return selector, map[string]string{}
+	}
+	name := selector[:start]
+	return name, parsePromLabels(selector[start+1 : end])
+}
+
+func parsePromLabels(raw string) map[string]string {
+	out := map[string]string{}
+	for _, part := range splitCommaRespectQuotes(raw) {
+		kv := strings.SplitN(part, "=", 2)
+		if len(kv) != 2 {
+			continue
+		}
+		k := strings.TrimSpace(kv[0])
+		v := strings.TrimSpace(kv[1])
+		v = strings.Trim(v, "\"")
+		v = strings.ReplaceAll(v, `\"`, `"`)
+		if k != "" {
+			out[k] = v
+		}
+	}
+	return out
+}
+
+func splitCommaRespectQuotes(s string) []string {
+	parts := []string{}
+	var b strings.Builder
+	inQuotes := false
+	escaped := false
+	for _, r := range s {
+		switch {
+		case escaped:
+			b.WriteRune(r)
+			escaped = false
+		case r == '\\':
+			b.WriteRune(r)
+			escaped = true
+		case r == '"':
+			b.WriteRune(r)
+			inQuotes = !inQuotes
+		case r == ',' && !inQuotes:
+			part := strings.TrimSpace(b.String())
+			if part != "" {
+				parts = append(parts, part)
+			}
+			b.Reset()
+		default:
+			b.WriteRune(r)
+		}
+	}
+	last := strings.TrimSpace(b.String())
+	if last != "" {
+		parts = append(parts, last)
+	}
+	return parts
 }
 
 func (s *Server) getRunTelemetry(w http.ResponseWriter, r *http.Request) {

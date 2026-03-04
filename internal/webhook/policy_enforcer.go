@@ -217,6 +217,24 @@ func (mpe *MutatingPolicyEnforcer) Handle(ctx context.Context, req admission.Req
 		}
 	}
 
+	// Inject seccomp profile default from policy
+	if policy.Spec.SandboxPolicy != nil && policy.Spec.SandboxPolicy.SeccompProfile != nil {
+		if run.Spec.Sandbox == nil {
+			run.Spec.Sandbox = &sympoziumv1alpha1.AgentRunSandboxSpec{}
+			modified = true
+		}
+		if run.Spec.Sandbox.SecurityContext == nil {
+			run.Spec.Sandbox.SecurityContext = &sympoziumv1alpha1.SandboxSecurityContext{}
+			modified = true
+		}
+		if run.Spec.Sandbox.SecurityContext.SeccompProfile == nil {
+			run.Spec.Sandbox.SecurityContext.SeccompProfile = &sympoziumv1alpha1.SeccompProfileSpec{
+				Type: policy.Spec.SandboxPolicy.SeccompProfile.Type,
+			}
+			modified = true
+		}
+	}
+
 	// Inject tool policy defaults from SympoziumPolicy
 	if policy.Spec.ToolGating != nil && run.Spec.ToolPolicy == nil {
 		tp := &sympoziumv1alpha1.ToolPolicySpec{}

@@ -110,6 +110,18 @@ spec:
                   required:
                     description: Required makes sandbox mandatory.
                     type: boolean
+                  seccompProfile:
+                    description: |-
+                      SeccompProfile defines the default seccomp profile type for agent pods.
+                      Valid values: "RuntimeDefault", "Unconfined", "Localhost".
+                      Defaults to "RuntimeDefault" when not set.
+                    properties:
+                      type:
+                        description: Type is the seccomp profile type.
+                        type: string
+                    required:
+                    - type
+                    type: object
                 required:
                 - required
                 type: object

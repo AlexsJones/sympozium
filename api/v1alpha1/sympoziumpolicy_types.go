@@ -49,6 +49,12 @@ type SandboxPolicySpec struct {
 	// AllowHostMounts controls whether host path mounts are allowed.
 	// +kubebuilder:default=false
 	AllowHostMounts bool `json:"allowHostMounts,omitempty"`
+
+	// SeccompProfile defines the default seccomp profile type for agent pods.
+	// Valid values: "RuntimeDefault", "Unconfined", "Localhost".
+	// Defaults to "RuntimeDefault" when not set.
+	// +optional
+	SeccompProfile *SeccompProfileSpec `json:"seccompProfile,omitempty"`
 }
 
 // SubagentPolicySpec defines sub-agent limits.

@@ -573,6 +573,7 @@ export const api = {
         baseURL?: string;
         channelConfigs?: Record<string, string>;
         policyRef?: string;
+        heartbeatInterval?: string;
       }
     ) =>
       apiFetch<PersonaPack>(`/api/v1/personapacks/${name}`, {

@@ -2011,6 +2011,7 @@ const (
 	wizStepPersonaModel        // text: model name
 	wizStepPersonaChannels     // multi-toggle: channels to bind
 	wizStepPersonaChannelToken // text: channel token (per selected channel)
+	wizStepPersonaHeartbeat    // menu 1-5: heartbeat interval override
 	wizStepPersonaConfirm      // y/n: confirm summary
 	wizStepPersonaApplying     // auto — patch pack + create resources
 	wizStepPersonaDone         // auto — show result
@@ -2154,8 +2155,9 @@ type tuiModel struct {
 
 	editSkills          []editSkillItem   // toggleable skills list
 	editChannels        []editChannelItem // channel bindings
-	editPersonaPackName string            // non-empty when editing a PersonaPack
-	editPersonas        []editPersonaItem // toggleable personas list
+	editPersonaPackName      string            // non-empty when editing a PersonaPack
+	editPersonas             []editPersonaItem // toggleable personas list
+	editPersonaHeartbeatIdx  int               // index into personaHeartbeatOptions
 
 	// Detail pane
 	detailPane       detailPaneState // collapsed, panel, or fullscreen
@@ -2212,6 +2214,18 @@ var editMemoryFieldCount = 3    // enabled, maxSizeKB, systemPrompt
 var editHeartbeatFieldCount = 6 // schedule, task, type, concurrencyPolicy, includeMemory, suspend
 var editTabNames = []string{"Memory", "Heartbeat", "Skills", "Channels"}
 var availableChannelTypes = []string{"telegram", "slack", "discord", "whatsapp"}
+
+// personaHeartbeatOptions defines the selectable intervals for PersonaPack editing.
+var personaHeartbeatOptions = []struct {
+	label    string
+	interval string // value written to PersonaSchedule.Interval
+}{
+	{"30m", "30m"},
+	{"1h", "1h"},
+	{"6h", "6h"},
+	{"24h", "24h"},
+	{"pack default", ""},
+}
 
 // channelTokenKeyFor returns the env var name used in the channel secret for the given type.
 func channelTokenKeyFor(chType string) string {
@@ -2659,7 +2673,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "j", "down":
 				max := editMemoryFieldCount
 				if m.editPersonaPackName != "" {
-					max = len(m.editPersonas)
+					max = 1 + len(m.editPersonas) // field 0 = heartbeat, rest = persona toggles
 				} else if m.editTab == 1 {
 					max = editHeartbeatFieldCount
 				} else if m.editTab == 2 {
@@ -2679,8 +2693,14 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case " ":
 				// Toggle boolean fields
 				if m.editPersonaPackName != "" {
-					if m.editField >= 0 && m.editField < len(m.editPersonas) {
-						m.editPersonas[m.editField].enabled = !m.editPersonas[m.editField].enabled
+					if m.editField == 0 {
+						// Cycle heartbeat forward on space
+						m.editPersonaHeartbeatIdx = (m.editPersonaHeartbeatIdx + 1) % len(personaHeartbeatOptions)
+					} else {
+						idx := m.editField - 1 // persona toggles start at field 1
+						if idx >= 0 && idx < len(m.editPersonas) {
+							m.editPersonas[idx].enabled = !m.editPersonas[idx].enabled
+						}
 					}
 				} else if m.editTab == 0 {
 					if m.editField == 0 {
@@ -2734,7 +2754,9 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			case "left", "h":
 				// Cycle enum fields backward
-				if m.editTab == 1 {
+				if m.editPersonaPackName != "" && m.editField == 0 {
+					m.editPersonaHeartbeatIdx = (m.editPersonaHeartbeatIdx + len(personaHeartbeatOptions) - 1) % len(personaHeartbeatOptions)
+				} else if m.editTab == 1 {
 					switch m.editField {
 					case 2:
 						m.editHeartbeat.schedType = (m.editHeartbeat.schedType + len(editScheduleTypes) - 1) % len(editScheduleTypes)
@@ -2745,7 +2767,9 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			case "right", "l":
 				// Cycle enum fields forward
-				if m.editTab == 1 {
+				if m.editPersonaPackName != "" && m.editField == 0 {
+					m.editPersonaHeartbeatIdx = (m.editPersonaHeartbeatIdx + 1) % len(personaHeartbeatOptions)
+				} else if m.editTab == 1 {
 					switch m.editField {
 					case 2:
 						m.editHeartbeat.schedType = (m.editHeartbeat.schedType + 1) % len(editScheduleTypes)
@@ -2779,8 +2803,14 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "enter":
 				// Toggle bools, open task sub-modal, or no-op on text fields.
 				if m.editPersonaPackName != "" {
-					if m.editField >= 0 && m.editField < len(m.editPersonas) {
-						m.editPersonas[m.editField].enabled = !m.editPersonas[m.editField].enabled
+					if m.editField == 0 {
+						// Cycle heartbeat forward on enter
+						m.editPersonaHeartbeatIdx = (m.editPersonaHeartbeatIdx + 1) % len(personaHeartbeatOptions)
+					} else {
+						idx := m.editField - 1
+						if idx >= 0 && idx < len(m.editPersonas) {
+							m.editPersonas[idx].enabled = !m.editPersonas[idx].enabled
+						}
 					}
 				} else if m.editTab == 0 {
 					if m.editField == 0 {
@@ -4049,6 +4079,20 @@ func (m tuiModel) handleRowEdit() (tea.Model, tea.Cmd) {
 		m.editTab = 0
 		m.editField = 0
 
+		// Detect current heartbeat interval from first persona with a schedule.
+		m.editPersonaHeartbeatIdx = len(personaHeartbeatOptions) - 1 // default: "pack default"
+		for _, p := range pp.Spec.Personas {
+			if p.Schedule != nil && p.Schedule.Interval != "" {
+				for i, opt := range personaHeartbeatOptions {
+					if opt.interval == p.Schedule.Interval {
+						m.editPersonaHeartbeatIdx = i
+						break
+					}
+				}
+				break
+			}
+		}
+
 		// Build persona toggle list from the pack spec.
 		excluded := make(map[string]bool)
 		for _, e := range pp.Spec.ExcludePersonas {
@@ -4248,11 +4292,12 @@ func (m tuiModel) applyEditModal() tea.Cmd {
 	}
 }
 
-// applyPersonaPackEdit saves the persona enable/disable toggles back to the PersonaPack.
+// applyPersonaPackEdit saves the persona enable/disable toggles and heartbeat back to the PersonaPack.
 func (m tuiModel) applyPersonaPackEdit(packName string) tea.Cmd {
 	ns := m.namespace
 	personas := make([]editPersonaItem, len(m.editPersonas))
 	copy(personas, m.editPersonas)
+	heartbeatInterval := personaHeartbeatOptions[m.editPersonaHeartbeatIdx].interval
 	return func() tea.Msg {
 		ctx := context.Background()
 
@@ -4269,6 +4314,16 @@ func (m tuiModel) applyPersonaPackEdit(packName string) tea.Cmd {
 			}
 		}
 		pack.Spec.ExcludePersonas = excludes
+
+		// Apply heartbeat interval to all personas with a schedule.
+		if heartbeatInterval != "" {
+			for i := range pack.Spec.Personas {
+				if pack.Spec.Personas[i].Schedule != nil {
+					pack.Spec.Personas[i].Schedule.Interval = heartbeatInterval
+					pack.Spec.Personas[i].Schedule.Cron = "" // clear cron so interval takes precedence
+				}
+			}
+		}
 
 		if err := k8sClient.Update(ctx, &pack); err != nil {
 			return cmdResultMsg{err: fmt.Errorf("update PersonaPack %q: %w", packName, err)}
@@ -6535,12 +6590,20 @@ func (m tuiModel) renderEditModal(base string) string {
 	}
 
 	if m.editPersonaPackName != "" {
-		// PersonaPack edit — persona toggles
-		content.WriteString(tuiDimStyle.Render("  Toggle personas on/off with space or enter:") + "\n\n")
+		// PersonaPack edit — heartbeat interval + persona toggles
+
+		// Heartbeat interval selector (field 0)
+		hbLabel := personaHeartbeatOptions[m.editPersonaHeartbeatIdx].label
+		hbVal := fmt.Sprintf("◀ %s ▶", hbLabel)
+		renderField(0, "Heartbeat", hbVal)
+		content.WriteString("\n")
+
+		content.WriteString(tuiDimStyle.Render("  Toggle personas on/off:") + "\n\n")
 		if len(m.editPersonas) == 0 {
 			content.WriteString(tuiDimStyle.Render("  No personas defined in this pack.") + "\n")
 		} else {
 			for i, p := range m.editPersonas {
+				fieldIdx := i + 1 // persona toggles start at field 1
 				tog := "○"
 				if p.enabled {
 					tog = "●"
@@ -6549,7 +6612,7 @@ func (m tuiModel) renderEditModal(base string) string {
 				if p.name != p.displayName {
 					lbl += tuiDimStyle.Render(" (" + p.name + ")")
 				}
-				if m.editField == i {
+				if m.editField == fieldIdx {
 					lbl = highlight.Render(fmt.Sprintf("▸ %s %s", tog, p.displayName))
 					if p.name != p.displayName {
 						lbl += tuiDimStyle.Render(" (" + p.name + ")")
@@ -6707,7 +6770,7 @@ func (m tuiModel) renderEditModal(base string) string {
 		content.WriteString(tuiDimStyle.Render("  enter confirm · esc cancel"))
 	} else if m.editPersonaPackName != "" {
 		content.WriteString("\n")
-		content.WriteString(tuiDimStyle.Render("  ↑↓ navigate · space/enter toggle · ctrl+s apply · esc cancel"))
+		content.WriteString(tuiDimStyle.Render("  ↑↓ navigate · ←→ cycle heartbeat · space/enter toggle · ctrl+s apply · esc cancel"))
 	} else {
 		content.WriteString("\n")
 		content.WriteString(tuiDimStyle.Render("  tab switch tabs · ↑↓ navigate · enter toggle/edit"))
@@ -7797,6 +7860,31 @@ func (m tuiModel) advanceWizard(val string) (tea.Model, tea.Cmd) {
 		w.personaChannelIdx++
 		return m.advancePersonaChannelToken()
 
+	case wizStepPersonaHeartbeat:
+		if val == "" {
+			val = "2"
+		}
+		switch val {
+		case "1":
+			w.heartbeatCron = "*/30 * * * *"
+			w.heartbeatLabel = "every 30 minutes"
+		case "3":
+			w.heartbeatCron = "0 */6 * * *"
+			w.heartbeatLabel = "every 6 hours"
+		case "4":
+			w.heartbeatCron = "0 0 * * *"
+			w.heartbeatLabel = "once a day (midnight)"
+		case "5":
+			w.heartbeatCron = ""
+			w.heartbeatLabel = "pack default"
+		default: // "2" or anything else
+			w.heartbeatCron = "0 * * * *"
+			w.heartbeatLabel = "every hour"
+		}
+		w.step = wizStepPersonaConfirm
+		m.input.Placeholder = "Proceed? [Y/n]"
+		return m, nil
+
 	case wizStepPersonaConfirm:
 		v := strings.ToLower(val)
 		if v == "n" || v == "no" {
@@ -7843,9 +7931,9 @@ func (m tuiModel) advancePersonaChannelToken() (tea.Model, tea.Cmd) {
 		}
 		w.personaChannelIdx++
 	}
-	// All tokens collected — proceed to confirm.
-	w.step = wizStepPersonaConfirm
-	m.input.Placeholder = "Proceed? [Y/n]"
+	// All tokens collected — proceed to heartbeat interval.
+	w.step = wizStepPersonaHeartbeat
+	m.input.Placeholder = "Heartbeat interval [1-5] (default: 2 — every hour)"
 	return m, nil
 }
 
@@ -8297,13 +8385,31 @@ func (m tuiModel) renderPersonaWizardPanel(h int,
 		}
 		lines = append(lines, "")
 
+	case wizStepPersonaHeartbeat:
+		lines = append(lines, stepStyle.Render("  Step 6: Heartbeat Interval"))
+		lines = append(lines, "")
+		lines = append(lines, hintStyle.Render("  How often should personas wake up?"))
+		lines = append(lines, hintStyle.Render("  This overrides each persona's default schedule."))
+		lines = append(lines, "")
+		lines = append(lines, menuNumStyle.Render("  1)")+menuStyle.Render(" Every 30 minutes"))
+		lines = append(lines, menuNumStyle.Render("  2)")+menuStyle.Render(" Every hour")+hintStyle.Render(" (default)"))
+		lines = append(lines, menuNumStyle.Render("  3)")+menuStyle.Render(" Every 6 hours"))
+		lines = append(lines, menuNumStyle.Render("  4)")+menuStyle.Render(" Once a day (midnight)"))
+		lines = append(lines, menuNumStyle.Render("  5)")+menuStyle.Render(" Pack default"))
+		lines = append(lines, "")
+
 	case wizStepPersonaConfirm:
-		lines = append(lines, stepStyle.Render("  Step 6: Confirm"))
+		lines = append(lines, stepStyle.Render("  Step 7: Confirm"))
 		lines = append(lines, "")
 		lines = append(lines, labelStyle.Render("  Summary:"))
-		lines = append(lines, hintStyle.Render("  Pack:     ")+valueStyle.Render(w.personaPackName))
-		lines = append(lines, hintStyle.Render("  Provider: ")+valueStyle.Render(w.providerName))
-		lines = append(lines, hintStyle.Render("  Model:    ")+valueStyle.Render(w.modelName))
+		lines = append(lines, hintStyle.Render("  Pack:      ")+valueStyle.Render(w.personaPackName))
+		lines = append(lines, hintStyle.Render("  Provider:  ")+valueStyle.Render(w.providerName))
+		lines = append(lines, hintStyle.Render("  Model:     ")+valueStyle.Render(w.modelName))
+		hbLabel := w.heartbeatLabel
+		if hbLabel == "" {
+			hbLabel = "every hour"
+		}
+		lines = append(lines, hintStyle.Render("  Heartbeat: ")+valueStyle.Render(hbLabel))
 		var chNames []string
 		for _, ch := range w.personaChannels {
 			if ch.enabled {
@@ -8311,9 +8417,9 @@ func (m tuiModel) renderPersonaWizardPanel(h int,
 			}
 		}
 		if len(chNames) > 0 {
-			lines = append(lines, hintStyle.Render("  Channels: ")+valueStyle.Render(strings.Join(chNames, ", ")))
+			lines = append(lines, hintStyle.Render("  Channels:  ")+valueStyle.Render(strings.Join(chNames, ", ")))
 		} else {
-			lines = append(lines, hintStyle.Render("  Channels: ")+valueStyle.Render("none"))
+			lines = append(lines, hintStyle.Render("  Channels:  ")+valueStyle.Render("none"))
 		}
 		lines = append(lines, "")
 		lines = append(lines, hintStyle.Render("  This will create an auth secret and activate the pack."))
@@ -8638,6 +8744,16 @@ func tuiPersonaApply(ns string, w *wizardState) (string, error) {
 		pack.Spec.Personas[i].Model = w.modelName
 		if len(enabledChannels) > 0 {
 			pack.Spec.Personas[i].Channels = enabledChannels
+		}
+	}
+
+	// Apply heartbeat override if the user chose something other than "pack default".
+	if w.heartbeatCron != "" {
+		for i := range pack.Spec.Personas {
+			if pack.Spec.Personas[i].Schedule != nil {
+				pack.Spec.Personas[i].Schedule.Cron = w.heartbeatCron
+				pack.Spec.Personas[i].Schedule.Interval = ""
+			}
 		}
 	}
 

@@ -76,6 +76,7 @@ export function PersonasPage() {
           Object.keys(result.channelConfigs).length > 0
             ? result.channelConfigs
             : undefined,
+        heartbeatInterval: result.heartbeatInterval || undefined,
       },
       {
         onSuccess: () => {

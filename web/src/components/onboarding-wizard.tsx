@@ -31,6 +31,7 @@ import {
   Loader2,
   Search,
   Wrench,
+  Clock,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -53,6 +54,14 @@ const CHANNELS = [
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
+const HEARTBEAT_OPTIONS = [
+  { value: "", label: "Pack default" },
+  { value: "30m", label: "Every 30 minutes" },
+  { value: "1h", label: "Every hour" },
+  { value: "6h", label: "Every 6 hours" },
+  { value: "24h", label: "Once a day" },
+];
+
 export interface WizardResult {
   name: string;
   provider: string;
@@ -63,6 +72,7 @@ export interface WizardResult {
   skills: string[];
   channels: string[];
   channelConfigs: Record<string, string>;
+  heartbeatInterval: string;
 }
 
 interface OnboardingWizardProps {
@@ -85,13 +95,13 @@ interface OnboardingWizardProps {
 
 // ── Steps ────────────────────────────────────────────────────────────────────
 
-type WizardStep = "name" | "provider" | "apikey" | "model" | "skills" | "channels" | "confirm" | "channelAction";
+type WizardStep = "name" | "provider" | "apikey" | "model" | "skills" | "heartbeat" | "channels" | "confirm" | "channelAction";
 
 function stepsForMode(mode: "instance" | "persona"): WizardStep[] {
   if (mode === "instance") {
     return ["name", "provider", "apikey", "model", "skills", "channels", "confirm", "channelAction"];
   }
-  return ["provider", "apikey", "model", "skills", "channels", "confirm", "channelAction"];
+  return ["provider", "apikey", "model", "skills", "heartbeat", "channels", "confirm", "channelAction"];
 }
 
 // ── Step indicator ───────────────────────────────────────────────────────────
@@ -103,6 +113,7 @@ function StepIndicator({ steps, current }: { steps: WizardStep[]; current: Wizar
     apikey: "Auth",
     model: "Model",
     skills: "Skills",
+    heartbeat: "Heartbeat",
     channels: "Channels",
     confirm: "Confirm",
     channelAction: "Finalize",
@@ -113,6 +124,7 @@ function StepIndicator({ steps, current }: { steps: WizardStep[]; current: Wizar
     apikey: <Key className="h-3.5 w-3.5" />,
     model: <Sparkles className="h-3.5 w-3.5" />,
     skills: <Wrench className="h-3.5 w-3.5" />,
+    heartbeat: <Clock className="h-3.5 w-3.5" />,
     channels: <MessageSquare className="h-3.5 w-3.5" />,
     confirm: <Check className="h-3.5 w-3.5" />,
     channelAction: <Key className="h-3.5 w-3.5" />,
@@ -261,6 +273,7 @@ export function OnboardingWizard({
     skills: defaults?.skills || [],
     channels: defaults?.channels || Object.keys(defaults?.channelConfigs || {}),
     channelConfigs: defaults?.channelConfigs || {},
+    heartbeatInterval: defaults?.heartbeatInterval || "",
   });
   const [channelActionIdx, setChannelActionIdx] = useState(0);
 
@@ -334,6 +347,7 @@ export function OnboardingWizard({
       skills: d.skills || [],
       channels: d.channels || Object.keys(d.channelConfigs || {}),
       channelConfigs: d.channelConfigs || {},
+      heartbeatInterval: d.heartbeatInterval || "",
     });
     setStep(steps[0]);
     setChannelActionIdx(0);
@@ -555,6 +569,31 @@ export function OnboardingWizard({
           </div>
         )}
 
+        {/* ── Heartbeat step (persona mode only) ────────────────────── */}
+        {step === "heartbeat" && (
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              How often should personas wake up? This overrides each persona's default schedule.
+            </p>
+            {HEARTBEAT_OPTIONS.map((opt) => (
+              <button
+                key={opt.value}
+                type="button"
+                onClick={() => setForm({ ...form, heartbeatInterval: opt.value })}
+                className={cn(
+                  "flex w-full items-center justify-between rounded-md border px-3 py-2 text-left text-sm transition-colors",
+                  form.heartbeatInterval === opt.value
+                    ? "border-indigo-500/40 bg-indigo-500/15 text-indigo-300"
+                    : "border-border/50 hover:bg-white/5"
+                )}
+              >
+                <span>{opt.label}</span>
+                <span className="text-xs">{form.heartbeatInterval === opt.value ? "Selected" : "Select"}</span>
+              </button>
+            ))}
+          </div>
+        )}
+
         {/* ── Channels step ─────────────────────────────────────────── */}
         {step === "channels" && (
           <div className="space-y-4">
@@ -641,6 +680,14 @@ export function OnboardingWizard({
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Personas</span>
                   <span>{personaCount}</span>
+                </div>
+              )}
+              {mode === "persona" && (
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Heartbeat</span>
+                  <span>
+                    {HEARTBEAT_OPTIONS.find((o) => o.value === form.heartbeatInterval)?.label || "Pack default"}
+                  </span>
                 </div>
               )}
               {form.channels.length > 0 && (
