@@ -32,6 +32,8 @@ spec:
             - --leader-elect
             {{- end }}
           env:
+            - name: IMAGE_REGISTRY
+              value: {{ .Values.image.registry | default "ghcr.io/alexsjones/sympozium" }}
             - name: NATS_URL
               value: {{ include "sympozium.natsUrl" . }}
             - name: POD_NAME

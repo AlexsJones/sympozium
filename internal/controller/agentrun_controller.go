@@ -64,7 +64,7 @@ type AgentRunReconciler struct {
 	RunHistoryLimit int    // max completed runs to keep per instance (0 = use default)
 }
 
-const imageRegistry = "ghcr.io/alexsjones/sympozium"
+var imageRegistry = getEnvOrDefault("IMAGE_REGISTRY", "ghcr.io/alexsjones/sympozium")
 
 // imageRef returns a fully qualified image reference using the reconciler's tag.
 func (r *AgentRunReconciler) imageRef(name string) string {
@@ -2040,4 +2040,11 @@ func (r *AgentRunReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&sympoziumv1alpha1.AgentRun{}).
 		Owns(&batchv1.Job{}).
 		Complete(r)
+}
+
+func getEnvOrDefault(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
 }
