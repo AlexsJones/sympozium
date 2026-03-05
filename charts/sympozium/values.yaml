@@ -76,6 +76,19 @@ webhook:
   tolerations: []
   affinity: {}
 
+# -- MCP Bridge (sidecar that connects agents to remote MCP tool servers)
+mcpBridge:
+  image:
+    repository: ""  # defaults to {{ .Values.image.registry }}/mcp-bridge
+    tag: ""
+  resources:
+    limits:
+      cpu: 200m
+      memory: 256Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
 # -- NATS JetStream (event bus for agent IPC)
 nats:
   # -- Deploy built-in NATS. Set to false if using an external NATS cluster.
@@ -177,6 +190,8 @@ observability:
     shutdownTimeout: "10s"
   apiServer:
     batchTimeout: "5s"
+  mcpBridge:
+    batchTimeout: "1s"
   # -- Built-in OpenTelemetry collector
   collector:
     image:

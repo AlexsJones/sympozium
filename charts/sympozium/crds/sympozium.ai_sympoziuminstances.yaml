@@ -287,6 +287,52 @@ spec:
                 required:
                 - enabled
                 type: object
+              mcpServers:
+                description: |-
+                  MCPServers configures remote MCP (Model Context Protocol) servers
+                  that agents in this instance can access via the mcp-bridge sidecar.
+                items:
+                  description: MCPServerRef references a remote MCP server for tool
+                    integration.
+                  properties:
+                    authKey:
+                      description: |-
+                        AuthKey is the key within the AuthSecret that contains the token value.
+                        Defaults to "token" if not specified.
+                      type: string
+                    authSecret:
+                      description: |-
+                        AuthSecret is the name of a Kubernetes Secret containing an authentication
+                        token for this MCP server. The secret must exist in the same namespace.
+                      type: string
+                    headers:
+                      additionalProperties:
+                        type: string
+                      description: Headers are additional HTTP headers to send with
+                        every request.
+                      type: object
+                    name:
+                      description: Name is a unique identifier for this MCP server
+                        connection.
+                      type: string
+                    timeout:
+                      description: Timeout is the per-request timeout in seconds for
+                        this server.
+                      type: integer
+                    toolsPrefix:
+                      description: |-
+                        ToolsPrefix is prepended to tool names from this server to avoid collisions.
+                        Must be unique across all configured servers.
+                      type: string
+                    url:
+                      description: URL is the MCP server's Streamable HTTP endpoint.
+                      type: string
+                  required:
+                  - name
+                  - url
+                  - toolsPrefix
+                  type: object
+                type: array
               policyRef:
                 description: PolicyRef references the SympoziumPolicy that applies
                   to this instance.
