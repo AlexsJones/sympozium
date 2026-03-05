@@ -81,6 +81,9 @@ integration-tests: ## Run API smoke regression tests (PersonaPacks, ad-hoc Insta
 	bash ./test/integration/test-api-serving-mode.sh
 	bash ./test/integration/test-api-capabilities.sh
 
+test-web-proxy: ## Run web-proxy HTTP API tests (requires a running web-endpoint service)
+	bash ./test/integration/test-web-proxy-api.sh
+
 vet: ## Run go vet
 	$(GOVET) ./...
 

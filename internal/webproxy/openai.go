@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -367,16 +368,22 @@ func (p *Proxy) blockingResponse(w http.ResponseWriter, r *http.Request, runName
 
 // getInstance fetches the SympoziumInstance for this proxy.
 func (p *Proxy) getInstance(ctx context.Context) (*sympoziumv1alpha1.SympoziumInstance, error) {
-	var instances sympoziumv1alpha1.SympoziumInstanceList
-	if err := p.k8s.List(ctx, &instances); err != nil {
+	ns := podNamespace()
+	var inst sympoziumv1alpha1.SympoziumInstance
+	if err := p.k8s.Get(ctx, client.ObjectKey{Name: p.config.InstanceName, Namespace: ns}, &inst); err != nil {
 		return nil, err
 	}
-	for i := range instances.Items {
-		if instances.Items[i].Name == p.config.InstanceName {
-			return &instances.Items[i], nil
+	return &inst, nil
+}
+
+// podNamespace returns the namespace of the current pod.
+func podNamespace() string {
+	if data, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/namespace"); err == nil {
+		if ns := strings.TrimSpace(string(data)); ns != "" {
+			return ns
 		}
 	}
-	return nil, fmt.Errorf("instance %q not found", p.config.InstanceName)
+	return "default"
 }
 
 // resolveProvider returns the AI provider for the instance.
