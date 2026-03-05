@@ -37,6 +37,11 @@ type SympoziumInstanceSpec struct {
 	// When nil, inherits from Helm chart global values.
 	// +optional
 	Observability *ObservabilitySpec `json:"observability,omitempty"`
+
+	// WebEndpoint exposes this agent as an HTTP API (OpenAI-compatible + MCP).
+	// When nil or Enabled is false, no web-proxy infrastructure is deployed.
+	// +optional
+	WebEndpoint *WebEndpointSpec `json:"webEndpoint,omitempty"`
 }
 
 // MemorySpec configures persistent memory for a SympoziumInstance.
@@ -93,6 +98,43 @@ type ObservabilitySpec struct {
 	// ResourceAttributes are additional OTel resource attributes (key/value).
 	// +optional
 	ResourceAttributes map[string]string `json:"resourceAttributes,omitempty"`
+}
+
+// WebEndpointSpec configures the web-proxy that exposes an agent as an HTTP API.
+// When the field is absent or Enabled is false, the controller deploys nothing.
+// Infrastructure is only created when Enabled is explicitly set to true.
+type WebEndpointSpec struct {
+	// Enabled is the master switch. When false (or when WebEndpoint is nil),
+	// no web-proxy Deployment, Service, HTTPRoute, or Secret is created.
+	// When toggled from true→false, the controller tears down all resources.
+	// +kubebuilder:default=false
+	Enabled bool `json:"enabled"`
+
+	// Hostname for this instance's HTTPRoute (e.g. "alice.sympozium.example.com").
+	// If empty, defaults to "<instance-name>.<gateway.baseDomain>" from Helm values.
+	// +optional
+	Hostname string `json:"hostname,omitempty"`
+
+	// AuthSecretRef references a K8s Secret containing the API key.
+	// The Secret must have a key named "api-key".
+	// If empty, one is auto-generated with a random sk-<hex> key.
+	// +optional
+	AuthSecretRef string `json:"authSecretRef,omitempty"`
+
+	// RateLimit defines request rate limiting.
+	// +optional
+	RateLimit *RateLimitSpec `json:"rateLimit,omitempty"`
+}
+
+// RateLimitSpec defines rate limiting for the web endpoint.
+type RateLimitSpec struct {
+	// RequestsPerMinute is the maximum requests per minute per API key.
+	// +kubebuilder:default=60
+	RequestsPerMinute int `json:"requestsPerMinute,omitempty"`
+
+	// BurstSize allows short bursts above the rate limit.
+	// +kubebuilder:default=10
+	BurstSize int `json:"burstSize,omitempty"`
 }
 
 // ChannelSpec defines a channel connection.
@@ -210,6 +252,24 @@ type SympoziumInstanceStatus struct {
 	// Conditions represent the latest available observations of an object's state.
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+
+	// WebEndpoint reports the status of the web endpoint.
+	// +optional
+	WebEndpoint *WebEndpointStatus `json:"webEndpoint,omitempty"`
+}
+
+// WebEndpointStatus reports the observed state of a web endpoint.
+type WebEndpointStatus struct {
+	// Status is the current status (Pending, Ready, Error).
+	Status string `json:"status"`
+
+	// URL is the external URL for the web endpoint.
+	// +optional
+	URL string `json:"url,omitempty"`
+
+	// AuthSecretName is the name of the Secret containing the API key.
+	// +optional
+	AuthSecretName string `json:"authSecretName,omitempty"`
 }
 
 // ChannelStatus reports the status of a channel.

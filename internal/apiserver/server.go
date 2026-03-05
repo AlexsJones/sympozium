@@ -21,6 +21,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
@@ -89,6 +90,7 @@ func (s *Server) buildMux(frontendFS fs.FS, token string) http.Handler {
 	mux.HandleFunc("GET /api/v1/instances/{name}", s.getInstance)
 	mux.HandleFunc("POST /api/v1/instances", s.createInstance)
 	mux.HandleFunc("DELETE /api/v1/instances/{name}", s.deleteInstance)
+	mux.HandleFunc("PATCH /api/v1/instances/{name}", s.patchInstance)
 
 	// Run endpoints
 	mux.HandleFunc("GET /api/v1/runs", s.listRuns)
@@ -125,6 +127,12 @@ func (s *Server) buildMux(frontendFS fs.FS, token string) http.Handler {
 	mux.HandleFunc("GET /api/v1/personapacks/{name}", s.getPersonaPack)
 	mux.HandleFunc("PATCH /api/v1/personapacks/{name}", s.patchPersonaPack)
 	mux.HandleFunc("DELETE /api/v1/personapacks/{name}", s.deletePersonaPack)
+
+	// Gateway config endpoints (singleton SympoziumConfig)
+	mux.HandleFunc("GET /api/v1/gateway", s.getGatewayConfig)
+	mux.HandleFunc("POST /api/v1/gateway", s.createGatewayConfig)
+	mux.HandleFunc("PATCH /api/v1/gateway", s.patchGatewayConfig)
+	mux.HandleFunc("DELETE /api/v1/gateway", s.deleteGatewayConfig)
 
 	// Namespace listing
 	mux.HandleFunc("GET /api/v1/namespaces", s.listNamespaces)
@@ -274,6 +282,74 @@ func (s *Server) deleteInstance(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// PatchInstanceRequest is the request body for partially updating a SympoziumInstance.
+type PatchInstanceRequest struct {
+	WebEndpoint *PatchWebEndpoint `json:"webEndpoint,omitempty"`
+}
+
+// PatchWebEndpoint is the web endpoint patch payload.
+type PatchWebEndpoint struct {
+	Enabled  *bool   `json:"enabled,omitempty"`
+	Hostname *string `json:"hostname,omitempty"`
+	RateLimit *struct {
+		RequestsPerMinute *int `json:"requestsPerMinute,omitempty"`
+	} `json:"rateLimit,omitempty"`
+}
+
+func (s *Server) patchInstance(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	ns := r.URL.Query().Get("namespace")
+	if ns == "" {
+		ns = "default"
+	}
+
+	var req PatchInstanceRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	var inst sympoziumv1alpha1.SympoziumInstance
+	if err := s.client.Get(r.Context(), types.NamespacedName{Name: name, Namespace: ns}, &inst); err != nil {
+		if k8serrors.IsNotFound(err) {
+			http.Error(w, "instance not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if req.WebEndpoint != nil {
+		if req.WebEndpoint.Enabled != nil && !*req.WebEndpoint.Enabled {
+			// Disable — set to nil to trigger cleanup
+			inst.Spec.WebEndpoint = nil
+		} else {
+			if inst.Spec.WebEndpoint == nil {
+				inst.Spec.WebEndpoint = &sympoziumv1alpha1.WebEndpointSpec{}
+			}
+			if req.WebEndpoint.Enabled != nil {
+				inst.Spec.WebEndpoint.Enabled = *req.WebEndpoint.Enabled
+			}
+			if req.WebEndpoint.Hostname != nil {
+				inst.Spec.WebEndpoint.Hostname = *req.WebEndpoint.Hostname
+			}
+			if req.WebEndpoint.RateLimit != nil && req.WebEndpoint.RateLimit.RequestsPerMinute != nil {
+				if inst.Spec.WebEndpoint.RateLimit == nil {
+					inst.Spec.WebEndpoint.RateLimit = &sympoziumv1alpha1.RateLimitSpec{}
+				}
+				inst.Spec.WebEndpoint.RateLimit.RequestsPerMinute = *req.WebEndpoint.RateLimit.RequestsPerMinute
+			}
+		}
+	}
+
+	if err := s.client.Update(r.Context(), &inst); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, inst)
 }
 
 // CreateInstanceRequest is the request body for creating a new SympoziumInstance.
@@ -1475,6 +1551,200 @@ func (s *Server) installDefaultPersonaPacks(w http.ResponseWriter, r *http.Reque
 	}
 
 	writeJSON(w, resp)
+}
+
+// GatewayConfigResponse is the response for gateway config endpoints.
+type GatewayConfigResponse struct {
+	Enabled                  bool   `json:"enabled"`
+	GatewayClassName         string `json:"gatewayClassName,omitempty"`
+	Name                     string `json:"name,omitempty"`
+	BaseDomain               string `json:"baseDomain,omitempty"`
+	TLSEnabled               bool   `json:"tlsEnabled"`
+	CertManagerClusterIssuer string `json:"certManagerClusterIssuer,omitempty"`
+	TLSSecretName            string `json:"tlsSecretName,omitempty"`
+	// Status fields
+	Phase         string `json:"phase,omitempty"`
+	Ready         bool   `json:"ready"`
+	Address       string `json:"address,omitempty"`
+	ListenerCount int    `json:"listenerCount,omitempty"`
+}
+
+// PatchGatewayConfigRequest is the request body for patching gateway config.
+type PatchGatewayConfigRequest struct {
+	Enabled                  *bool   `json:"enabled,omitempty"`
+	GatewayClassName         *string `json:"gatewayClassName,omitempty"`
+	Name                     *string `json:"name,omitempty"`
+	BaseDomain               *string `json:"baseDomain,omitempty"`
+	TLSEnabled               *bool   `json:"tlsEnabled,omitempty"`
+	CertManagerClusterIssuer *string `json:"certManagerClusterIssuer,omitempty"`
+	TLSSecretName            *string `json:"tlsSecretName,omitempty"`
+}
+
+func gatewayConfigResponseFromCR(config *sympoziumv1alpha1.SympoziumConfig) GatewayConfigResponse {
+	resp := GatewayConfigResponse{
+		Phase: config.Status.Phase,
+	}
+	if config.Status.Gateway != nil {
+		resp.Ready = config.Status.Gateway.Ready
+		resp.Address = config.Status.Gateway.Address
+		resp.ListenerCount = config.Status.Gateway.ListenerCount
+	}
+	if gw := config.Spec.Gateway; gw != nil {
+		resp.Enabled = gw.Enabled
+		resp.GatewayClassName = gw.GatewayClassName
+		resp.Name = gw.Name
+		resp.BaseDomain = gw.BaseDomain
+		if gw.TLS != nil {
+			resp.TLSEnabled = gw.TLS.Enabled
+			resp.CertManagerClusterIssuer = gw.TLS.CertManagerClusterIssuer
+			resp.TLSSecretName = gw.TLS.SecretName
+		}
+	}
+	return resp
+}
+
+func (s *Server) getGatewayConfig(w http.ResponseWriter, r *http.Request) {
+	ns := r.URL.Query().Get("namespace")
+	if ns == "" {
+		ns = "default"
+	}
+
+	var config sympoziumv1alpha1.SympoziumConfig
+	if err := s.client.Get(r.Context(), types.NamespacedName{Name: "default", Namespace: ns}, &config); err != nil {
+		if k8serrors.IsNotFound(err) || meta.IsNoMatchError(err) {
+			// Return empty/disabled state (handles both missing CR and missing CRD)
+			writeJSON(w, GatewayConfigResponse{})
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, gatewayConfigResponseFromCR(&config))
+}
+
+func (s *Server) createGatewayConfig(w http.ResponseWriter, r *http.Request) {
+	ns := r.URL.Query().Get("namespace")
+	if ns == "" {
+		ns = "default"
+	}
+
+	var req PatchGatewayConfigRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	config := sympoziumv1alpha1.SympoziumConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "default",
+			Namespace: ns,
+		},
+		Spec: sympoziumv1alpha1.SympoziumConfigSpec{
+			Gateway: &sympoziumv1alpha1.GatewaySpec{},
+		},
+	}
+	applyGatewayPatch(config.Spec.Gateway, &req)
+
+	if err := s.client.Create(r.Context(), &config); err != nil {
+		if k8serrors.IsAlreadyExists(err) {
+			http.Error(w, "gateway config already exists, use PATCH to update", http.StatusConflict)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusCreated)
+	writeJSON(w, gatewayConfigResponseFromCR(&config))
+}
+
+func (s *Server) patchGatewayConfig(w http.ResponseWriter, r *http.Request) {
+	ns := r.URL.Query().Get("namespace")
+	if ns == "" {
+		ns = "default"
+	}
+
+	var req PatchGatewayConfigRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	var config sympoziumv1alpha1.SympoziumConfig
+	if err := s.client.Get(r.Context(), types.NamespacedName{Name: "default", Namespace: ns}, &config); err != nil {
+		if k8serrors.IsNotFound(err) || meta.IsNoMatchError(err) {
+			http.Error(w, "gateway config not found, use POST to create", http.StatusNotFound)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if config.Spec.Gateway == nil {
+		config.Spec.Gateway = &sympoziumv1alpha1.GatewaySpec{}
+	}
+	applyGatewayPatch(config.Spec.Gateway, &req)
+
+	if err := s.client.Update(r.Context(), &config); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, gatewayConfigResponseFromCR(&config))
+}
+
+func (s *Server) deleteGatewayConfig(w http.ResponseWriter, r *http.Request) {
+	ns := r.URL.Query().Get("namespace")
+	if ns == "" {
+		ns = "default"
+	}
+
+	var config sympoziumv1alpha1.SympoziumConfig
+	if err := s.client.Get(r.Context(), types.NamespacedName{Name: "default", Namespace: ns}, &config); err != nil {
+		if k8serrors.IsNotFound(err) || meta.IsNoMatchError(err) {
+			http.Error(w, "gateway config not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if err := s.client.Delete(r.Context(), &config); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func applyGatewayPatch(gw *sympoziumv1alpha1.GatewaySpec, req *PatchGatewayConfigRequest) {
+	if req.Enabled != nil {
+		gw.Enabled = *req.Enabled
+	}
+	if req.GatewayClassName != nil {
+		gw.GatewayClassName = *req.GatewayClassName
+	}
+	if req.Name != nil {
+		gw.Name = *req.Name
+	}
+	if req.BaseDomain != nil {
+		gw.BaseDomain = *req.BaseDomain
+	}
+	if req.TLSEnabled != nil || req.CertManagerClusterIssuer != nil || req.TLSSecretName != nil {
+		if gw.TLS == nil {
+			gw.TLS = &sympoziumv1alpha1.GatewayTLSSpec{}
+		}
+		if req.TLSEnabled != nil {
+			gw.TLS.Enabled = *req.TLSEnabled
+		}
+		if req.CertManagerClusterIssuer != nil {
+			gw.TLS.CertManagerClusterIssuer = *req.CertManagerClusterIssuer
+		}
+		if req.TLSSecretName != nil {
+			gw.TLS.SecretName = *req.TLSSecretName
+		}
+	}
 }
 
 func writeJSON(w http.ResponseWriter, v interface{}) {

@@ -1,0 +1,21 @@
+{{- if .Values.gateway.enabled }}
+apiVersion: sympozium.ai/v1alpha1
+kind: SympoziumConfig
+metadata:
+  name: default
+  namespace: {{ include "sympozium.namespace" . }}
+  labels:
+    {{- include "sympozium.labels" . | nindent 4 }}
+spec:
+  gateway:
+    enabled: true
+    gatewayClassName: {{ .Values.gateway.gatewayClassName }}
+    name: {{ .Values.gateway.name }}
+    baseDomain: {{ .Values.gateway.baseDomain | quote }}
+    {{- if .Values.gateway.tls.enabled }}
+    tls:
+      enabled: true
+      certManagerClusterIssuer: {{ .Values.gateway.tls.certManagerClusterIssuer | quote }}
+      secretName: {{ .Values.gateway.tls.secretName }}
+    {{- end }}
+{{- end }}

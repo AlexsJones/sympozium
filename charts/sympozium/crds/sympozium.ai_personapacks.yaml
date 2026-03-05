@@ -207,6 +207,20 @@ spec:
                             type: string
                           type: array
                       type: object
+                    webEndpoint:
+                      description: WebEndpoint configures the web endpoint for this
+                        persona.
+                      properties:
+                        enabled:
+                          description: Enabled indicates whether the web endpoint
+                            is active.
+                          type: boolean
+                        hostname:
+                          description: Hostname overrides the auto-derived hostname.
+                          type: string
+                      required:
+                      - enabled
+                      type: object
                   required:
                   - name
                   - systemPrompt

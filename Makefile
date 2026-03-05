@@ -23,13 +23,13 @@ CONTROLLER_GEN ?= $(LOCALBIN)/controller-gen
 BIN_DIR = bin
 
 # All binaries
-BINARIES = controller apiserver ipc-bridge webhook agent-runner sympozium
+BINARIES = controller apiserver ipc-bridge webhook agent-runner sympozium web-proxy
 
 # All channel binaries
 CHANNELS = telegram whatsapp discord slack
 
 # All images
-IMAGES = controller apiserver ipc-bridge webhook agent-runner \
+IMAGES = controller apiserver ipc-bridge webhook agent-runner web-proxy \
          channel-telegram channel-whatsapp channel-discord channel-slack \
 		 skill-k8s-ops skill-sre-observability skill-github-gitops skill-llmfit
 
@@ -264,6 +264,7 @@ uninstall: ## Uninstall Sympozium control plane, CRDs, and cleanup finalizers
 	echo "==> Deleting built-in SkillPacks"; \
 	kubectl delete skillpacks.sympozium.ai --ignore-not-found -n $(SYMPOZIUM_NAMESPACE) -l sympozium.ai/builtin=true >/dev/null 2>&1 || true; \
 	for crd in \
+		sympoziumconfigs.sympozium.ai \
 		personapacks.sympozium.ai \
 		sympoziuminstances.sympozium.ai \
 		sympoziumschedules.sympozium.ai \

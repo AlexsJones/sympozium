@@ -60,6 +60,24 @@ export interface ChannelStatus {
   message?: string;
 }
 
+export interface RateLimitSpec {
+  requestsPerMinute?: number;
+  burstSize?: number;
+}
+
+export interface WebEndpointSpec {
+  enabled: boolean;
+  hostname?: string;
+  authSecretRef?: string;
+  rateLimit?: RateLimitSpec;
+}
+
+export interface WebEndpointStatus {
+  status: string;
+  url?: string;
+  authSecretName?: string;
+}
+
 export interface SympoziumInstanceSpec {
   channels?: ChannelSpec[];
   agents: AgentsSpec;
@@ -67,6 +85,7 @@ export interface SympoziumInstanceSpec {
   policyRef?: string;
   authRefs?: SecretRef[];
   memory?: MemorySpec;
+  webEndpoint?: WebEndpointSpec;
 }
 
 export interface SympoziumInstanceStatus {
@@ -75,6 +94,7 @@ export interface SympoziumInstanceStatus {
   activeAgentPods?: number;
   totalAgentRuns?: number;
   conditions?: Condition[];
+  webEndpoint?: WebEndpointStatus;
 }
 
 export interface SympoziumInstance {
@@ -228,6 +248,32 @@ export interface SkillSidecar {
   hostAccess?: HostAccessSpec;
 }
 
+// ── Gateway Config ──────────────────────────────────────────────────────────
+
+export interface GatewayConfigResponse {
+  enabled: boolean;
+  gatewayClassName?: string;
+  name?: string;
+  baseDomain?: string;
+  tlsEnabled: boolean;
+  certManagerClusterIssuer?: string;
+  tlsSecretName?: string;
+  phase?: string;
+  ready: boolean;
+  address?: string;
+  listenerCount?: number;
+}
+
+export interface PatchGatewayConfigRequest {
+  enabled?: boolean;
+  gatewayClassName?: string;
+  name?: string;
+  baseDomain?: string;
+  tlsEnabled?: boolean;
+  certManagerClusterIssuer?: string;
+  tlsSecretName?: string;
+}
+
 export interface GithubAuthStartResponse {
   userCode: string;
   verificationUri: string;
@@ -328,6 +374,11 @@ export interface PersonaMemory {
   seeds?: string[];
 }
 
+export interface PersonaWebEndpoint {
+  enabled: boolean;
+  hostname?: string;
+}
+
 export interface PersonaSpec {
   name: string;
   displayName?: string;
@@ -338,6 +389,7 @@ export interface PersonaSpec {
   schedule?: PersonaSchedule;
   memory?: PersonaMemory;
   channels?: string[];
+  webEndpoint?: PersonaWebEndpoint;
 }
 
 export interface InstalledPersona {
@@ -497,6 +549,11 @@ export const api = {
       apiFetch<SympoziumInstance>(`/api/v1/instances/${name}`),
     delete: (name: string) =>
       apiFetch<void>(`/api/v1/instances/${name}`, { method: "DELETE" }),
+    patch: (name: string, data: { webEndpoint?: { enabled?: boolean; hostname?: string; rateLimit?: { requestsPerMinute?: number } } }) =>
+      apiFetch<SympoziumInstance>(`/api/v1/instances/${name}`, {
+        method: "PATCH",
+        body: JSON.stringify(data),
+      }),
     create: (data: {
       name: string;
       provider: string;
@@ -610,6 +667,22 @@ export const api = {
   observability: {
     metrics: () =>
       apiFetch<ObservabilityMetricsResponse>("/api/v1/observability/metrics"),
+  },
+
+  gateway: {
+    get: () => apiFetch<GatewayConfigResponse>("/api/v1/gateway"),
+    create: (data: PatchGatewayConfigRequest) =>
+      apiFetch<GatewayConfigResponse>("/api/v1/gateway", {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
+    patch: (data: PatchGatewayConfigRequest) =>
+      apiFetch<GatewayConfigResponse>("/api/v1/gateway", {
+        method: "PATCH",
+        body: JSON.stringify(data),
+      }),
+    delete: () =>
+      apiFetch<void>("/api/v1/gateway", { method: "DELETE" }),
   },
 
   githubAuth: {

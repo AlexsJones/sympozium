@@ -204,6 +204,30 @@ observability:
       deployment.environment: "cluster"
       k8s.cluster.name: "unknown"
 
+# -- Envoy Gateway (shared, cluster-wide)
+gateway:
+  enabled: false                  # Opt-in: deploys GatewayClass + Gateway
+  gatewayClassName: sympozium
+  name: sympozium-gateway
+  baseDomain: ""                  # e.g. "sympozium.example.com" → instances get <name>.sympozium.example.com
+  tls:
+    enabled: false
+    certManagerClusterIssuer: ""  # e.g. "letsencrypt-prod"
+    secretName: sympozium-wildcard-cert
+
+# -- Web Proxy (per-instance, controller-managed)
+webProxy:
+  image:
+    repository: ""                # defaults to <registry>/web-proxy
+    tag: ""
+  resources:
+    limits:
+      cpu: 500m
+      memory: 256Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
 # -- ServiceMonitor for Prometheus (requires prometheus-operator)
 serviceMonitor:
   enabled: false

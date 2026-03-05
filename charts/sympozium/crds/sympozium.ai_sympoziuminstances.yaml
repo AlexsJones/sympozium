@@ -313,6 +313,46 @@ spec:
                       type: string
                   type: object
                 type: array
+              webEndpoint:
+                description: |-
+                  WebEndpoint exposes this agent as an HTTP API (OpenAI-compatible + MCP).
+                  When nil or Enabled is false, no web-proxy infrastructure is deployed.
+                properties:
+                  authSecretRef:
+                    description: |-
+                      AuthSecretRef references a K8s Secret containing the API key.
+                      The Secret must have a key named "api-key".
+                      If empty, one is auto-generated with a random sk-<hex> key.
+                    type: string
+                  enabled:
+                    default: false
+                    description: |-
+                      Enabled is the master switch. When false (or when WebEndpoint is nil),
+                      no web-proxy Deployment, Service, HTTPRoute, or Secret is created.
+                      When toggled from true→false, the controller tears down all resources.
+                    type: boolean
+                  hostname:
+                    description: |-
+                      Hostname for this instance's HTTPRoute (e.g. "alice.sympozium.example.com").
+                      If empty, defaults to "<instance-name>.<gateway.baseDomain>" from Helm values.
+                    type: string
+                  rateLimit:
+                    description: RateLimit defines request rate limiting.
+                    properties:
+                      burstSize:
+                        default: 10
+                        description: BurstSize allows short bursts above the rate
+                          limit.
+                        type: integer
+                      requestsPerMinute:
+                        default: 60
+                        description: RequestsPerMinute is the maximum requests per
+                          minute per API key.
+                        type: integer
+                    type: object
+                required:
+                - enabled
+                type: object
             required:
             - agents
             type: object
@@ -415,6 +455,22 @@ spec:
                   this instance.
                 format: int64
                 type: integer
+              webEndpoint:
+                description: WebEndpoint reports the status of the web endpoint.
+                properties:
+                  authSecretName:
+                    description: AuthSecretName is the name of the Secret containing
+                      the API key.
+                    type: string
+                  status:
+                    description: Status is the current status (Pending, Ready, Error).
+                    type: string
+                  url:
+                    description: URL is the external URL for the web endpoint.
+                    type: string
+                required:
+                - status
+                type: object
             type: object
         type: object
     served: true

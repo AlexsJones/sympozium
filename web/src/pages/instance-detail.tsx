@@ -20,7 +20,7 @@ import { formatAge } from "@/lib/utils";
 export function InstanceDetailPage() {
   const { name } = useParams<{ name: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
-  const allowedTabs = new Set(["overview", "channels", "skills", "memory"]);
+  const allowedTabs = new Set(["overview", "channels", "skills", "memory", "web-endpoint"]);
   const paramTab = searchParams.get("tab");
   const [activeTab, setActiveTab] = useState<string>(
     paramTab && allowedTabs.has(paramTab) ? paramTab : "overview",
@@ -76,6 +76,7 @@ export function InstanceDetailPage() {
           <TabsTrigger value="channels">Channels</TabsTrigger>
           <TabsTrigger value="skills">Skills</TabsTrigger>
           <TabsTrigger value="memory">Memory</TabsTrigger>
+          <TabsTrigger value="web-endpoint">Web Endpoint</TabsTrigger>
         </TabsList>
 
         <TabsContent value="overview">
@@ -196,6 +197,41 @@ export function InstanceDetailPage() {
               ) : (
                 <p className="text-sm text-muted-foreground">
                   Memory not configured
+                </p>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="web-endpoint">
+          <Card>
+            <CardContent className="pt-6">
+              {inst.spec.webEndpoint?.enabled ? (
+                <div className="space-y-3">
+                  <Row label="Enabled" value="Yes" />
+                  <Row label="Hostname" value={inst.spec.webEndpoint.hostname} />
+                  {inst.spec.webEndpoint.rateLimit && (
+                    <Row
+                      label="Rate Limit"
+                      value={`${inst.spec.webEndpoint.rateLimit.requestsPerMinute ?? 60} req/min`}
+                    />
+                  )}
+                  <Separator />
+                  {inst.status?.webEndpoint && (
+                    <div className="space-y-3">
+                      <p className="text-sm font-medium">Status</p>
+                      <div className="rounded-lg border p-3 space-y-2">
+                        <Row label="Status" value={inst.status.webEndpoint.status} />
+                        <Row label="URL" value={inst.status.webEndpoint.url} />
+                        <Row label="API Key Secret" value={inst.status.webEndpoint.authSecretName} />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  Web endpoint is not enabled. Enable it via the TUI edit modal or kubectl to
+                  expose this agent as an HTTP API.
                 </p>
               )}
             </CardContent>

@@ -254,6 +254,49 @@ export function usePods() {
   return useQuery({ queryKey: ["pods"], queryFn: api.pods.list });
 }
 
+// ── Gateway ─────────────────────────────────────────────────────────────────
+
+export function useGatewayConfig() {
+  return useQuery({
+    queryKey: ["gateway"],
+    queryFn: api.gateway.get,
+    refetchInterval: 10000,
+  });
+}
+
+export function usePatchGatewayConfig() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: api.gateway.patch,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["gateway"] });
+    },
+    onError: toastError,
+  });
+}
+
+export function useCreateGatewayConfig() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: api.gateway.create,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["gateway"] });
+    },
+    onError: toastError,
+  });
+}
+
+export function useDeleteGatewayConfig() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: api.gateway.delete,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["gateway"] });
+    },
+    onError: toastError,
+  });
+}
+
 export function useObservabilityMetrics() {
   return useQuery({
     queryKey: ["observability", "metrics"],

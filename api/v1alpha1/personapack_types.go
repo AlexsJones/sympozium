@@ -89,6 +89,20 @@ type PersonaSpec struct {
 	// Users can modify channel bindings later via the TUI edit modal.
 	// +optional
 	Channels []string `json:"channels,omitempty"`
+
+	// WebEndpoint configures the web endpoint for this persona.
+	// +optional
+	WebEndpoint *PersonaWebEndpoint `json:"webEndpoint,omitempty"`
+}
+
+// PersonaWebEndpoint configures the web endpoint for a persona.
+type PersonaWebEndpoint struct {
+	// Enabled indicates whether the web endpoint is active.
+	Enabled bool `json:"enabled"`
+
+	// Hostname overrides the auto-derived hostname.
+	// +optional
+	Hostname string `json:"hostname,omitempty"`
 }
 
 // PersonaToolPolicy defines tool access for a persona.

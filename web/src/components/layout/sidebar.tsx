@@ -9,6 +9,7 @@ import {
   Users,
   Github,
   Heart,
+  Globe,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -21,6 +22,7 @@ const navItems = [
   { to: "/policies", label: "Policies", icon: Shield },
   { to: "/skills", label: "Skills", icon: Wrench },
   { to: "/schedules", label: "Schedules", icon: Clock },
+  { to: "/gateway", label: "Gateway", icon: Globe },
 ];
 
 export function AppSidebar() {

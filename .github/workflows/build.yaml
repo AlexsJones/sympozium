@@ -113,6 +113,7 @@ jobs:
           - apiserver
           - ipc-bridge
           - webhook
+          - web-proxy
           - channel-telegram
           - channel-whatsapp
           - channel-discord

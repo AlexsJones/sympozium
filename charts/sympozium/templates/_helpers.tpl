@@ -81,6 +81,15 @@ Webhook image.
 {{- end }}
 
 {{/*
+Web proxy image.
+*/}}
+{{- define "sympozium.webProxyImage" -}}
+{{- $repo := .Values.webProxy.image.repository | default (printf "%s/web-proxy" .Values.image.registry) }}
+{{- $tag := .Values.webProxy.image.tag | default (include "sympozium.imageTag" .) }}
+{{- printf "%s:%s" $repo $tag }}
+{{- end }}
+
+{{/*
 NATS URL — internal or external.
 */}}
 {{- define "sympozium.natsUrl" -}}

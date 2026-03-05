@@ -421,6 +421,14 @@ func (r *PersonaPackReconciler) buildInstance(
 	// Policy — use the pack's policy ref if set.
 	inst.Spec.PolicyRef = pack.Spec.PolicyRef
 
+	// Web endpoint — propagate from persona if configured.
+	if persona.WebEndpoint != nil && persona.WebEndpoint.Enabled {
+		inst.Spec.WebEndpoint = &sympoziumv1alpha1.WebEndpointSpec{
+			Enabled:  true,
+			Hostname: persona.WebEndpoint.Hostname,
+		}
+	}
+
 	return inst
 }
 

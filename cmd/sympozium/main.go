@@ -27,6 +27,7 @@ import (
 	"github.com/spf13/cobra"
 
 	corev1 "k8s.io/api/core/v1"
+	k8serr "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -1380,10 +1381,11 @@ const (
 	viewSkills
 	viewChannels
 	viewSchedules
+	viewGateway
 	viewPods
 )
 
-var viewNames = []string{"Personas", "Instances", "Runs", "Policies", "Skills", "Channels", "Schedules", "Pods"}
+var viewNames = []string{"Personas", "Instances", "Runs", "Policies", "Skills", "Channels", "Schedules", "Gateway", "Pods"}
 
 // detailPaneState controls the visibility of the right-hand detail pane.
 type detailPaneState int
@@ -1578,8 +1580,9 @@ type dataRefreshMsg struct {
 	channels     *[]channelRow
 	pods         *[]podRow
 	schedules    *[]sympoziumv1alpha1.SympoziumSchedule
-	personaPacks *[]sympoziumv1alpha1.PersonaPack
-	fetchErr     string
+	personaPacks  *[]sympoziumv1alpha1.PersonaPack
+	gatewayConfig *sympoziumv1alpha1.SympoziumConfig
+	fetchErr      string
 }
 
 // ── Suggestion ───────────────────────────────────────────────────────────────
@@ -2101,8 +2104,9 @@ type tuiModel struct {
 	skills       []sympoziumv1alpha1.SkillPack
 	channels     []channelRow
 	pods         []podRow
-	schedules    []sympoziumv1alpha1.SympoziumSchedule
-	personaPacks []sympoziumv1alpha1.PersonaPack
+	schedules     []sympoziumv1alpha1.SympoziumSchedule
+	personaPacks  []sympoziumv1alpha1.PersonaPack
+	gatewayConfig *sympoziumv1alpha1.SympoziumConfig
 
 	// Input
 	input        textinput.Model
@@ -2155,6 +2159,9 @@ type tuiModel struct {
 
 	editSkills              []editSkillItem   // toggleable skills list
 	editChannels            []editChannelItem // channel bindings
+	editWebEndpoint         editWebEndpointForm // web endpoint config
+	editGateway             editGatewayForm     // gateway config
+	showGatewayEditModal    bool                // separate modal for gateway
 	editPersonaPackName     string            // non-empty when editing a PersonaPack
 	editPersonas            []editPersonaItem // toggleable personas list
 	editPersonaHeartbeatIdx int               // index into personaHeartbeatOptions
@@ -2201,6 +2208,29 @@ type editChannelItem struct {
 	tokenKey  string // env var name for the token (e.g. TELEGRAM_BOT_TOKEN)
 }
 
+// editWebEndpointForm holds the editable web endpoint fields.
+type editWebEndpointForm struct {
+	enabled       bool
+	hostname      string
+	rateLimit     string // requests per minute, edited as text
+}
+
+// editWebEndpointFieldCount is the number of fields in the web endpoint tab.
+var editWebEndpointFieldCount = 3 // enabled, hostname, rateLimit
+
+// editGatewayForm holds the editable gateway configuration fields.
+type editGatewayForm struct {
+	enabled                  bool
+	baseDomain               string
+	gatewayClassName         string
+	gatewayName              string
+	tlsEnabled               bool
+	certManagerClusterIssuer string
+	tlsSecretName            string
+}
+
+var editGatewayFieldCount = 7
+
 // editPersonaItem represents a toggleable persona in the PersonaPack edit modal.
 type editPersonaItem struct {
 	name        string // persona name within the pack
@@ -2212,7 +2242,7 @@ var editScheduleTypes = []string{"heartbeat", "scheduled", "sweep"}
 var editConcurrencyPolicies = []string{"Forbid", "Allow", "Replace"}
 var editMemoryFieldCount = 3    // enabled, maxSizeKB, systemPrompt
 var editHeartbeatFieldCount = 6 // schedule, task, type, concurrencyPolicy, includeMemory, suspend
-var editTabNames = []string{"Memory", "Heartbeat", "Skills", "Channels"}
+var editTabNames = []string{"Memory", "Heartbeat", "Skills", "Channels", "Web Endpoint"}
 var availableChannelTypes = []string{"telegram", "slack", "discord", "whatsapp"}
 
 // personaHeartbeatOptions defines the selectable intervals for PersonaPack editing.
@@ -2357,13 +2387,14 @@ func refreshDataCmd() tea.Cmd {
 		defer cancel()
 
 		var (
-			inst    sympoziumv1alpha1.SympoziumInstanceList
-			runs    sympoziumv1alpha1.AgentRunList
-			pols    sympoziumv1alpha1.SympoziumPolicyList
-			skls    sympoziumv1alpha1.SkillPackList
-			scheds  sympoziumv1alpha1.SympoziumScheduleList
-			packs   sympoziumv1alpha1.PersonaPackList
-			podList corev1.PodList
+			inst      sympoziumv1alpha1.SympoziumInstanceList
+			runs      sympoziumv1alpha1.AgentRunList
+			pols      sympoziumv1alpha1.SympoziumPolicyList
+			skls      sympoziumv1alpha1.SkillPackList
+			scheds    sympoziumv1alpha1.SympoziumScheduleList
+			packs     sympoziumv1alpha1.PersonaPackList
+			podList   corev1.PodList
+			gwConfigs sympoziumv1alpha1.SympoziumConfigList
 		)
 
 		var mu sync.Mutex
@@ -2376,7 +2407,7 @@ func refreshDataCmd() tea.Cmd {
 
 		// Fetch all resources in parallel.
 		var wg sync.WaitGroup
-		wg.Add(7)
+		wg.Add(8)
 
 		go func() {
 			defer wg.Done()
@@ -2420,6 +2451,12 @@ func refreshDataCmd() tea.Cmd {
 				addErr(fmt.Sprintf("personapacks: %v", err))
 			}
 		}()
+		go func() {
+			defer wg.Done()
+			if err := k8sClient.List(ctx, &gwConfigs); err != nil {
+				addErr(fmt.Sprintf("gatewayconfig: %v", err))
+			}
+		}()
 
 		wg.Wait()
 
@@ -2446,6 +2483,9 @@ func refreshDataCmd() tea.Cmd {
 		}
 		if !containsPrefix(errs, "personapacks:") {
 			msg.personaPacks = &packs.Items
+		}
+		if !containsPrefix(errs, "gatewayconfig:") && len(gwConfigs.Items) > 0 {
+			msg.gatewayConfig = &gwConfigs.Items[0]
 		}
 
 		// Build channel rows from instances.
@@ -2680,6 +2720,8 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					max = len(m.editSkills)
 				} else if m.editTab == 3 {
 					max = len(m.editChannels)
+				} else if m.editTab == 4 {
+					max = editWebEndpointFieldCount
 				}
 				if m.editField < max-1 {
 					m.editField++
@@ -2750,6 +2792,10 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							}
 						}
 					}
+				} else if m.editTab == 4 {
+					if m.editField == 0 {
+						m.editWebEndpoint.enabled = !m.editWebEndpoint.enabled
+					}
 				}
 				return m, nil
 			case "left", "h":
@@ -2789,6 +2835,17 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					case 2:
 						if len(m.editMemory.systemPrompt) > 0 {
 							m.editMemory.systemPrompt = m.editMemory.systemPrompt[:len(m.editMemory.systemPrompt)-1]
+						}
+					}
+				} else if m.editTab == 4 {
+					switch m.editField {
+					case 1:
+						if len(m.editWebEndpoint.hostname) > 0 {
+							m.editWebEndpoint.hostname = m.editWebEndpoint.hostname[:len(m.editWebEndpoint.hostname)-1]
+						}
+					case 2:
+						if len(m.editWebEndpoint.rateLimit) > 0 {
+							m.editWebEndpoint.rateLimit = m.editWebEndpoint.rateLimit[:len(m.editWebEndpoint.rateLimit)-1]
 						}
 					}
 				} else {
@@ -2871,6 +2928,10 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							}
 						}
 					}
+				} else if m.editTab == 4 {
+					if m.editField == 0 {
+						m.editWebEndpoint.enabled = !m.editWebEndpoint.enabled
+					}
 				}
 				return m, nil
 			case "a":
@@ -2908,11 +2969,91 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						case 2:
 							m.editMemory.systemPrompt += ch
 						}
+					} else if m.editTab == 4 {
+						switch m.editField {
+						case 1:
+							m.editWebEndpoint.hostname += ch
+						case 2:
+							if ch >= "0" && ch <= "9" {
+								m.editWebEndpoint.rateLimit += ch
+							}
+						}
 					} else {
 						switch m.editField {
 						case 0:
 							m.editHeartbeat.schedule += ch
 						}
+					}
+				}
+				return m, nil
+			}
+		}
+
+		if m.showGatewayEditModal {
+			switch msg.String() {
+			case "esc":
+				m.showGatewayEditModal = false
+				m.addLog(tuiDimStyle.Render("Gateway edit cancelled"))
+				return m, nil
+			case "j", "down":
+				if m.editField < editGatewayFieldCount-1 {
+					m.editField++
+				}
+				return m, nil
+			case "k", "up":
+				if m.editField > 0 {
+					m.editField--
+				}
+				return m, nil
+			case " ", "enter":
+				switch m.editField {
+				case 0:
+					m.editGateway.enabled = !m.editGateway.enabled
+				case 4:
+					m.editGateway.tlsEnabled = !m.editGateway.tlsEnabled
+				}
+				return m, nil
+			case "backspace":
+				switch m.editField {
+				case 1:
+					if len(m.editGateway.baseDomain) > 0 {
+						m.editGateway.baseDomain = m.editGateway.baseDomain[:len(m.editGateway.baseDomain)-1]
+					}
+				case 2:
+					if len(m.editGateway.gatewayClassName) > 0 {
+						m.editGateway.gatewayClassName = m.editGateway.gatewayClassName[:len(m.editGateway.gatewayClassName)-1]
+					}
+				case 3:
+					if len(m.editGateway.gatewayName) > 0 {
+						m.editGateway.gatewayName = m.editGateway.gatewayName[:len(m.editGateway.gatewayName)-1]
+					}
+				case 5:
+					if len(m.editGateway.certManagerClusterIssuer) > 0 {
+						m.editGateway.certManagerClusterIssuer = m.editGateway.certManagerClusterIssuer[:len(m.editGateway.certManagerClusterIssuer)-1]
+					}
+				case 6:
+					if len(m.editGateway.tlsSecretName) > 0 {
+						m.editGateway.tlsSecretName = m.editGateway.tlsSecretName[:len(m.editGateway.tlsSecretName)-1]
+					}
+				}
+				return m, nil
+			case "ctrl+s":
+				m.showGatewayEditModal = false
+				return m, m.applyGatewayEdit()
+			default:
+				ch := msg.String()
+				if len(ch) == 1 {
+					switch m.editField {
+					case 1:
+						m.editGateway.baseDomain += ch
+					case 2:
+						m.editGateway.gatewayClassName += ch
+					case 3:
+						m.editGateway.gatewayName += ch
+					case 5:
+						m.editGateway.certManagerClusterIssuer += ch
+					case 6:
+						m.editGateway.tlsSecretName += ch
 					}
 				}
 				return m, nil
@@ -3238,6 +3379,11 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.tableScroll = 0
 			return m, nil
 		case "8":
+			m.activeView = viewGateway
+			m.selectedRow = 0
+			m.tableScroll = 0
+			return m, nil
+		case "9":
 			m.activeView = viewPods
 			m.selectedRow = 0
 			m.tableScroll = 0
@@ -3386,6 +3532,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.personaPacks != nil {
 			m.personaPacks = *msg.personaPacks
 		}
+		m.gatewayConfig = msg.gatewayConfig
 		if msg.fetchErr != "" {
 			m.addLog(tuiErrorStyle.Render("✗ Fetch error: " + msg.fetchErr))
 			m.connected = false
@@ -3544,6 +3691,11 @@ func (m tuiModel) activeViewCount() int {
 		return len(m.filteredPods())
 	case viewSchedules:
 		return len(m.schedules)
+	case viewGateway:
+		if m.gatewayConfig != nil {
+			return 1
+		}
+		return 0
 	case viewPersonas:
 		return len(m.personaPacks)
 	}
@@ -3985,6 +4137,19 @@ func (m tuiModel) handleRowEdit() (tea.Model, tea.Cmd) {
 				tokenKey:  channelTokenKeyFor(ct),
 			})
 		}
+		// Populate web endpoint tab
+		m.editWebEndpoint = editWebEndpointForm{
+			enabled:   false,
+			hostname:  "",
+			rateLimit: "60",
+		}
+		if inst.Spec.WebEndpoint != nil {
+			m.editWebEndpoint.enabled = inst.Spec.WebEndpoint.Enabled
+			m.editWebEndpoint.hostname = inst.Spec.WebEndpoint.Hostname
+			if inst.Spec.WebEndpoint.RateLimit != nil && inst.Spec.WebEndpoint.RateLimit.RequestsPerMinute > 0 {
+				m.editWebEndpoint.rateLimit = fmt.Sprintf("%d", inst.Spec.WebEndpoint.RateLimit.RequestsPerMinute)
+			}
+		}
 		m.showEditModal = true
 	case viewSchedules:
 		if m.selectedRow >= len(m.schedules) {
@@ -4111,6 +4276,32 @@ func (m tuiModel) handleRowEdit() (tea.Model, tea.Cmd) {
 			})
 		}
 		m.showEditModal = true
+	case viewGateway:
+		m.editGateway = editGatewayForm{
+			gatewayClassName: "sympozium",
+			gatewayName:      "sympozium-gateway",
+			tlsSecretName:    "sympozium-wildcard-cert",
+		}
+		if m.gatewayConfig != nil && m.gatewayConfig.Spec.Gateway != nil {
+			gw := m.gatewayConfig.Spec.Gateway
+			m.editGateway.enabled = gw.Enabled
+			m.editGateway.baseDomain = gw.BaseDomain
+			if gw.GatewayClassName != "" {
+				m.editGateway.gatewayClassName = gw.GatewayClassName
+			}
+			if gw.Name != "" {
+				m.editGateway.gatewayName = gw.Name
+			}
+			if gw.TLS != nil {
+				m.editGateway.tlsEnabled = gw.TLS.Enabled
+				m.editGateway.certManagerClusterIssuer = gw.TLS.CertManagerClusterIssuer
+				if gw.TLS.SecretName != "" {
+					m.editGateway.tlsSecretName = gw.TLS.SecretName
+				}
+			}
+		}
+		m.editField = 0
+		m.showGatewayEditModal = true
 	default:
 		m.addLog(tuiDimStyle.Render("Edit not available for this view"))
 	}
@@ -4123,6 +4314,7 @@ func (m tuiModel) applyEditModal() tea.Cmd {
 	schedName := m.editScheduleName
 	mem := m.editMemory
 	hb := m.editHeartbeat
+	webEP := m.editWebEndpoint
 	skills := make([]editSkillItem, len(m.editSkills))
 	copy(skills, m.editSkills)
 	channels := make([]editChannelItem, len(m.editChannels))
@@ -4202,6 +4394,23 @@ func (m tuiModel) applyEditModal() tea.Cmd {
 				}
 			}
 			inst.Spec.Channels = channelSpecs
+
+			// Apply web endpoint toggle
+			if webEP.enabled {
+				rpm := 60
+				if v, err := strconv.Atoi(webEP.rateLimit); err == nil && v > 0 {
+					rpm = v
+				}
+				inst.Spec.WebEndpoint = &sympoziumv1alpha1.WebEndpointSpec{
+					Enabled:  true,
+					Hostname: webEP.hostname,
+					RateLimit: &sympoziumv1alpha1.RateLimitSpec{
+						RequestsPerMinute: rpm,
+					},
+				}
+			} else {
+				inst.Spec.WebEndpoint = nil
+			}
 
 			if err := k8sClient.Update(ctx, &inst); err != nil {
 				return cmdResultMsg{err: fmt.Errorf("update instance %q: %w", instName, err)}
@@ -4289,6 +4498,73 @@ func (m tuiModel) applyEditModal() tea.Cmd {
 
 		result := tuiSuccessStyle.Render("✓ " + strings.Join(msgs, ", "))
 		return cmdResultMsg{output: result}
+	}
+}
+
+// applyGatewayEdit saves the gateway configuration to a SympoziumConfig CR.
+func (m tuiModel) applyGatewayEdit() tea.Cmd {
+	ns := m.namespace
+	gw := m.editGateway
+	return func() tea.Msg {
+		if k8sClient == nil {
+			return cmdResultMsg{err: fmt.Errorf("not connected to cluster")}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		var config sympoziumv1alpha1.SympoziumConfig
+		err := k8sClient.Get(ctx, client.ObjectKey{Name: "default", Namespace: ns}, &config)
+		if err != nil {
+			if !k8serr.IsNotFound(err) {
+				return cmdResultMsg{err: fmt.Errorf("get SympoziumConfig: %w", err)}
+			}
+			// Create new
+			config = sympoziumv1alpha1.SympoziumConfig{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "default",
+					Namespace: ns,
+				},
+			}
+			config.Spec.Gateway = &sympoziumv1alpha1.GatewaySpec{
+				Enabled:          gw.enabled,
+				GatewayClassName: gw.gatewayClassName,
+				Name:             gw.gatewayName,
+				BaseDomain:       gw.baseDomain,
+			}
+			if gw.tlsEnabled {
+				config.Spec.Gateway.TLS = &sympoziumv1alpha1.GatewayTLSSpec{
+					Enabled:                  gw.tlsEnabled,
+					CertManagerClusterIssuer: gw.certManagerClusterIssuer,
+					SecretName:               gw.tlsSecretName,
+				}
+			}
+			if err := k8sClient.Create(ctx, &config); err != nil {
+				return cmdResultMsg{err: fmt.Errorf("create SympoziumConfig: %w", err)}
+			}
+			return cmdResultMsg{output: "Gateway config created"}
+		}
+		// Update existing
+		if config.Spec.Gateway == nil {
+			config.Spec.Gateway = &sympoziumv1alpha1.GatewaySpec{}
+		}
+		config.Spec.Gateway.Enabled = gw.enabled
+		config.Spec.Gateway.GatewayClassName = gw.gatewayClassName
+		config.Spec.Gateway.Name = gw.gatewayName
+		config.Spec.Gateway.BaseDomain = gw.baseDomain
+		if gw.tlsEnabled {
+			if config.Spec.Gateway.TLS == nil {
+				config.Spec.Gateway.TLS = &sympoziumv1alpha1.GatewayTLSSpec{}
+			}
+			config.Spec.Gateway.TLS.Enabled = gw.tlsEnabled
+			config.Spec.Gateway.TLS.CertManagerClusterIssuer = gw.certManagerClusterIssuer
+			config.Spec.Gateway.TLS.SecretName = gw.tlsSecretName
+		} else {
+			config.Spec.Gateway.TLS = nil
+		}
+		if err := k8sClient.Update(ctx, &config); err != nil {
+			return cmdResultMsg{err: fmt.Errorf("update SympoziumConfig: %w", err)}
+		}
+		return cmdResultMsg{output: "Gateway config saved"}
 	}
 }
 
@@ -5124,6 +5400,9 @@ func (m tuiModel) View() string {
 	if m.showEditModal {
 		return m.renderEditModal(base)
 	}
+	if m.showGatewayEditModal {
+		return m.renderGatewayEditModal(base)
+	}
 	if m.showModal {
 		return m.renderModalOverlay(base)
 	}
@@ -5201,6 +5480,8 @@ func (m tuiModel) renderTable(tableH int) string {
 		b.WriteString(m.renderPodsTable(tableH))
 	case viewSchedules:
 		b.WriteString(m.renderSchedulesTable(tableH))
+	case viewGateway:
+		b.WriteString(m.renderGatewayTable(tableH))
 	case viewPersonas:
 		b.WriteString(m.renderPersonasTable(tableH))
 	}
@@ -5656,6 +5937,59 @@ func (m tuiModel) renderSchedulesTable(tableH int) string {
 			}
 		}
 		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+func (m tuiModel) renderGatewayTable(tableH int) string {
+	var b strings.Builder
+
+	header := fmt.Sprintf(" %-12s %-30s %-12s %-10s %-20s %-8s", "ENABLED", "BASE DOMAIN", "PHASE", "TLS", "ADDRESS", "LISTENERS")
+	b.WriteString(tuiColHeaderStyle.Render(padRight(header, m.width)))
+	b.WriteString("\n")
+
+	if m.gatewayConfig == nil {
+		b.WriteString(m.renderEmptyTable(tableH-1, "No gateway configured — create a SympoziumConfig to manage the gateway"))
+		return b.String()
+	}
+
+	gw := m.gatewayConfig.Spec.Gateway
+	enabled := "No"
+	baseDomain := "-"
+	tls := "Off"
+	if gw != nil {
+		if gw.Enabled {
+			enabled = "Yes"
+		}
+		if gw.BaseDomain != "" {
+			baseDomain = gw.BaseDomain
+		}
+		if gw.TLS != nil && gw.TLS.Enabled {
+			tls = "On"
+		}
+	}
+
+	phase := m.gatewayConfig.Status.Phase
+	if phase == "" {
+		phase = "-"
+	}
+	address := "-"
+	listeners := "-"
+	if m.gatewayConfig.Status.Gateway != nil {
+		if m.gatewayConfig.Status.Gateway.Address != "" {
+			address = m.gatewayConfig.Status.Gateway.Address
+		}
+		listeners = fmt.Sprintf("%d", m.gatewayConfig.Status.Gateway.ListenerCount)
+	}
+
+	row := fmt.Sprintf(" %-12s %-30s %-12s %-10s %-20s %-8s",
+		enabled, truncate(baseDomain, 30), phase, tls, truncate(address, 20), listeners)
+	b.WriteString(m.styleRow(0, row))
+	b.WriteString("\n")
+
+	// Fill remaining rows
+	for i := 1; i < tableH-1; i++ {
+		b.WriteString(strings.Repeat(" ", m.width) + "\n")
 	}
 	return b.String()
 }
@@ -6528,6 +6862,74 @@ func (m tuiModel) renderModalOverlay(base string) string {
 	return strings.Join(lines, "\n")
 }
 
+func (m tuiModel) renderGatewayEditModal(base string) string {
+	var content strings.Builder
+
+	content.WriteString(tuiModalTitleStyle.Render("  ✎  Edit Gateway Configuration"))
+	content.WriteString("\n\n")
+
+	highlight := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#1A1A2E")).
+		Background(lipgloss.Color("#E94560")).
+		Bold(true)
+	label := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#CDD6F4")).
+		Background(lipgloss.Color("#16213E")).
+		Width(28)
+	value := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#89DCEB")).
+		Background(lipgloss.Color("#16213E"))
+
+	renderField := func(idx int, name string, val string) {
+		lbl := label.Render("  " + name + ":")
+		v := value.Render(val)
+		if m.editField == idx {
+			content.WriteString(highlight.Render("▸") + " " + lbl + " " + v)
+		} else {
+			content.WriteString("  " + lbl + " " + v)
+		}
+		content.WriteString("\n")
+	}
+	renderBool := func(idx int, name string, val bool) {
+		s := "Off"
+		if val {
+			s = "On"
+		}
+		renderField(idx, name, "["+s+"]")
+	}
+
+	renderBool(0, "Enabled", m.editGateway.enabled)
+	renderField(1, "Base Domain", m.editGateway.baseDomain)
+	renderField(2, "GatewayClass Name", m.editGateway.gatewayClassName)
+	renderField(3, "Gateway Name", m.editGateway.gatewayName)
+	renderBool(4, "TLS Enabled", m.editGateway.tlsEnabled)
+	renderField(5, "CertManager Issuer", m.editGateway.certManagerClusterIssuer)
+	renderField(6, "TLS Secret Name", m.editGateway.tlsSecretName)
+
+	content.WriteString("\n")
+	content.WriteString(tuiDimStyle.Render("  Ctrl+S to save • Esc to cancel"))
+
+	modal := tuiModalBorderStyle.Render(content.String())
+	lines := strings.Split(base, "\n")
+	modalLines := strings.Split(modal, "\n")
+	startRow := (len(lines) - len(modalLines)) / 2
+	if startRow < 1 {
+		startRow = 1
+	}
+	for i, ml := range modalLines {
+		row := startRow + i
+		if row >= 0 && row < len(lines) {
+			mw := lipgloss.Width(ml)
+			pad := (m.width - mw) / 2
+			if pad < 0 {
+				pad = 0
+			}
+			lines[row] = strings.Repeat(" ", pad) + ml
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
 func (m tuiModel) renderEditModal(base string) string {
 	var content strings.Builder
 
@@ -6734,6 +7136,30 @@ func (m tuiModel) renderEditModal(base string) string {
 					lbl = value.Render(lbl)
 				}
 				content.WriteString("  " + lbl + "\n")
+			}
+		}
+	} else if m.editTab == 4 {
+		// Web Endpoint tab
+		renderBool(0, "Enabled", m.editWebEndpoint.enabled)
+		renderField(1, "Hostname", m.editWebEndpoint.hostname)
+		renderField(2, "Rate Limit (rpm)", m.editWebEndpoint.rateLimit)
+
+		// Show status (read-only) when the instance has a web endpoint status
+		if m.editInstanceName != "" {
+			for _, inst := range m.instances {
+				if inst.Name == m.editInstanceName && inst.Status.WebEndpoint != nil {
+					we := inst.Status.WebEndpoint
+					content.WriteString("\n")
+					content.WriteString(tuiDimStyle.Render("  ── Status ──────────────────────") + "\n")
+					content.WriteString(fmt.Sprintf("  %s %s\n", label.Render("  Status:"), value.Render(we.Status)))
+					if we.URL != "" {
+						content.WriteString(fmt.Sprintf("  %s %s\n", label.Render("  URL:"), value.Render(we.URL)))
+					}
+					if we.AuthSecretName != "" {
+						content.WriteString(fmt.Sprintf("  %s %s\n", label.Render("  API Key Secret:"), value.Render(we.AuthSecretName)))
+					}
+					break
+				}
 			}
 		}
 	}
