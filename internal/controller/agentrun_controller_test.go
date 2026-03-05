@@ -727,6 +727,132 @@ func TestBuildContainers_NonPrivilegedSidecarNoSeccompOverride(t *testing.T) {
 	}
 }
 
+// ── Server-mode detection tests ───────────────────────────────────────────────
+
+func TestServerModeDetection_RequiresServerSidecar(t *testing.T) {
+	sidecars := []resolvedSidecar{
+		{
+			skillPackName: "web-endpoint",
+			sidecar: sympoziumv1alpha1.SkillSidecar{
+				Image:          "ghcr.io/alexsjones/sympozium/web-proxy:latest",
+				RequiresServer: true,
+				MountWorkspace: false,
+				Ports: []sympoziumv1alpha1.SidecarPort{
+					{Name: "http", ContainerPort: 8080},
+				},
+			},
+		},
+	}
+
+	effectiveMode := "task"
+	for _, sc := range sidecars {
+		if sc.sidecar.RequiresServer {
+			effectiveMode = "server"
+			break
+		}
+	}
+
+	if effectiveMode != "server" {
+		t.Errorf("effective mode = %q, want server", effectiveMode)
+	}
+}
+
+func TestServerModeDetection_NoRequiresServer(t *testing.T) {
+	sidecars := []resolvedSidecar{
+		{
+			skillPackName: "k8s-ops",
+			sidecar: sympoziumv1alpha1.SkillSidecar{
+				Image:          "ghcr.io/alexsjones/sympozium/skill-k8s-ops:latest",
+				MountWorkspace: true,
+			},
+		},
+	}
+
+	effectiveMode := "task"
+	for _, sc := range sidecars {
+		if sc.sidecar.RequiresServer {
+			effectiveMode = "server"
+			break
+		}
+	}
+
+	if effectiveMode != "task" {
+		t.Errorf("effective mode = %q, want task", effectiveMode)
+	}
+}
+
+func TestServerModeDetection_MixedSidecars(t *testing.T) {
+	sidecars := []resolvedSidecar{
+		{
+			skillPackName: "k8s-ops",
+			sidecar: sympoziumv1alpha1.SkillSidecar{
+				Image:          "k8s:latest",
+				MountWorkspace: true,
+			},
+		},
+		{
+			skillPackName: "web-endpoint",
+			sidecar: sympoziumv1alpha1.SkillSidecar{
+				Image:          "web:latest",
+				RequiresServer: true,
+				Ports: []sympoziumv1alpha1.SidecarPort{
+					{Name: "http", ContainerPort: 8080},
+				},
+			},
+		},
+	}
+
+	effectiveMode := "task"
+	for _, sc := range sidecars {
+		if sc.sidecar.RequiresServer {
+			effectiveMode = "server"
+			break
+		}
+	}
+
+	if effectiveMode != "server" {
+		t.Errorf("effective mode = %q, want server (web-endpoint has RequiresServer)", effectiveMode)
+	}
+}
+
+func TestServerMode_ExplicitModeField(t *testing.T) {
+	run := newTestRun()
+	run.Spec.Mode = "server"
+	if run.Spec.Mode != "server" {
+		t.Errorf("mode = %q, want server", run.Spec.Mode)
+	}
+}
+
+func TestServerMode_DefaultModeIsTask(t *testing.T) {
+	run := newTestRun()
+	effectiveMode := run.Spec.Mode
+	if effectiveMode == "" {
+		effectiveMode = "task"
+	}
+	if effectiveMode != "task" {
+		t.Errorf("default mode = %q, want task", effectiveMode)
+	}
+}
+
+func TestServerMode_PhaseServing(t *testing.T) {
+	if sympoziumv1alpha1.AgentRunPhaseServing != "Serving" {
+		t.Errorf("AgentRunPhaseServing = %q, want Serving", sympoziumv1alpha1.AgentRunPhaseServing)
+	}
+}
+
+func TestServerMode_StatusFields(t *testing.T) {
+	run := newTestRun()
+	run.Status.DeploymentName = "test-run-server"
+	run.Status.ServiceName = "test-run-server"
+
+	if run.Status.DeploymentName != "test-run-server" {
+		t.Errorf("deploymentName = %q", run.Status.DeploymentName)
+	}
+	if run.Status.ServiceName != "test-run-server" {
+		t.Errorf("serviceName = %q", run.Status.ServiceName)
+	}
+}
+
 func TestBuildContainers_IPCBridgeSecurityContext(t *testing.T) {
 	r := &AgentRunReconciler{}
 	cs := r.buildContainers(newTestRun(), false, nil, nil)

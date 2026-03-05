@@ -196,6 +196,27 @@ spec:
                     description: MountWorkspace controls whether /workspace is mounted
                       into the sidecar.
                     type: boolean
+                  ports:
+                    description: Ports exposed by this sidecar, used to create a Service
+                      when RequiresServer is true.
+                    items:
+                      description: SidecarPort defines a port exposed by a skill sidecar.
+                      properties:
+                        containerPort:
+                          description: ContainerPort is the port number on the container.
+                          format: int32
+                          type: integer
+                        name:
+                          description: Name is the port name (e.g. "http").
+                          type: string
+                        protocol:
+                          description: Protocol defaults to TCP.
+                          type: string
+                      required:
+                      - containerPort
+                      - name
+                      type: object
+                    type: array
                   rbac:
                     description: |-
                       RBAC defines Kubernetes RBAC rules that this sidecar needs.
@@ -228,6 +249,12 @@ spec:
                       - verbs
                       type: object
                     type: array
+                  requiresServer:
+                    description: |-
+                      RequiresServer indicates this sidecar needs a long-running Deployment
+                      instead of an ephemeral Job. The AgentRun controller detects this and
+                      creates a Deployment + Service.
+                    type: boolean
                   resources:
                     description: Resources for the sidecar container.
                     properties:

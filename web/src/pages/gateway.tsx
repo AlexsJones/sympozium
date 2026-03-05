@@ -1,5 +1,5 @@
-import { useState, useEffect } from "react";
-import { useGatewayConfig, usePatchGatewayConfig, useCreateGatewayConfig } from "@/hooks/use-api";
+import { useState, useEffect, useMemo } from "react";
+import { useGatewayConfig, usePatchGatewayConfig, useCreateGatewayConfig, useInstances } from "@/hooks/use-api";
 import {
   Card,
   CardHeader,
@@ -94,6 +94,9 @@ export function GatewayPage() {
                 <span className="text-muted-foreground">Phase</span>
                 <PhaseBadge phase={phase} />
               </div>
+              {data?.message && (
+                <p className="text-xs text-destructive">{data.message}</p>
+              )}
               {data?.address && (
                 <div className="flex items-center justify-between">
                   <span className="text-muted-foreground">Address</span>
@@ -231,6 +234,9 @@ export function GatewayPage() {
         </CardContent>
       </Card>
 
+      {/* Routes */}
+      <RoutesCard baseDomain={form.baseDomain} />
+
       {/* Save */}
       {!isLoading && (
         <div className="flex justify-end">
@@ -245,6 +251,76 @@ export function GatewayPage() {
         </div>
       )}
     </div>
+  );
+}
+
+function RoutesCard({ baseDomain }: { baseDomain: string }) {
+  const { data: instances, isLoading } = useInstances();
+
+  const routes = useMemo(() => {
+    if (!instances) return [];
+    return instances.filter((i) =>
+      i.spec.skills?.some(
+        (s) => s.skillPackRef === "web-endpoint" || s.skillPackRef === "skillpack-web-endpoint",
+      ),
+    );
+  }, [instances]);
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-sm">Routes</CardTitle>
+        <CardDescription>
+          HTTPRoutes created for instances with web endpoints enabled
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        {isLoading ? (
+          <div className="space-y-2">
+            <Skeleton className="h-5 w-full" />
+            <Skeleton className="h-5 w-3/4" />
+          </div>
+        ) : routes.length === 0 ? (
+          <p className="text-sm text-muted-foreground">
+            No routes — enable web endpoints on instances to create routes
+          </p>
+        ) : (
+          <div className="space-y-1 text-sm">
+            <div className="grid grid-cols-4 gap-2 font-medium text-muted-foreground text-xs pb-1 border-b">
+              <span>Instance</span>
+              <span>Hostname</span>
+              <span>Status</span>
+              <span>URL</span>
+            </div>
+            {routes.map((inst) => {
+              const webSkill = inst.spec.skills?.find(
+                (s) => s.skillPackRef === "web-endpoint" || s.skillPackRef === "skillpack-web-endpoint",
+              );
+              const hostname =
+                webSkill?.params?.hostname ||
+                (baseDomain ? `${inst.metadata.name}.${baseDomain}` : "-");
+              return (
+                <div
+                  key={inst.metadata.name}
+                  className="grid grid-cols-4 gap-2 py-1"
+                >
+                  <span className="font-medium truncate">
+                    {inst.metadata.name}
+                  </span>
+                  <span className="font-mono text-xs truncate">
+                    {hostname}
+                  </span>
+                  <Badge variant="secondary" className="w-fit">
+                    Skill
+                  </Badge>
+                  <span className="font-mono text-xs truncate">-</span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 

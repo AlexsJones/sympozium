@@ -6,8 +6,11 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/metric"
 
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -17,6 +20,14 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	sympoziumv1alpha1 "github.com/alexsjones/sympozium/api/v1alpha1"
+)
+
+var configMeter = otel.Meter("sympozium.ai/config-controller")
+
+// Gateway readiness metric.
+var gatewayReadyGauge, _ = configMeter.Int64UpDownCounter("sympozium.gateway.ready",
+	metric.WithUnit("{gateway}"),
+	metric.WithDescription("1 when gateway is programmed, 0 otherwise"),
 )
 
 const (
@@ -78,20 +89,20 @@ func (r *SympoziumConfigReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 			log.Error(err, "failed to clean up gateway resources")
 			return ctrl.Result{}, err
 		}
-		return ctrl.Result{}, r.updateStatus(ctx, &config, "Disabled", nil)
+		return ctrl.Result{}, r.updateStatus(ctx, &config, "Disabled", "", nil)
 	}
 
 	// Reconcile GatewayClass (cluster-scoped — no ownerRef, use label)
 	if err := r.reconcileGatewayClass(ctx, &config); err != nil {
 		log.Error(err, "failed to reconcile GatewayClass")
-		_ = r.updateStatus(ctx, &config, "Error", nil)
+		_ = r.updateStatus(ctx, &config, "Error", fmt.Sprintf("GatewayClass: %v", err), nil)
 		return ctrl.Result{}, err
 	}
 
 	// Reconcile Gateway (namespace-scoped — ownerRef)
 	if err := r.reconcileGateway(ctx, &config); err != nil {
 		log.Error(err, "failed to reconcile Gateway")
-		_ = r.updateStatus(ctx, &config, "Error", nil)
+		_ = r.updateStatus(ctx, &config, "Error", fmt.Sprintf("Gateway: %v", err), nil)
 		return ctrl.Result{}, err
 	}
 
@@ -105,7 +116,7 @@ func (r *SympoziumConfigReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	if gwStatus != nil && gwStatus.Ready {
 		phase = "Ready"
 	}
-	if err := r.updateStatus(ctx, &config, phase, gwStatus); err != nil {
+	if err := r.updateStatus(ctx, &config, phase, "", gwStatus); err != nil {
 		return ctrl.Result{}, err
 	}
 
@@ -274,6 +285,11 @@ func (r *SympoziumConfigReconciler) readGatewayStatus(ctx context.Context, confi
 		info.Address = gateway.Status.Addresses[0].Value
 	}
 
+	// Emit gateway readiness metric.
+	if info.Ready {
+		gatewayReadyGauge.Add(ctx, 1)
+	}
+
 	return info, nil
 }
 
@@ -309,10 +325,33 @@ func (r *SympoziumConfigReconciler) cleanupGatewayResources(ctx context.Context,
 	return nil
 }
 
-func (r *SympoziumConfigReconciler) updateStatus(ctx context.Context, config *sympoziumv1alpha1.SympoziumConfig, phase string, gwStatus *sympoziumv1alpha1.GatewayStatusInfo) error {
+func (r *SympoziumConfigReconciler) updateStatus(ctx context.Context, config *sympoziumv1alpha1.SympoziumConfig, phase, message string, gwStatus *sympoziumv1alpha1.GatewayStatusInfo) error {
 	statusBase := config.DeepCopy()
 	config.Status.Phase = phase
 	config.Status.Gateway = gwStatus
+
+	condStatus := metav1.ConditionTrue
+	reason := "Ready"
+	switch phase {
+	case "Error":
+		condStatus = metav1.ConditionFalse
+		reason = "ReconcileError"
+	case "Pending":
+		condStatus = metav1.ConditionFalse
+		reason = "Pending"
+	case "Disabled":
+		condStatus = metav1.ConditionFalse
+		reason = "Disabled"
+		message = ""
+	}
+	meta.SetStatusCondition(&config.Status.Conditions, metav1.Condition{
+		Type:               "Ready",
+		Status:             condStatus,
+		ObservedGeneration: config.Generation,
+		Reason:             reason,
+		Message:            message,
+	})
+
 	return r.Status().Patch(ctx, config, client.MergeFrom(statusBase))
 }
 

@@ -60,24 +60,6 @@ export interface ChannelStatus {
   message?: string;
 }
 
-export interface RateLimitSpec {
-  requestsPerMinute?: number;
-  burstSize?: number;
-}
-
-export interface WebEndpointSpec {
-  enabled: boolean;
-  hostname?: string;
-  authSecretRef?: string;
-  rateLimit?: RateLimitSpec;
-}
-
-export interface WebEndpointStatus {
-  status: string;
-  url?: string;
-  authSecretName?: string;
-}
-
 export interface SympoziumInstanceSpec {
   channels?: ChannelSpec[];
   agents: AgentsSpec;
@@ -85,7 +67,6 @@ export interface SympoziumInstanceSpec {
   policyRef?: string;
   authRefs?: SecretRef[];
   memory?: MemorySpec;
-  webEndpoint?: WebEndpointSpec;
 }
 
 export interface SympoziumInstanceStatus {
@@ -94,7 +75,6 @@ export interface SympoziumInstanceStatus {
   activeAgentPods?: number;
   totalAgentRuns?: number;
   conditions?: Condition[];
-  webEndpoint?: WebEndpointStatus;
 }
 
 export interface SympoziumInstance {
@@ -136,12 +116,15 @@ export interface AgentRunSpec {
   toolPolicy?: ToolPolicySpec;
   timeout?: string;
   cleanup?: string;
+  mode?: string;
 }
 
 export interface AgentRunStatus {
   phase?: string;
   podName?: string;
   jobName?: string;
+  deploymentName?: string;
+  serviceName?: string;
   startedAt?: string;
   completedAt?: string;
   result?: string;
@@ -262,6 +245,7 @@ export interface GatewayConfigResponse {
   ready: boolean;
   address?: string;
   listenerCount?: number;
+  message?: string;
 }
 
 export interface PatchGatewayConfigRequest {

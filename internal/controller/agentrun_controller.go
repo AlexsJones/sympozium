@@ -2,6 +2,8 @@ package controller
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -18,6 +20,7 @@ import (
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
+	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -25,10 +28,13 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	sympoziumv1alpha1 "github.com/alexsjones/sympozium/api/v1alpha1"
 	"github.com/alexsjones/sympozium/internal/orchestrator"
@@ -42,6 +48,11 @@ var (
 	agentRunsTotal, _    = controllerMeter.Int64Counter("sympozium.agent.runs", metric.WithUnit("{run}"), metric.WithDescription("Agent runs completed"))
 	agentDurationHist, _ = controllerMeter.Float64Histogram("sympozium.agent.duration_ms", metric.WithUnit("ms"), metric.WithDescription("Agent run duration"))
 	controllerErrors, _  = controllerMeter.Int64Counter("sympozium.errors", metric.WithUnit("{error}"), metric.WithDescription("Errors encountered"))
+
+	// Web endpoint server-mode metrics.
+	webEndpointServing, _        = controllerMeter.Int64UpDownCounter("sympozium.web_endpoint.serving", metric.WithUnit("{deployment}"), metric.WithDescription("Active server-mode Deployments"))
+	webEndpointGatewayNotReady, _ = controllerMeter.Int64Counter("sympozium.web_endpoint.gateway_not_ready", metric.WithUnit("{check}"), metric.WithDescription("Gateway check failures"))
+	webEndpointRouteCreated, _   = controllerMeter.Int64Counter("sympozium.web_endpoint.route_created", metric.WithUnit("{route}"), metric.WithDescription("HTTPRoutes created"))
 )
 
 const agentRunFinalizer = "sympozium.ai/agentrun-finalizer"
@@ -125,6 +136,8 @@ func formatTraceparent(sc trace.SpanContext) string {
 // +kubebuilder:rbac:groups=apiextensions.k8s.io,resources=customresourcedefinitions,verbs=get;list;watch
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=roles;rolebindings;clusterroles;clusterrolebindings,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=coordination.k8s.io,resources=leases,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=httproutes,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=sympozium.ai,resources=sympoziumconfigs,verbs=get;list;watch
 
 // Reconcile handles AgentRun create/update/delete events.
 func (r *AgentRunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -164,6 +177,7 @@ func (r *AgentRunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	// Add finalizer only for non-terminal runs. Completed/failed runs have
 	// their finalizer removed in reconcileCompleted; we must not re-add it or
 	// we create an infinite remove→add→remove loop.
+	// Serving-mode runs are long-lived and also need a finalizer.
 	isTerminal := agentRun.Status.Phase == sympoziumv1alpha1.AgentRunPhaseSucceeded ||
 		agentRun.Status.Phase == sympoziumv1alpha1.AgentRunPhaseFailed
 	if !isTerminal && !controllerutil.ContainsFinalizer(agentRun, agentRunFinalizer) {
@@ -186,6 +200,8 @@ func (r *AgentRunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		result, err = r.reconcilePending(ctx, log, agentRun)
 	case sympoziumv1alpha1.AgentRunPhaseRunning:
 		result, err = r.reconcileRunning(ctx, log, agentRun)
+	case sympoziumv1alpha1.AgentRunPhaseServing:
+		result, err = r.reconcileServing(ctx, log, agentRun)
 	case sympoziumv1alpha1.AgentRunPhaseSucceeded, sympoziumv1alpha1.AgentRunPhaseFailed:
 		result, err = r.reconcileCompleted(ctx, log, agentRun)
 	default:
@@ -268,6 +284,21 @@ func (r *AgentRunReconciler) reconcilePending(ctx context.Context, log logr.Logg
 
 	// Resolve skill sidecars from SkillPack CRDs.
 	sidecars := r.resolveSkillSidecars(ctx, log, agentRun)
+
+	// Detect server mode: if any sidecar has RequiresServer, switch to server mode.
+	effectiveMode := agentRun.Spec.Mode
+	if effectiveMode == "" {
+		effectiveMode = "task"
+	}
+	for _, sc := range sidecars {
+		if sc.sidecar.RequiresServer {
+			effectiveMode = "server"
+			break
+		}
+	}
+	if effectiveMode == "server" {
+		return r.reconcilePendingServer(ctx, log, agentRun, sidecars)
+	}
 
 	// Mirror skill ConfigMaps from sympozium-system into the agent namespace
 	// so projected volumes can reference them (ConfigMaps are namespace-local).
@@ -550,9 +581,477 @@ func (r *AgentRunReconciler) reconcileDelete(ctx context.Context, log logr.Logge
 		}
 	}
 
+	// Clean up server-mode resources (Deployment, Service, HTTPRoute).
+	if agentRun.Status.DeploymentName != "" {
+		deploy := &appsv1.Deployment{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      agentRun.Status.DeploymentName,
+				Namespace: agentRun.Namespace,
+			},
+		}
+		if err := r.Delete(ctx, deploy, client.PropagationPolicy(metav1.DeletePropagationForeground)); err != nil && !errors.IsNotFound(err) {
+			return ctrl.Result{}, err
+		}
+		webEndpointServing.Add(ctx, -1, metric.WithAttributes(
+			attribute.String("sympozium.instance", agentRun.Spec.InstanceRef),
+		))
+	}
+	if agentRun.Status.ServiceName != "" {
+		svc := &corev1.Service{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      agentRun.Status.ServiceName,
+				Namespace: agentRun.Namespace,
+			},
+		}
+		if err := r.Delete(ctx, svc); err != nil && !errors.IsNotFound(err) {
+			return ctrl.Result{}, err
+		}
+	}
+	// Clean up HTTPRoute if it exists
+	routeName := agentRun.Name + "-web"
+	route := &gatewayv1.HTTPRoute{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      routeName,
+			Namespace: agentRun.Namespace,
+		},
+	}
+	if err := r.Delete(ctx, route); err != nil && !errors.IsNotFound(err) {
+		log.V(1).Info("Could not delete HTTPRoute", "name", routeName, "err", err)
+	}
+
 	patch := client.MergeFrom(agentRun.DeepCopy())
 	controllerutil.RemoveFinalizer(agentRun, agentRunFinalizer)
 	return ctrl.Result{}, r.Patch(ctx, agentRun, patch)
+}
+
+// reconcilePendingServer handles creating a Deployment + Service for server-mode AgentRuns.
+// Server mode is triggered when a skill sidecar has RequiresServer=true (e.g. web-endpoint).
+// The Deployment contains only the web-proxy sidecar; actual LLM work happens in
+// per-request ephemeral AgentRun Jobs created by the web-proxy.
+func (r *AgentRunReconciler) reconcilePendingServer(ctx context.Context, log logr.Logger, agentRun *sympoziumv1alpha1.AgentRun, sidecars []resolvedSidecar) (ctrl.Result, error) {
+	log.Info("Reconciling pending server-mode AgentRun")
+
+	// Ensure ServiceAccount exists.
+	if err := r.ensureAgentServiceAccount(ctx, agentRun.Namespace); err != nil {
+		return ctrl.Result{}, fmt.Errorf("ensuring agent service account: %w", err)
+	}
+
+	// Create RBAC for sidecars.
+	if err := r.ensureSkillRBAC(ctx, log, agentRun, sidecars); err != nil {
+		log.Error(err, "Failed to create skill RBAC, continuing without")
+	}
+
+	// Find the server sidecar (first one with RequiresServer=true).
+	var serverSidecar *resolvedSidecar
+	for i := range sidecars {
+		if sidecars[i].sidecar.RequiresServer {
+			serverSidecar = &sidecars[i]
+			break
+		}
+	}
+	if serverSidecar == nil {
+		return ctrl.Result{}, r.failRun(ctx, agentRun, "no sidecar with requiresServer=true found")
+	}
+
+	// Ensure API key Secret.
+	secretName, err := r.ensureServerAPIKeySecret(ctx, agentRun, serverSidecar.params)
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("ensuring server API key secret: %w", err)
+	}
+
+	// Build env vars for the web-proxy container.
+	var envVars []corev1.EnvVar
+	for _, e := range serverSidecar.sidecar.Env {
+		envVars = append(envVars, corev1.EnvVar{Name: e.Name, Value: e.Value})
+	}
+	envVars = append(envVars,
+		corev1.EnvVar{Name: "INSTANCE_NAME", Value: agentRun.Spec.InstanceRef},
+		corev1.EnvVar{
+			Name: "WEB_PROXY_API_KEY",
+			ValueFrom: &corev1.EnvVarSource{
+				SecretKeyRef: &corev1.SecretKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{Name: secretName},
+					Key:                  "api-key",
+				},
+			},
+		},
+	)
+
+	// Inject rate limit params from skill params.
+	if rpm, ok := serverSidecar.params["rate_limit_rpm"]; ok {
+		envVars = append(envVars, corev1.EnvVar{Name: "RATE_LIMIT_RPM", Value: rpm})
+	}
+	if burst, ok := serverSidecar.params["rate_limit_burst"]; ok {
+		envVars = append(envVars, corev1.EnvVar{Name: "RATE_LIMIT_BURST", Value: burst})
+	}
+
+	// Inject per-instance SKILL_<KEY> env vars.
+	for k, v := range serverSidecar.params {
+		envKey := "SKILL_" + strings.ToUpper(k)
+		envVars = append(envVars, corev1.EnvVar{Name: envKey, Value: v})
+	}
+
+	// Build container ports.
+	var containerPorts []corev1.ContainerPort
+	for _, p := range serverSidecar.sidecar.Ports {
+		protocol := corev1.ProtocolTCP
+		if p.Protocol != "" {
+			protocol = corev1.Protocol(p.Protocol)
+		}
+		containerPorts = append(containerPorts, corev1.ContainerPort{
+			Name:          p.Name,
+			ContainerPort: p.ContainerPort,
+			Protocol:      protocol,
+		})
+	}
+
+	cpuReq := "100m"
+	memReq := "128Mi"
+	if serverSidecar.sidecar.Resources != nil {
+		if serverSidecar.sidecar.Resources.CPU != "" {
+			cpuReq = serverSidecar.sidecar.Resources.CPU
+		}
+		if serverSidecar.sidecar.Resources.Memory != "" {
+			memReq = serverSidecar.sidecar.Resources.Memory
+		}
+	}
+
+	labels := map[string]string{
+		"sympozium.ai/agent-run": agentRun.Name,
+		"sympozium.ai/instance":  agentRun.Spec.InstanceRef,
+		"sympozium.ai/component": "agent-server",
+	}
+
+	deployName := agentRun.Name + "-server"
+	replicas := int32(1)
+
+	deploy := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      deployName,
+			Namespace: agentRun.Namespace,
+			Labels:    labels,
+		},
+		Spec: appsv1.DeploymentSpec{
+			Replicas: &replicas,
+			Selector: &metav1.LabelSelector{
+				MatchLabels: labels,
+			},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: labels,
+				},
+				Spec: corev1.PodSpec{
+					RestartPolicy:      corev1.RestartPolicyAlways,
+					ServiceAccountName: "sympozium-agent",
+					Containers: []corev1.Container{
+						{
+							Name:            "web-proxy",
+							Image:           serverSidecar.sidecar.Image,
+							ImagePullPolicy: corev1.PullIfNotPresent,
+							Env:             envVars,
+							Ports:           containerPorts,
+							LivenessProbe: &corev1.Probe{
+								ProbeHandler: corev1.ProbeHandler{
+									HTTPGet: &corev1.HTTPGetAction{
+										Path: "/healthz",
+										Port: intstr.FromInt(8080),
+									},
+								},
+								InitialDelaySeconds: 5,
+								PeriodSeconds:       10,
+							},
+							ReadinessProbe: &corev1.Probe{
+								ProbeHandler: corev1.ProbeHandler{
+									HTTPGet: &corev1.HTTPGetAction{
+										Path: "/healthz",
+										Port: intstr.FromInt(8080),
+									},
+								},
+								InitialDelaySeconds: 3,
+								PeriodSeconds:       5,
+							},
+							Resources: corev1.ResourceRequirements{
+								Requests: corev1.ResourceList{
+									corev1.ResourceCPU:    resource.MustParse(cpuReq),
+									corev1.ResourceMemory: resource.MustParse(memReq),
+								},
+								Limits: corev1.ResourceList{
+									corev1.ResourceCPU:    resource.MustParse("500m"),
+									corev1.ResourceMemory: resource.MustParse("256Mi"),
+								},
+							},
+							SecurityContext: &corev1.SecurityContext{
+								RunAsNonRoot:             boolPtr(true),
+								ReadOnlyRootFilesystem:   boolPtr(true),
+								AllowPrivilegeEscalation: boolPtr(false),
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	if err := controllerutil.SetControllerReference(agentRun, deploy, r.Scheme); err != nil {
+		return ctrl.Result{}, fmt.Errorf("setting owner reference on Deployment: %w", err)
+	}
+
+	if err := r.Create(ctx, deploy); err != nil {
+		if !errors.IsAlreadyExists(err) {
+			return ctrl.Result{}, fmt.Errorf("creating server Deployment: %w", err)
+		}
+		log.Info("Server Deployment already exists", "name", deployName)
+	}
+
+	// Build Service from sidecar's Ports.
+	svcName := agentRun.Name + "-server"
+	var svcPorts []corev1.ServicePort
+	for _, p := range serverSidecar.sidecar.Ports {
+		protocol := corev1.ProtocolTCP
+		if p.Protocol != "" {
+			protocol = corev1.Protocol(p.Protocol)
+		}
+		svcPorts = append(svcPorts, corev1.ServicePort{
+			Name:       p.Name,
+			Port:       p.ContainerPort,
+			TargetPort: intstr.FromInt32(p.ContainerPort),
+			Protocol:   protocol,
+		})
+	}
+
+	svc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      svcName,
+			Namespace: agentRun.Namespace,
+			Labels:    labels,
+		},
+		Spec: corev1.ServiceSpec{
+			Selector: labels,
+			Ports:    svcPorts,
+		},
+	}
+
+	if err := controllerutil.SetControllerReference(agentRun, svc, r.Scheme); err != nil {
+		return ctrl.Result{}, fmt.Errorf("setting owner reference on Service: %w", err)
+	}
+
+	if err := r.Create(ctx, svc); err != nil {
+		if !errors.IsAlreadyExists(err) {
+			return ctrl.Result{}, fmt.Errorf("creating server Service: %w", err)
+		}
+		log.Info("Server Service already exists", "name", svcName)
+	}
+
+	// Conditionally create HTTPRoute.
+	r.maybeCreateHTTPRoute(ctx, log, agentRun, serverSidecar.params, svcName)
+
+	// Update status.
+	now := metav1.Now()
+	agentRun.Status.Phase = sympoziumv1alpha1.AgentRunPhaseServing
+	agentRun.Status.DeploymentName = deployName
+	agentRun.Status.ServiceName = svcName
+	agentRun.Status.StartedAt = &now
+	if err := r.Status().Update(ctx, agentRun); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	webEndpointServing.Add(ctx, 1, metric.WithAttributes(
+		attribute.String("sympozium.instance", agentRun.Spec.InstanceRef),
+	))
+	log.Info("Server-mode AgentRun is now Serving", "deployment", deployName, "service", svcName)
+
+	return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+}
+
+// ensureServerAPIKeySecret creates or returns an API key Secret for a server-mode AgentRun.
+func (r *AgentRunReconciler) ensureServerAPIKeySecret(ctx context.Context, agentRun *sympoziumv1alpha1.AgentRun, params map[string]string) (string, error) {
+	// Use user-provided secret if specified.
+	if ref, ok := params["auth_secret_ref"]; ok && ref != "" {
+		return ref, nil
+	}
+
+	secretName := agentRun.Spec.InstanceRef + "-web-proxy-key"
+	var secret corev1.Secret
+	err := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: agentRun.Namespace}, &secret)
+	if err == nil {
+		return secretName, nil
+	}
+	if !errors.IsNotFound(err) {
+		return "", err
+	}
+
+	// Generate random API key.
+	keyBytes := make([]byte, 24)
+	if _, err := rand.Read(keyBytes); err != nil {
+		return "", fmt.Errorf("generate random key: %w", err)
+	}
+	apiKey := "sk-" + hex.EncodeToString(keyBytes)
+
+	secret = corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      secretName,
+			Namespace: agentRun.Namespace,
+			Labels: map[string]string{
+				"sympozium.ai/component": "web-proxy",
+				"sympozium.ai/instance":  agentRun.Spec.InstanceRef,
+			},
+		},
+		StringData: map[string]string{
+			"api-key": apiKey,
+		},
+	}
+
+	if err := controllerutil.SetControllerReference(agentRun, &secret, r.Scheme); err != nil {
+		return "", err
+	}
+
+	return secretName, r.Create(ctx, &secret)
+}
+
+// reconcileServing monitors a server-mode AgentRun (Deployment health, gateway readiness).
+func (r *AgentRunReconciler) reconcileServing(ctx context.Context, log logr.Logger, agentRun *sympoziumv1alpha1.AgentRun) (ctrl.Result, error) {
+	log.V(1).Info("Checking serving AgentRun", "deployment", agentRun.Status.DeploymentName)
+
+	// Check Deployment health.
+	if agentRun.Status.DeploymentName != "" {
+		deploy := &appsv1.Deployment{}
+		if err := r.Get(ctx, client.ObjectKey{
+			Namespace: agentRun.Namespace,
+			Name:      agentRun.Status.DeploymentName,
+		}, deploy); err != nil {
+			if errors.IsNotFound(err) {
+				return ctrl.Result{}, r.failRun(ctx, agentRun, "server Deployment not found")
+			}
+			return ctrl.Result{}, err
+		}
+
+		if deploy.Status.ReadyReplicas == 0 && deploy.Status.Replicas > 0 {
+			log.Info("Server Deployment not ready yet", "replicas", deploy.Status.Replicas, "ready", deploy.Status.ReadyReplicas)
+		}
+	}
+
+	// Re-check gateway readiness and create/update HTTPRoute.
+	if agentRun.Status.ServiceName != "" {
+		// Resolve the server sidecar params for hostname.
+		sidecars := r.resolveSkillSidecars(ctx, log, agentRun)
+		for _, sc := range sidecars {
+			if sc.sidecar.RequiresServer {
+				r.maybeCreateHTTPRoute(ctx, log, agentRun, sc.params, agentRun.Status.ServiceName)
+				break
+			}
+		}
+	}
+
+	// Server runs requeue periodically — no timeout enforcement.
+	return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+}
+
+// maybeCreateHTTPRoute creates an HTTPRoute for a server-mode AgentRun if the
+// gateway is enabled and ready. If no gateway is configured, it skips silently.
+func (r *AgentRunReconciler) maybeCreateHTTPRoute(ctx context.Context, log logr.Logger, agentRun *sympoziumv1alpha1.AgentRun, params map[string]string, svcName string) {
+	// Look up SympoziumConfig.
+	var config sympoziumv1alpha1.SympoziumConfig
+	if err := r.Get(ctx, types.NamespacedName{Name: "default", Namespace: systemNamespace}, &config); err != nil {
+		log.V(1).Info("SympoziumConfig not found, skipping HTTPRoute")
+		return
+	}
+
+	// Check if gateway is enabled.
+	if config.Spec.Gateway == nil || !config.Spec.Gateway.Enabled {
+		log.V(1).Info("Gateway not enabled, skipping HTTPRoute")
+		return
+	}
+
+	// Check if gateway is ready.
+	if config.Status.Gateway == nil || !config.Status.Gateway.Ready {
+		log.Info("Gateway not ready, skipping HTTPRoute creation")
+		webEndpointGatewayNotReady.Add(ctx, 1, metric.WithAttributes(
+			attribute.String("sympozium.instance", agentRun.Spec.InstanceRef),
+		))
+		return
+	}
+
+	// Derive hostname.
+	hostname := ""
+	if params != nil {
+		hostname = params["hostname"]
+	}
+	if hostname == "" && config.Spec.Gateway.BaseDomain != "" {
+		hostname = agentRun.Spec.InstanceRef + "." + config.Spec.Gateway.BaseDomain
+	}
+	if hostname == "" {
+		log.V(1).Info("No hostname available for HTTPRoute")
+		return
+	}
+
+	routeName := agentRun.Name + "-web"
+
+	// Check if route already exists.
+	var existing gatewayv1.HTTPRoute
+	if err := r.Get(ctx, types.NamespacedName{Name: routeName, Namespace: agentRun.Namespace}, &existing); err == nil {
+		return // Already exists
+	}
+
+	gatewayName := config.Spec.Gateway.Name
+	if gatewayName == "" {
+		gatewayName = "sympozium-gateway"
+	}
+	gatewayNS := gatewayv1.Namespace(systemNamespace)
+	port := gatewayv1.PortNumber(8080)
+
+	route := &gatewayv1.HTTPRoute{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      routeName,
+			Namespace: agentRun.Namespace,
+			Labels: map[string]string{
+				"sympozium.ai/agent-run": agentRun.Name,
+				"sympozium.ai/instance":  agentRun.Spec.InstanceRef,
+				"sympozium.ai/component": "agent-server",
+			},
+		},
+		Spec: gatewayv1.HTTPRouteSpec{
+			CommonRouteSpec: gatewayv1.CommonRouteSpec{
+				ParentRefs: []gatewayv1.ParentReference{
+					{
+						Name:      gatewayv1.ObjectName(gatewayName),
+						Namespace: &gatewayNS,
+					},
+				},
+			},
+			Hostnames: []gatewayv1.Hostname{gatewayv1.Hostname(hostname)},
+			Rules: []gatewayv1.HTTPRouteRule{
+				{
+					BackendRefs: []gatewayv1.HTTPBackendRef{
+						{
+							BackendRef: gatewayv1.BackendRef{
+								BackendObjectReference: gatewayv1.BackendObjectReference{
+									Name: gatewayv1.ObjectName(svcName),
+									Port: &port,
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	if err := controllerutil.SetControllerReference(agentRun, route, r.Scheme); err != nil {
+		log.Error(err, "Failed to set owner reference on HTTPRoute")
+		return
+	}
+
+	if err := r.Create(ctx, route); err != nil {
+		if !errors.IsAlreadyExists(err) {
+			log.Error(err, "Failed to create HTTPRoute", "name", routeName)
+		}
+		return
+	}
+
+	webEndpointRouteCreated.Add(ctx, 1, metric.WithAttributes(
+		attribute.String("sympozium.instance", agentRun.Spec.InstanceRef),
+	))
+	log.Info("Created HTTPRoute for server-mode AgentRun", "route", routeName, "hostname", hostname)
 }
 
 // validatePolicy checks the AgentRun against the applicable SympoziumPolicy.
@@ -1848,5 +2347,7 @@ func (r *AgentRunReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&sympoziumv1alpha1.AgentRun{}).
 		Owns(&batchv1.Job{}).
+		Owns(&appsv1.Deployment{}).
+		Owns(&corev1.Service{}).
 		Complete(r)
 }

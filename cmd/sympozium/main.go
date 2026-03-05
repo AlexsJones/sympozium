@@ -432,8 +432,9 @@ func newVersionCmd() *cobra.Command {
 }
 
 const (
-	ghRepo        = "AlexsJones/sympozium"
-	manifestAsset = "sympozium-manifests.tar.gz"
+	ghRepo            = "AlexsJones/sympozium"
+	manifestAsset     = "sympozium-manifests.tar.gz"
+	gatewayAPICRDsURL = "https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.1/standard-install.yaml"
 )
 
 // ── Onboard ──────────────────────────────────────────────────────────────────
@@ -1061,6 +1062,12 @@ func runInstall(ver, imageTag string) error {
 		return err
 	}
 
+	// Install Gateway API CRDs (required for GatewayClass, Gateway, HTTPRoute).
+	fmt.Println("  Installing Gateway API CRDs...")
+	if err := kubectl("apply", "--server-side", "--force-conflicts", "-f", gatewayAPICRDsURL); err != nil {
+		return fmt.Errorf("install Gateway API CRDs: %w", err)
+	}
+
 	// Create namespace before RBAC (ServiceAccounts reference it).
 	// Ignore AlreadyExists error on re-installs.
 	fmt.Println("  Creating namespace...")
@@ -1251,6 +1258,10 @@ func runUninstall() error {
 	for _, c := range crds {
 		_ = kubectl("delete", "--ignore-not-found", "-f", crdBase+c)
 	}
+
+	// Remove Gateway API CRDs installed by sympozium.
+	fmt.Println("  Removing Gateway API CRDs...")
+	_ = kubectl("delete", "--ignore-not-found", "-f", gatewayAPICRDsURL)
 
 	// Remove the system namespace created during install.
 	fmt.Println("  Deleting namespace sympozium-system...")
@@ -3692,10 +3703,10 @@ func (m tuiModel) activeViewCount() int {
 	case viewSchedules:
 		return len(m.schedules)
 	case viewGateway:
-		if m.gatewayConfig != nil {
-			return 1
+		if m.gatewayConfig == nil {
+			return 0
 		}
-		return 0
+		return 1 + len(m.gatewayRoutes())
 	case viewPersonas:
 		return len(m.personaPacks)
 	}
@@ -5941,6 +5952,17 @@ func (m tuiModel) renderSchedulesTable(tableH int) string {
 	return b.String()
 }
 
+// gatewayRoutes returns instances that have web endpoints enabled.
+func (m tuiModel) gatewayRoutes() []sympoziumv1alpha1.SympoziumInstance {
+	var routes []sympoziumv1alpha1.SympoziumInstance
+	for _, inst := range m.instances {
+		if inst.Spec.WebEndpoint != nil && inst.Spec.WebEndpoint.Enabled {
+			routes = append(routes, inst)
+		}
+	}
+	return routes
+}
+
 func (m tuiModel) renderGatewayTable(tableH int) string {
 	var b strings.Builder
 
@@ -5987,8 +6009,53 @@ func (m tuiModel) renderGatewayTable(tableH int) string {
 	b.WriteString(m.styleRow(0, row))
 	b.WriteString("\n")
 
+	rowsUsed := 1
+
+	// Routes section
+	routes := m.gatewayRoutes()
+	if rowsUsed < tableH-1 {
+		routeHeader := fmt.Sprintf(" %-22s %-30s %-12s %-40s", "INSTANCE", "HOSTNAME", "STATUS", "URL")
+		b.WriteString(tuiColHeaderStyle.Render(padRight(routeHeader, m.width)))
+		b.WriteString("\n")
+		rowsUsed++
+	}
+
+	if len(routes) == 0 {
+		if rowsUsed < tableH-1 {
+			b.WriteString(m.renderEmptyTable(tableH-1-rowsUsed, "No routes — enable web endpoints on instances"))
+			return b.String()
+		}
+	} else {
+		for i, inst := range routes {
+			if rowsUsed >= tableH-1 {
+				break
+			}
+			hostname := "-"
+			url := "-"
+			status := "-"
+			if inst.Spec.WebEndpoint.Hostname != "" {
+				hostname = inst.Spec.WebEndpoint.Hostname
+			} else if gw != nil && gw.BaseDomain != "" {
+				hostname = inst.Name + "." + gw.BaseDomain
+			}
+			if inst.Status.WebEndpoint != nil {
+				if inst.Status.WebEndpoint.Status != "" {
+					status = inst.Status.WebEndpoint.Status
+				}
+				if inst.Status.WebEndpoint.URL != "" {
+					url = inst.Status.WebEndpoint.URL
+				}
+			}
+			routeRow := fmt.Sprintf(" %-22s %-30s %-12s %-40s",
+				truncate(inst.Name, 22), truncate(hostname, 30), status, truncate(url, 40))
+			b.WriteString(m.styleRow(1+i, routeRow))
+			b.WriteString("\n")
+			rowsUsed++
+		}
+	}
+
 	// Fill remaining rows
-	for i := 1; i < tableH-1; i++ {
+	for i := rowsUsed; i < tableH-1; i++ {
 		b.WriteString(strings.Repeat(" ", m.width) + "\n")
 	}
 	return b.String()

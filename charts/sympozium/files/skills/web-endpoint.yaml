@@ -1,0 +1,102 @@
+---
+# Sympozium built-in SkillPack: Web Endpoint
+# Exposes an agent as an HTTP API (OpenAI-compatible + MCP).
+apiVersion: sympozium.ai/v1alpha1
+kind: SkillPack
+metadata:
+  name: web-endpoint
+  namespace: sympozium-system
+  labels:
+    sympozium.ai/builtin: "true"
+    sympozium.ai/category: connectivity
+spec:
+  category: connectivity
+  version: "0.1.0"
+  source: builtin
+  skills:
+    - name: web-endpoint
+      description: Expose this agent as an HTTP API with OpenAI-compatible and MCP endpoints
+      content: |
+        # Web Endpoint
+
+        This skill enables your agent to be accessed via HTTP. A web-proxy
+        sidecar is deployed as a long-running Deployment that accepts incoming
+        HTTP requests and creates per-request AgentRun Jobs.
+
+        ## Endpoints
+
+        The web-proxy exposes the following HTTP endpoints:
+
+        ### OpenAI-Compatible Chat Completions
+        ```
+        POST /v1/chat/completions
+        Authorization: Bearer <api-key>
+        Content-Type: application/json
+
+        {
+          "model": "default",
+          "messages": [
+            {"role": "user", "content": "Hello, agent!"}
+          ]
+        }
+        ```
+
+        ### MCP (Model Context Protocol)
+        ```
+        POST /v1/mcp
+        Authorization: Bearer <api-key>
+        Content-Type: application/json
+        ```
+
+        ### Health Check
+        ```
+        GET /healthz
+        ```
+
+        ## Authentication
+
+        All requests (except /healthz) require a Bearer token. The API key
+        is auto-generated as `sk-<hex>` and stored in a Kubernetes Secret.
+        You can provide your own Secret via the `auth_secret_ref` parameter.
+
+        ## Rate Limiting
+
+        Rate limiting is configured via skill parameters:
+        - `rate_limit_rpm`: Requests per minute (default: 60)
+        - `rate_limit_burst`: Burst size (default: 10)
+
+        ## Networking
+
+        - **Without a gateway**: The Service is created as ClusterIP, accessible
+          from within the cluster.
+        - **With a gateway**: An HTTPRoute is created automatically once the
+          gateway is ready, enabling external access.
+
+        ## Configuration Parameters
+
+        | Parameter         | Description                          | Default |
+        |-------------------|--------------------------------------|---------|
+        | rate_limit_rpm    | Max requests per minute              | 60      |
+        | rate_limit_burst  | Burst size above rate limit          | 10      |
+        | hostname          | Custom hostname for HTTPRoute        | auto    |
+        | auth_secret_ref   | Name of Secret with `api-key` key    | auto    |
+  sidecar:
+    image: ghcr.io/alexsjones/sympozium/web-proxy:latest
+    requiresServer: true
+    mountWorkspace: false
+    ports:
+      - name: http
+        containerPort: 8080
+    env:
+      - name: EVENT_BUS_URL
+        value: "nats://nats.sympozium-system.svc:4222"
+    resources:
+      cpu: "100m"
+      memory: "128Mi"
+    rbac:
+      - apiGroups: ["sympozium.ai"]
+        resources: ["agentruns"]
+        verbs: ["get", "list", "watch", "create"]
+      - apiGroups: [""]
+        resources: ["configmaps", "secrets"]
+        verbs: ["get", "list", "watch"]

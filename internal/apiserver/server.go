@@ -91,6 +91,7 @@ func (s *Server) buildMux(frontendFS fs.FS, token string) http.Handler {
 	mux.HandleFunc("POST /api/v1/instances", s.createInstance)
 	mux.HandleFunc("DELETE /api/v1/instances/{name}", s.deleteInstance)
 	mux.HandleFunc("PATCH /api/v1/instances/{name}", s.patchInstance)
+	mux.HandleFunc("GET /api/v1/instances/{name}/web-endpoint", s.getWebEndpointStatus)
 
 	// Run endpoints
 	mux.HandleFunc("GET /api/v1/runs", s.listRuns)
@@ -291,8 +292,8 @@ type PatchInstanceRequest struct {
 
 // PatchWebEndpoint is the web endpoint patch payload.
 type PatchWebEndpoint struct {
-	Enabled  *bool   `json:"enabled,omitempty"`
-	Hostname *string `json:"hostname,omitempty"`
+	Enabled   *bool   `json:"enabled,omitempty"`
+	Hostname  *string `json:"hostname,omitempty"`
 	RateLimit *struct {
 		RequestsPerMinute *int `json:"requestsPerMinute,omitempty"`
 	} `json:"rateLimit,omitempty"`
@@ -323,23 +324,38 @@ func (s *Server) patchInstance(w http.ResponseWriter, r *http.Request) {
 
 	if req.WebEndpoint != nil {
 		if req.WebEndpoint.Enabled != nil && !*req.WebEndpoint.Enabled {
-			// Disable — set to nil to trigger cleanup
-			inst.Spec.WebEndpoint = nil
+			// Disable — remove the web-endpoint skill.
+			var filtered []sympoziumv1alpha1.SkillRef
+			for _, s := range inst.Spec.Skills {
+				if s.SkillPackRef != "web-endpoint" && s.SkillPackRef != "skillpack-web-endpoint" {
+					filtered = append(filtered, s)
+				}
+			}
+			inst.Spec.Skills = filtered
 		} else {
-			if inst.Spec.WebEndpoint == nil {
-				inst.Spec.WebEndpoint = &sympoziumv1alpha1.WebEndpointSpec{}
-			}
-			if req.WebEndpoint.Enabled != nil {
-				inst.Spec.WebEndpoint.Enabled = *req.WebEndpoint.Enabled
-			}
-			if req.WebEndpoint.Hostname != nil {
-				inst.Spec.WebEndpoint.Hostname = *req.WebEndpoint.Hostname
+			// Enable — add web-endpoint as a skill.
+			params := map[string]string{}
+			if req.WebEndpoint.Hostname != nil && *req.WebEndpoint.Hostname != "" {
+				params["hostname"] = *req.WebEndpoint.Hostname
 			}
 			if req.WebEndpoint.RateLimit != nil && req.WebEndpoint.RateLimit.RequestsPerMinute != nil {
-				if inst.Spec.WebEndpoint.RateLimit == nil {
-					inst.Spec.WebEndpoint.RateLimit = &sympoziumv1alpha1.RateLimitSpec{}
+				params["rate_limit_rpm"] = fmt.Sprintf("%d", *req.WebEndpoint.RateLimit.RequestsPerMinute)
+			}
+
+			// Check if web-endpoint skill already exists.
+			found := false
+			for i, s := range inst.Spec.Skills {
+				if s.SkillPackRef == "web-endpoint" || s.SkillPackRef == "skillpack-web-endpoint" {
+					inst.Spec.Skills[i].Params = params
+					found = true
+					break
 				}
-				inst.Spec.WebEndpoint.RateLimit.RequestsPerMinute = *req.WebEndpoint.RateLimit.RequestsPerMinute
+			}
+			if !found {
+				inst.Spec.Skills = append(inst.Spec.Skills, sympoziumv1alpha1.SkillRef{
+					SkillPackRef: "web-endpoint",
+					Params:       params,
+				})
 			}
 		}
 	}
@@ -350,6 +366,74 @@ func (s *Server) patchInstance(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, inst)
+}
+
+// WebEndpointStatusResponse is the response for the web-endpoint status endpoint.
+type WebEndpointStatusResponse struct {
+	Enabled        bool   `json:"enabled"`
+	DeploymentName string `json:"deploymentName,omitempty"`
+	ServiceName    string `json:"serviceName,omitempty"`
+	GatewayReady   bool   `json:"gatewayReady"`
+	RouteURL       string `json:"routeURL,omitempty"`
+	AuthSecretName string `json:"authSecretName,omitempty"`
+}
+
+func (s *Server) getWebEndpointStatus(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	ns := r.URL.Query().Get("namespace")
+	if ns == "" {
+		ns = "default"
+	}
+
+	var inst sympoziumv1alpha1.SympoziumInstance
+	if err := s.client.Get(r.Context(), types.NamespacedName{Name: name, Namespace: ns}, &inst); err != nil {
+		if k8serrors.IsNotFound(err) {
+			http.Error(w, "instance not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	resp := WebEndpointStatusResponse{}
+
+	// Check for web-endpoint skill.
+	for _, skill := range inst.Spec.Skills {
+		if skill.SkillPackRef == "web-endpoint" || skill.SkillPackRef == "skillpack-web-endpoint" {
+			resp.Enabled = true
+			break
+		}
+	}
+
+	if !resp.Enabled {
+		writeJSON(w, resp)
+		return
+	}
+
+	// Find server-mode AgentRun for this instance.
+	var runs sympoziumv1alpha1.AgentRunList
+	if err := s.client.List(r.Context(), &runs,
+		client.InNamespace(ns),
+		client.MatchingLabels{"sympozium.ai/instance": name},
+	); err == nil {
+		for _, run := range runs.Items {
+			if run.Status.Phase == sympoziumv1alpha1.AgentRunPhaseServing {
+				resp.DeploymentName = run.Status.DeploymentName
+				resp.ServiceName = run.Status.ServiceName
+				break
+			}
+		}
+	}
+
+	// Check gateway readiness.
+	var config sympoziumv1alpha1.SympoziumConfig
+	if err := s.client.Get(r.Context(), types.NamespacedName{Name: "default", Namespace: "sympozium-system"}, &config); err == nil {
+		if config.Status.Gateway != nil && config.Status.Gateway.Ready {
+			resp.GatewayReady = true
+		}
+	}
+
+	writeJSON(w, resp)
 }
 
 // CreateInstanceRequest is the request body for creating a new SympoziumInstance.
@@ -1567,6 +1651,7 @@ type GatewayConfigResponse struct {
 	Ready         bool   `json:"ready"`
 	Address       string `json:"address,omitempty"`
 	ListenerCount int    `json:"listenerCount,omitempty"`
+	Message       string `json:"message,omitempty"`
 }
 
 // PatchGatewayConfigRequest is the request body for patching gateway config.
@@ -1588,6 +1673,12 @@ func gatewayConfigResponseFromCR(config *sympoziumv1alpha1.SympoziumConfig) Gate
 		resp.Ready = config.Status.Gateway.Ready
 		resp.Address = config.Status.Gateway.Address
 		resp.ListenerCount = config.Status.Gateway.ListenerCount
+	}
+	for _, c := range config.Status.Conditions {
+		if c.Type == "Ready" && c.Message != "" {
+			resp.Message = c.Message
+			break
+		}
 	}
 	if gw := config.Spec.Gateway; gw != nil {
 		resp.Enabled = gw.Enabled

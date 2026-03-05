@@ -40,12 +40,12 @@ func main() {
 	var rpm int
 	var burst int
 
-	flag.StringVar(&instanceName, "instance", os.Getenv("INSTANCE_NAME"), "SympoziumInstance name")
+	flag.StringVar(&instanceName, "instance", envStr("INSTANCE_NAME", envStr("SKILL_INSTANCE_NAME", "")), "SympoziumInstance name")
 	flag.StringVar(&eventBusURL, "event-bus-url", os.Getenv("EVENT_BUS_URL"), "Event bus (NATS) URL")
 	flag.StringVar(&apiKey, "api-key", os.Getenv("WEB_PROXY_API_KEY"), "API key for authentication")
 	flag.StringVar(&addr, "addr", ":8080", "HTTP listen address")
-	flag.IntVar(&rpm, "rate-limit-rpm", envInt("RATE_LIMIT_RPM", 60), "Requests per minute rate limit")
-	flag.IntVar(&burst, "rate-limit-burst", envInt("RATE_LIMIT_BURST", 10), "Burst size for rate limiter")
+	flag.IntVar(&rpm, "rate-limit-rpm", envInt("RATE_LIMIT_RPM", envInt("SKILL_RATE_LIMIT_RPM", 60)), "Requests per minute rate limit")
+	flag.IntVar(&burst, "rate-limit-burst", envInt("RATE_LIMIT_BURST", envInt("SKILL_RATE_LIMIT_BURST", 10)), "Burst size for rate limiter")
 	flag.Parse()
 
 	if instanceName == "" {
@@ -114,6 +114,13 @@ func main() {
 		log.Error(err, "HTTP server error")
 		os.Exit(1)
 	}
+}
+
+func envStr(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
 }
 
 func envInt(key string, fallback int) int {

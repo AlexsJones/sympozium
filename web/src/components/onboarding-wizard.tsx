@@ -79,6 +79,10 @@ export interface WizardResult {
   channels: string[];
   channelConfigs: Record<string, string>;
   heartbeatInterval: string;
+  /** Web endpoint rate limit (requests per minute) when web-endpoint skill is selected */
+  webEndpointRPM?: string;
+  /** Custom hostname for web endpoint HTTPRoute */
+  webEndpointHostname?: string;
 }
 
 interface OnboardingWizardProps {
@@ -280,6 +284,8 @@ export function OnboardingWizard({
     channels: defaults?.channels || Object.keys(defaults?.channelConfigs || {}),
     channelConfigs: defaults?.channelConfigs || {},
     heartbeatInterval: defaults?.heartbeatInterval || "",
+    webEndpointRPM: defaults?.webEndpointRPM || "60",
+    webEndpointHostname: defaults?.webEndpointHostname || "",
   });
   const [channelActionIdx, setChannelActionIdx] = useState(0);
 
@@ -354,6 +360,8 @@ export function OnboardingWizard({
       channels: d.channels || Object.keys(d.channelConfigs || {}),
       channelConfigs: d.channelConfigs || {},
       heartbeatInterval: d.heartbeatInterval || "",
+      webEndpointRPM: d.webEndpointRPM || "60",
+      webEndpointHostname: d.webEndpointHostname || "",
     });
     setStep(steps[0]);
     setChannelActionIdx(0);
@@ -572,6 +580,31 @@ export function OnboardingWizard({
                 ? `${form.skills.length} skill${form.skills.length === 1 ? "" : "s"} selected`
                 : "No skills selected"}
             </p>
+
+            {/* Web endpoint inline config */}
+            {form.skills.includes("web-endpoint") && (
+              <div className="rounded-md border border-indigo-500/20 bg-indigo-500/5 p-3 space-y-2">
+                <p className="text-xs font-medium text-indigo-400">Web Endpoint Config</p>
+                <div className="space-y-1">
+                  <Label className="text-xs">Rate Limit (req/min)</Label>
+                  <Input
+                    type="number"
+                    value={form.webEndpointRPM || "60"}
+                    onChange={(e) => setForm({ ...form, webEndpointRPM: e.target.value })}
+                    className="h-7 text-xs"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Custom Hostname <span className="text-muted-foreground">(optional)</span></Label>
+                  <Input
+                    value={form.webEndpointHostname || ""}
+                    onChange={(e) => setForm({ ...form, webEndpointHostname: e.target.value })}
+                    placeholder="auto from gateway"
+                    className="h-7 text-xs"
+                  />
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -702,6 +735,15 @@ export function OnboardingWizard({
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Channels</span>
                   <span>{form.channels.join(", ")}</span>
+                </div>
+              )}
+              {form.skills.includes("web-endpoint") && (
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Web Endpoint</span>
+                  <span className="text-xs">
+                    {form.webEndpointRPM || "60"} rpm
+                    {form.webEndpointHostname ? `, ${form.webEndpointHostname}` : ""}
+                  </span>
                 </div>
               )}
             </div>

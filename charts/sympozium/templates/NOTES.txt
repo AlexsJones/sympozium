@@ -17,6 +17,11 @@ Components:
   ℹ️  Using external NATS: {{ .Values.nats.externalUrl }}
 {{- end }}
 
+{{- if .Values.gateway.enabled }}
+⚠️  Gateway is enabled. Make sure Gateway API CRDs are installed:
+  kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.1/standard-install.yaml
+{{- end }}
+
 Next steps:
 
   1. Install the CLI (if not already installed):

@@ -38,6 +38,7 @@ type SympoziumInstanceSpec struct {
 	// +optional
 	Observability *ObservabilitySpec `json:"observability,omitempty"`
 
+	// Deprecated: Use the "web-endpoint" SkillPack in Skills instead.
 	// WebEndpoint exposes this agent as an HTTP API (OpenAI-compatible + MCP).
 	// When nil or Enabled is false, no web-proxy infrastructure is deployed.
 	// +optional

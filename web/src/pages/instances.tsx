@@ -41,7 +41,19 @@ export function InstancesPage() {
         baseURL: result.baseURL || undefined,
         secretName: result.secretName || undefined,
         apiKey: result.apiKey || undefined,
-        skills: result.skills.map((skillPackRef) => ({ skillPackRef })),
+        skills: result.skills.map((skillPackRef) => {
+          if (skillPackRef === "web-endpoint") {
+            const params: Record<string, string> = {};
+            if (result.webEndpointRPM && result.webEndpointRPM !== "60") {
+              params.rate_limit_rpm = result.webEndpointRPM;
+            }
+            if (result.webEndpointHostname) {
+              params.hostname = result.webEndpointHostname;
+            }
+            return { skillPackRef, params: Object.keys(params).length > 0 ? params : undefined };
+          }
+          return { skillPackRef };
+        }),
         channels: result.channels.map((type) => ({
           type,
           configRef: result.channelConfigs[type]

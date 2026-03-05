@@ -50,6 +50,13 @@ type AgentRunSpec struct {
 	// +kubebuilder:default="delete"
 	// +kubebuilder:validation:Enum=delete;keep
 	Cleanup string `json:"cleanup,omitempty"`
+
+	// Mode: "task" (default, Job) or "server" (Deployment, long-running).
+	// Auto-set to "server" when any skill has RequiresServer=true.
+	// +kubebuilder:default="task"
+	// +kubebuilder:validation:Enum=task;server
+	// +optional
+	Mode string `json:"mode,omitempty"`
 }
 
 // ParentRunRef links a sub-agent to its parent.
@@ -158,6 +165,7 @@ type AgentRunPhase string
 const (
 	AgentRunPhasePending   AgentRunPhase = "Pending"
 	AgentRunPhaseRunning   AgentRunPhase = "Running"
+	AgentRunPhaseServing   AgentRunPhase = "Serving"
 	AgentRunPhaseSucceeded AgentRunPhase = "Succeeded"
 	AgentRunPhaseFailed    AgentRunPhase = "Failed"
 )
@@ -199,6 +207,14 @@ type AgentRunStatus struct {
 	// TokenUsage contains LLM token counts and timing for this run.
 	// +optional
 	TokenUsage *TokenUsage `json:"tokenUsage,omitempty"`
+
+	// DeploymentName is the name of the Deployment created for server-mode runs.
+	// +optional
+	DeploymentName string `json:"deploymentName,omitempty"`
+
+	// ServiceName is the name of the Service created for server-mode runs.
+	// +optional
+	ServiceName string `json:"serviceName,omitempty"`
 
 	// TraceID is the OTel trace ID for this agent run, if instrumentation is enabled.
 	// Enables operators to look up the full distributed trace in their backend.

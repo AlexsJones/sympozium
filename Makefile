@@ -239,8 +239,12 @@ set-images: ## Stamp REGISTRY/TAG into K8s manifests
 
 ##@ Deployment
 
+GATEWAY_API_CRDS_URL ?= https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.1/standard-install.yaml
+
 install: manifests ## Install CRDs, skills, personas, and policies into the K8s cluster
 	kubectl apply -f config/crd/bases/
+	@echo "Installing Gateway API CRDs..."
+	kubectl apply --server-side --force-conflicts -f $(GATEWAY_API_CRDS_URL)
 	kubectl create namespace sympozium-system --dry-run=client -o yaml | kubectl apply -f -
 	kubectl apply -f config/skills/
 	kubectl apply -f config/personas/
@@ -283,6 +287,8 @@ uninstall: ## Uninstall Sympozium control plane, CRDs, and cleanup finalizers
 	done; \
 	echo "==> Deleting Sympozium CRDs"; \
 	kubectl delete -f config/crd/bases/ --ignore-not-found >/dev/null 2>&1 || true; \
+	echo "==> Removing Gateway API CRDs"; \
+	kubectl delete --ignore-not-found -f $(GATEWAY_API_CRDS_URL) >/dev/null 2>&1 || true; \
 	echo "==> Deleting namespace $(SYMPOZIUM_NAMESPACE)"; \
 	kubectl delete namespace $(SYMPOZIUM_NAMESPACE) --ignore-not-found --timeout=120s >/dev/null 2>&1 || true
 

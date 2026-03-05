@@ -421,12 +421,16 @@ func (r *PersonaPackReconciler) buildInstance(
 	// Policy — use the pack's policy ref if set.
 	inst.Spec.PolicyRef = pack.Spec.PolicyRef
 
-	// Web endpoint — propagate from persona if configured.
+	// Web endpoint — add the web-endpoint skill instead of the legacy field.
 	if persona.WebEndpoint != nil && persona.WebEndpoint.Enabled {
-		inst.Spec.WebEndpoint = &sympoziumv1alpha1.WebEndpointSpec{
-			Enabled:  true,
-			Hostname: persona.WebEndpoint.Hostname,
+		params := map[string]string{}
+		if persona.WebEndpoint.Hostname != "" {
+			params["hostname"] = persona.WebEndpoint.Hostname
 		}
+		inst.Spec.Skills = append(inst.Spec.Skills, sympoziumv1alpha1.SkillRef{
+			SkillPackRef: "web-endpoint",
+			Params:       params,
+		})
 	}
 
 	return inst
