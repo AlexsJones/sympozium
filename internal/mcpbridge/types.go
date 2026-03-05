@@ -13,7 +13,7 @@ type ServersConfig struct {
 type ServerConfig struct {
 	Name        string            `yaml:"name"`
 	URL         string            `yaml:"url"`
-	Transport   string            `yaml:"transport"`   // "streamable-http"
+	Transport   string            `yaml:"transport"` // "streamable-http"
 	ToolsPrefix string            `yaml:"toolsPrefix"`
 	Timeout     int               `yaml:"timeout"` // seconds, default 30
 	Auth        *AuthConfig       `yaml:"auth,omitempty"`
@@ -52,7 +52,7 @@ type MCPToolManifest struct {
 
 // MCPToolDef describes a single MCP tool discovered from a remote server.
 type MCPToolDef struct {
-	Name        string         `json:"name"`        // prefixed name
+	Name        string         `json:"name"` // prefixed name
 	Description string         `json:"description"`
 	Server      string         `json:"server"`      // server name for routing
 	Timeout     int            `json:"timeout"`     // server timeout in seconds
@@ -71,10 +71,10 @@ type JSONRPCRequest struct {
 
 // JSONRPCResponse is a JSON-RPC 2.0 response.
 type JSONRPCResponse struct {
-	JSONRPC string           `json:"jsonrpc"`
-	ID      *int64           `json:"id"`
-	Result  json.RawMessage  `json:"result,omitempty"`
-	Error   *JSONRPCError    `json:"error,omitempty"`
+	JSONRPC string          `json:"jsonrpc"`
+	ID      *int64          `json:"id"`
+	Result  json.RawMessage `json:"result,omitempty"`
+	Error   *JSONRPCError   `json:"error,omitempty"`
 }
 
 // JSONRPCError is a JSON-RPC 2.0 error object.
@@ -88,9 +88,9 @@ type JSONRPCError struct {
 
 // MCPInitializeParams are sent with the initialize request.
 type MCPInitializeParams struct {
-	ProtocolVersion string             `json:"protocolVersion"`
-	Capabilities    MCPCapabilities    `json:"capabilities"`
-	ClientInfo      MCPImplementation  `json:"clientInfo"`
+	ProtocolVersion string            `json:"protocolVersion"`
+	Capabilities    MCPCapabilities   `json:"capabilities"`
+	ClientInfo      MCPImplementation `json:"clientInfo"`
 }
 
 // MCPCapabilities declares client capabilities.
