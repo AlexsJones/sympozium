@@ -261,6 +261,8 @@ not after it completes. The Job/pod is cleaned up quickly after the agent finish
 | API PersonaPack provisioning | `test/integration/test-api-personapack-provisioning.sh` | Enabling a PersonaPack via API stamps out PersonaPack-labeled Instances and Schedules |
 | API schedule dispatch | `test/integration/test-api-schedule-dispatch.sh` | Creating a schedule via API results in dispatched AgentRuns (`status.totalRuns` / `lastRunName`) |
 | API observability | `test/integration/test-api-observability.sh` | OTEL collector deployment health + `/api/v1/observability/metrics` correctness (`collectorReachable`, payload sanity) |
+| API web-endpoint | `test/integration/test-api-web-endpoint.sh` | Web-endpoint skill enable/disable via PATCH, status endpoint, parameter propagation, idempotency |
+| API serving-mode | `test/integration/test-api-serving-mode.sh` | Server-mode AgentRun creation (Deployment + Service), web-endpoint status with deploymentName/serviceName, container env validation |
 | API capabilities (optional) | `test/integration/test-api-capabilities.sh` | Token-gated checks for Anthropic provider wiring (`CLAUDE_TOKEN`) and GitHub token endpoint/secret persistence (`GITHUB_TOKEN`) |
 | write_file | `test/integration/test-write-file.sh` | Agent uses `write_file` tool to create a file with specific content |
 | k8s-ops nodes | `test/integration/test-k8s-ops-nodes.sh` | Agent uses `execute_command` with k8s-ops skill to run `kubectl get nodes` |

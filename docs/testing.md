@@ -25,6 +25,8 @@ make integration-tests
 - Schedule dispatch behavior
 - AgentRun pod container shape checks
 - Observability API checks
+- Web-endpoint skill enable/disable/status API checks
+- Serving-mode AgentRun shape (Deployment + Service creation)
 - Optional capability checks (`CLAUDE_TOKEN`, `GITHUB_TOKEN`)
 
 Optional secrets can be passed locally:
