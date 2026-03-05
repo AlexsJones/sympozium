@@ -131,7 +131,7 @@ func (c *Client) call(ctx context.Context, method string, params any, result any
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Accept", "application/json")
+	httpReq.Header.Set("Accept", "application/json, text/event-stream")
 
 	// Set session ID if we have one from a previous response
 	c.mu.Lock()
@@ -227,6 +227,7 @@ func (c *Client) notify(ctx context.Context, method string) error {
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Accept", "application/json, text/event-stream")
 	c.mu.Lock()
 	sid := c.sessionID
 	c.mu.Unlock()
