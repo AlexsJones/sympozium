@@ -12,7 +12,14 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
+
+var clientTracer = otel.Tracer("sympozium.ai/mcp-client")
 
 // MaxResponseSize is the default maximum response body size (1MB).
 const MaxResponseSize = 1 << 20
@@ -97,6 +104,14 @@ func (c *Client) callTool(ctx context.Context, name string, arguments json.RawMe
 
 // call sends a JSON-RPC 2.0 request and unmarshals the result.
 func (c *Client) call(ctx context.Context, method string, params any, result any) error {
+	ctx, span := clientTracer.Start(ctx, "mcp.jsonrpc",
+		trace.WithAttributes(
+			attribute.String("mcp.method", method),
+			attribute.String("mcp.server", c.serverConfig.Name),
+		),
+	)
+	defer span.End()
+
 	id := c.nextID.Add(1)
 	req := JSONRPCRequest{
 		JSONRPC: "2.0",
@@ -136,6 +151,8 @@ func (c *Client) call(ctx context.Context, method string, params any, result any
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "http request failed")
 		return fmt.Errorf("HTTP request to %s: %w", c.serverConfig.URL, err)
 	}
 	defer resp.Body.Close()
@@ -157,13 +174,18 @@ func (c *Client) call(ctx context.Context, method string, params any, result any
 		return fmt.Errorf("response exceeds maximum size (%d bytes)", MaxResponseSize)
 	}
 
+	span.SetAttributes(attribute.Int("http.status_code", resp.StatusCode))
+
 	if resp.StatusCode != http.StatusOK {
 		// Truncate error body to avoid leaking large/sensitive responses into logs
 		errBody := string(respBody)
 		if len(errBody) > 512 {
 			errBody = errBody[:512] + "...(truncated)"
 		}
-		return fmt.Errorf("HTTP %d from %s: %s", resp.StatusCode, c.serverConfig.URL, errBody)
+		err := fmt.Errorf("HTTP %d from %s: %s", resp.StatusCode, c.serverConfig.URL, errBody)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, fmt.Sprintf("HTTP %d", resp.StatusCode))
+		return err
 	}
 
 	var rpcResp JSONRPCResponse
@@ -172,7 +194,10 @@ func (c *Client) call(ctx context.Context, method string, params any, result any
 	}
 
 	if rpcResp.Error != nil {
-		return fmt.Errorf("JSON-RPC error %d: %s", rpcResp.Error.Code, rpcResp.Error.Message)
+		err := fmt.Errorf("JSON-RPC error %d: %s", rpcResp.Error.Code, rpcResp.Error.Message)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "jsonrpc error")
+		return err
 	}
 
 	if result != nil && rpcResp.Result != nil {

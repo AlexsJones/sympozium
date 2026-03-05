@@ -10,8 +10,10 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/alexsjones/sympozium/internal/mcpbridge"
+	"github.com/alexsjones/sympozium/pkg/telemetry"
 )
 
 func main() {
@@ -26,6 +28,19 @@ func main() {
 	}
 
 	log.Printf("MCP bridge starting (config=%s ipc=%s agentRunID=%s)", configPath, ipcPath, agentRunID)
+
+	// Initialize OpenTelemetry SDK. Falls back to noop if OTEL_EXPORTER_OTLP_ENDPOINT is unset.
+	tel, err := telemetry.Init(context.Background(), telemetry.Config{
+		ServiceName:     envOrDefault("OTEL_SERVICE_NAME", "sympozium-mcp-bridge"),
+		BatchTimeout:    1 * time.Second,
+		ShutdownTimeout: 10 * time.Second,
+	})
+	if err != nil {
+		log.Printf("OTel init failed, continuing without telemetry: %v", err)
+	}
+	if tel != nil {
+		defer tel.Shutdown(context.Background())
+	}
 
 	// Load and validate configuration
 	cfg, err := mcpbridge.LoadConfig(configPath)

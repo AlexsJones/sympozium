@@ -12,6 +12,20 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
+)
+
+var bridgeTracer = otel.Tracer("sympozium.ai/mcp-bridge")
+var bridgeMeter = otel.Meter("sympozium.ai/mcp-bridge")
+
+var (
+	mcpToolCalls, _    = bridgeMeter.Int64Counter("mcp.bridge.tool_calls", metric.WithUnit("{call}"), metric.WithDescription("MCP tool calls dispatched"))
+	mcpToolErrors, _   = bridgeMeter.Int64Counter("mcp.bridge.tool_errors", metric.WithUnit("{error}"), metric.WithDescription("MCP tool call errors"))
+	mcpToolDuration, _ = bridgeMeter.Float64Histogram("mcp.bridge.tool_duration_ms", metric.WithUnit("ms"), metric.WithDescription("MCP tool call duration"))
 )
 
 // maxConcurrent is the maximum number of concurrent MCP requests.
@@ -49,14 +63,25 @@ func NewBridge(cfg *ServersConfig, ipcPath, manifestPath, agentRunID string) *Br
 
 // Run starts the MCP bridge: discovers tools, writes manifest, then watches for requests.
 func (b *Bridge) Run(ctx context.Context) error {
+	ctx, span := bridgeTracer.Start(ctx, "mcp-bridge.run",
+		trace.WithAttributes(attribute.String("agent_run_id", b.agentRunID)),
+	)
+	defer span.End()
+
 	// Phase 1: Connect to MCP servers and discover tools
 	manifest, err := b.discoverTools(ctx)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "tool discovery failed")
 		return err
 	}
 
+	span.SetAttributes(attribute.Int("mcp.tools_discovered", len(manifest.Tools)))
+
 	// Phase 2: Write tool manifest for agent-runner
 	if err := WriteManifest(b.manifestPath, manifest); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "manifest write failed")
 		return err
 	}
 
@@ -164,6 +189,8 @@ func extractIDFromFilename(path string) string {
 
 // handleRequest processes a single MCP request file.
 func (b *Bridge) handleRequest(ctx context.Context, path string) {
+	start := time.Now()
+
 	// Small delay to ensure file write is complete
 	time.Sleep(50 * time.Millisecond)
 
@@ -179,6 +206,7 @@ func (b *Bridge) handleRequest(ctx context.Context, path string) {
 		// Use ID from filename when JSON parse fails
 		id := extractIDFromFilename(path)
 		b.writeErrorResult(id, path, "invalid request JSON")
+		mcpToolErrors.Add(ctx, 1, metric.WithAttributes(attribute.String("error", "invalid_json")))
 		return
 	}
 
@@ -192,6 +220,7 @@ func (b *Bridge) handleRequest(ctx context.Context, path string) {
 		if serverName == "" {
 			log.Printf("No server found for tool %q", req.Tool)
 			b.writeErrorResult(req.ID, path, fmt.Sprintf("no MCP server found for tool %q", req.Tool))
+			mcpToolErrors.Add(ctx, 1, metric.WithAttributes(attribute.String("error", "no_server")))
 			return
 		}
 	} else {
@@ -203,10 +232,28 @@ func (b *Bridge) handleRequest(ctx context.Context, path string) {
 		}
 	}
 
+	// Start a span for the tool call
+	ctx, span := bridgeTracer.Start(ctx, "mcp.tool_call",
+		trace.WithAttributes(
+			attribute.String("mcp.tool", toolName),
+			attribute.String("mcp.server", serverName),
+			attribute.String("mcp.request_id", req.ID),
+		),
+	)
+	defer span.End()
+
+	attrs := metric.WithAttributes(
+		attribute.String("mcp.server", serverName),
+		attribute.String("mcp.tool", toolName),
+	)
+	mcpToolCalls.Add(ctx, 1, attrs)
+
 	client, ok := b.clients[serverName]
 	if !ok {
 		log.Printf("No client for server %q", serverName)
 		b.writeErrorResult(req.ID, path, fmt.Sprintf("MCP server %q not connected", serverName))
+		span.SetStatus(codes.Error, "server not connected")
+		mcpToolErrors.Add(ctx, 1, attrs)
 		return
 	}
 
@@ -226,6 +273,9 @@ func (b *Bridge) handleRequest(ctx context.Context, path string) {
 	if err != nil {
 		log.Printf("MCP tool call failed: %v", err)
 		b.writeErrorResult(req.ID, path, err.Error())
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "tool call failed")
+		mcpToolErrors.Add(ctx, 1, attrs)
 		return
 	}
 
@@ -244,6 +294,8 @@ func (b *Bridge) handleRequest(ctx context.Context, path string) {
 				break
 			}
 		}
+		span.SetStatus(codes.Error, "tool returned error")
+		mcpToolErrors.Add(ctx, 1, attrs)
 	}
 
 	// Marshal content
@@ -251,11 +303,15 @@ func (b *Bridge) handleRequest(ctx context.Context, path string) {
 	if err != nil {
 		log.Printf("Failed to marshal content for request %s: %v", req.ID, err)
 		b.writeErrorResult(req.ID, path, "failed to marshal tool result content")
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "marshal failed")
 		return
 	}
 	result.Content = contentData
 
 	b.writeResult(req.ID, path, &result)
+
+	mcpToolDuration.Record(ctx, float64(time.Since(start).Milliseconds()), attrs)
 }
 
 // resolveByPrefix finds the server for a prefixed tool name and returns
