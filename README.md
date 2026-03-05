@@ -1,10 +1,3 @@
-
-<p align="center">
-  <a href="https://www.youtube.com/watch?v=ZUT60Bopa4s">
-    <img src="https://img.youtube.com/vi/ZUT60Bopa4s/maxresdefault.jpg" alt="Watch Sympozium video" width="800px;">
-  </a>
-</p>
-
 <p align="center">
   <img src="header.png" alt="sympozium icon" width="800px;">
 </p>
