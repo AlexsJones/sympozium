@@ -176,7 +176,7 @@ func (r *SympoziumInstanceReconciler) buildChannelDeployment(
 	if tag == "" {
 		tag = "latest"
 	}
-	registry := os.Getenv("SYMPOZIUM_IMAGE_REGISTRY")
+	registry := os.Getenv("IMAGE_REGISTRY")
 	if registry == "" {
 		registry = "ghcr.io/alexsjones/sympozium"
 	}

@@ -4,6 +4,7 @@ package orchestrator
 
 import (
 	"fmt"
+	"os"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -27,7 +28,7 @@ type PodBuilder struct {
 	ImageTag string
 }
 
-const imageRegistry = "ghcr.io/alexsjones/sympozium"
+var imageRegistry = getEnvOrDefault("IMAGE_REGISTRY", "ghcr.io/alexsjones/sympozium")
 
 // NewPodBuilder creates a PodBuilder with default settings.
 // The tag parameter sets the image tag for all Sympozium images (e.g. "v0.0.25").
@@ -271,4 +272,11 @@ func (pb *PodBuilder) BuildVolumes(config AgentPodConfig) []corev1.Volume {
 	}
 
 	return volumes
+}
+
+func getEnvOrDefault(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
 }
