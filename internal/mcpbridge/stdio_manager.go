@@ -24,7 +24,7 @@ type StdioManager struct {
 	alive  bool
 
 	stopCh chan struct{}
-	doneCh chan struct{}
+	waitCh chan struct{} // closed when cmd.Wait() returns
 }
 
 // NewStdioManager creates a new StdioManager.
@@ -34,7 +34,6 @@ func NewStdioManager(cmdPath string, args []string, env []string) *StdioManager 
 		args:    args,
 		env:     env,
 		stopCh:  make(chan struct{}),
-		doneCh:  make(chan struct{}),
 	}
 }
 
@@ -71,17 +70,19 @@ func (m *StdioManager) startLocked() error {
 	m.stdout.Buffer(make([]byte, 0, 1024*1024), 10*1024*1024) // 10MB max line
 	m.alive = true
 
-	// Monitor process exit for auto-restart
-	go m.monitor()
+	// waitCh is closed when cmd.Wait() returns — single waiter, no races.
+	waitCh := make(chan struct{})
+	m.waitCh = waitCh
+	go m.monitor(cmd, waitCh)
 
 	return nil
 }
 
-func (m *StdioManager) monitor() {
-	if m.cmd == nil {
-		return
-	}
-	err := m.cmd.Wait()
+// monitor waits for the process to exit and handles auto-restart.
+// It is the ONLY goroutine that calls cmd.Wait() for this process instance.
+func (m *StdioManager) monitor(cmd *exec.Cmd, waitCh chan struct{}) {
+	err := cmd.Wait()
+	close(waitCh)
 
 	m.mu.Lock()
 	m.alive = false
@@ -182,6 +183,7 @@ func (m *StdioManager) Stop() {
 
 	m.mu.Lock()
 	cmd := m.cmd
+	waitCh := m.waitCh
 	m.mu.Unlock()
 
 	if cmd == nil || cmd.Process == nil {
@@ -191,17 +193,12 @@ func (m *StdioManager) Stop() {
 	// SIGTERM
 	_ = cmd.Process.Signal(syscall.SIGTERM)
 
-	done := make(chan struct{})
-	go func() {
-		_ = cmd.Wait()
-		close(done)
-	}()
-
+	// Wait for monitor goroutine to finish (it's the sole cmd.Wait() caller)
 	select {
-	case <-done:
+	case <-waitCh:
 	case <-time.After(5 * time.Second):
 		_ = cmd.Process.Kill()
-		<-done
+		<-waitCh
 	}
 
 	m.mu.Lock()
