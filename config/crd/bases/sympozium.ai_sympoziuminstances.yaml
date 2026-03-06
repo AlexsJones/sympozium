@@ -257,12 +257,11 @@ spec:
                       type: string
                     url:
                       description: URL is the MCP server's Streamable HTTP endpoint.
-                      minLength: 1
+                        Optional if an MCPServer CR with this name exists.
                       type: string
                   required:
                   - name
                   - toolsPrefix
-                  - url
                   type: object
                 type: array
               memory:

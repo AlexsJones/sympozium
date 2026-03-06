@@ -260,6 +260,12 @@ func (r *AgentRunReconciler) reconcilePending(ctx context.Context, log logr.Logg
 		mcpServers = instance.Spec.MCPServers
 	}
 
+	// Resolve MCPServer CRs: for any mcpServer entry without a URL,
+	// look up the MCPServer CR by name and use its status.url.
+	if len(mcpServers) > 0 {
+		mcpServers = r.resolveMCPServerURLs(ctx, agentRun.Namespace, mcpServers)
+	}
+
 	// Create MCP ConfigMap if MCP servers are configured.
 	if len(mcpServers) > 0 {
 		if err := r.ensureMCPConfigMap(ctx, agentRun, mcpServers); err != nil {
@@ -2078,4 +2084,69 @@ func getEnvOrDefault(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// resolveMCPServerURLs looks up MCPServer CRs for any server ref that has no URL set.
+// It checks the agent's namespace first, then "sympozium-system" as a fallback.
+func (r *AgentRunReconciler) resolveMCPServerURLs(
+	ctx context.Context,
+	namespace string,
+	servers []sympoziumv1alpha1.MCPServerRef,
+) []sympoziumv1alpha1.MCPServerRef {
+	resolved := make([]sympoziumv1alpha1.MCPServerRef, 0, len(servers))
+	for _, srv := range servers {
+		if srv.URL != "" {
+			// Inline URL takes precedence — no resolution needed.
+			resolved = append(resolved, srv)
+			continue
+		}
+
+		// Try to find MCPServer CR by name.
+		mcpServer := &sympoziumv1alpha1.MCPServer{}
+		found := false
+
+		// Check agent namespace first.
+		if err := r.Get(ctx, client.ObjectKey{Namespace: namespace, Name: srv.Name}, mcpServer); err == nil {
+			found = true
+		}
+
+		// Fall back to sympozium-system namespace.
+		if !found {
+			if err := r.Get(ctx, client.ObjectKey{Namespace: "sympozium-system", Name: srv.Name}, mcpServer); err == nil {
+				found = true
+			}
+		}
+
+		if !found {
+			r.Log.Info("MCPServer CR not found, skipping server (no URL)", "name", srv.Name)
+			continue
+		}
+
+		if !mcpServer.Status.Ready {
+			r.Log.Info("MCPServer CR not ready, skipping server", "name", srv.Name)
+			continue
+		}
+
+		if mcpServer.Status.URL == "" {
+			r.Log.Info("MCPServer CR has no resolved URL, skipping server", "name", srv.Name)
+			continue
+		}
+
+		// Use the resolved URL from MCPServer status.
+		srv.URL = mcpServer.Status.URL
+
+		// Inherit toolsPrefix from MCPServer spec if not set on the ref.
+		if srv.ToolsPrefix == "" && mcpServer.Spec.ToolsPrefix != "" {
+			srv.ToolsPrefix = mcpServer.Spec.ToolsPrefix
+		}
+
+		// Inherit timeout from MCPServer spec if not set on the ref.
+		if srv.Timeout == 0 && mcpServer.Spec.Timeout > 0 {
+			srv.Timeout = mcpServer.Spec.Timeout
+		}
+
+		r.Log.Info("Resolved MCPServer URL", "name", srv.Name, "url", srv.URL)
+		resolved = append(resolved, srv)
+	}
+	return resolved
 }

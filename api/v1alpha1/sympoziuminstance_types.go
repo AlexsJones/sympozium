@@ -50,9 +50,9 @@ type MCPServerRef struct {
 	// +kubebuilder:validation:MinLength=1
 	Name string `json:"name"`
 
-	// URL is the MCP server's Streamable HTTP endpoint.
-	// +kubebuilder:validation:MinLength=1
-	URL string `json:"url"`
+	// URL is the MCP server's Streamable HTTP endpoint. Optional if an MCPServer CR with this name exists.
+	// +optional
+	URL string `json:"url,omitempty"`
 
 	// ToolsPrefix is prepended to tool names from this server to avoid collisions.
 	// Must be unique across all configured servers.
