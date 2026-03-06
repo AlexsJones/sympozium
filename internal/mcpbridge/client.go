@@ -2,7 +2,6 @@ package mcpbridge
 
 import (
 	"bytes"
-	"strings"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -10,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
