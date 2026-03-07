@@ -33,6 +33,7 @@ rules:
       - skillpacks
       - sympoziumschedules
       - personapacks
+      - mcpservers
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: ["sympozium.ai"]
     resources:
@@ -42,6 +43,7 @@ rules:
       - skillpacks/status
       - sympoziumschedules/status
       - personapacks/status
+      - mcpservers/status
     verbs: ["get", "update", "patch"]
   - apiGroups: ["sympozium.ai"]
     resources:
@@ -51,6 +53,7 @@ rules:
       - skillpacks/finalizers
       - sympoziumschedules/finalizers
       - personapacks/finalizers
+      - mcpservers/finalizers
     verbs: ["update"]
   # Core resources — controller + skill RBAC delegation
   - apiGroups: [""]
