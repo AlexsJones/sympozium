@@ -522,7 +522,7 @@ func callOpenAI(ctx context.Context, provider, apiKey, baseURL, model, systemPro
 		chatSpan.End()
 
 		// If model made tool calls, execute them and loop.
-		if choice.FinishReason == "tool_calls" && len(choice.Message.ToolCalls) > 0 {
+		if len(choice.Message.ToolCalls) > 0 {
 			// Add the assistant message (with tool calls) to history.
 			messages = append(messages, choice.Message.ToParam())
 
