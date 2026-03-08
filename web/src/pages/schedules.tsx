@@ -49,9 +49,11 @@ export function SchedulesPage() {
     suspend: false,
   });
 
-  const filtered = (data || []).filter((s) =>
-    s.metadata.name.toLowerCase().includes(search.toLowerCase())
-  );
+  const filtered = (data || [])
+    .filter((s) =>
+      s.metadata.name.toLowerCase().includes(search.toLowerCase())
+    )
+    .sort((a, b) => a.metadata.name.localeCompare(b.metadata.name));
 
   const handleCreate = () => {
     createSchedule.mutate(form, {

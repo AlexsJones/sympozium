@@ -49,9 +49,11 @@ export function PersonasPage() {
   // Disable confirmation state
   const [disablePack, setDisablePack] = useState<PersonaPack | null>(null);
 
-  const filtered = (data || []).filter((p) =>
-    p.metadata.name.toLowerCase().includes(search.toLowerCase())
-  );
+  const filtered = (data || [])
+    .filter((p) =>
+      p.metadata.name.toLowerCase().includes(search.toLowerCase())
+    )
+    .sort((a, b) => a.metadata.name.localeCompare(b.metadata.name));
 
   function openWizard(pack: PersonaPack) {
     setWizardPack(pack);

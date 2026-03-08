@@ -28,9 +28,11 @@ export function InstancesPage() {
   const [search, setSearch] = useState("");
   const [whatsAppInstance, setWhatsAppInstance] = useState<string | null>(null);
 
-  const filtered = (data || []).filter((inst) =>
-    inst.metadata.name.toLowerCase().includes(search.toLowerCase())
-  );
+  const filtered = (data || [])
+    .filter((inst) =>
+      inst.metadata.name.toLowerCase().includes(search.toLowerCase())
+    )
+    .sort((a, b) => a.metadata.name.localeCompare(b.metadata.name));
 
   function handleComplete(result: WizardResult) {
     createInstance.mutate(

@@ -16,13 +16,13 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 
 const navItems = [
   { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { to: "/personas", label: "Persona Packs", icon: Users },
-  { to: "/instances", label: "Instances", icon: Server },
-  { to: "/runs", label: "Runs", icon: Play },
-  { to: "/policies", label: "Policies", icon: Shield },
-  { to: "/skills", label: "Skills", icon: Wrench },
-  { to: "/schedules", label: "Schedules", icon: Clock },
   { to: "/gateway", label: "Gateway", icon: Globe },
+  { to: "/instances", label: "Instances", icon: Server },
+  { to: "/personas", label: "Persona Packs", icon: Users },
+  { to: "/policies", label: "Policies", icon: Shield },
+  { to: "/runs", label: "Runs", icon: Play },
+  { to: "/schedules", label: "Schedules", icon: Clock },
+  { to: "/skills", label: "Skills", icon: Wrench },
 ];
 
 export function AppSidebar() {
