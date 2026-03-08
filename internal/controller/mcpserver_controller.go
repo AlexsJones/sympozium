@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/go-logr/logr"
@@ -180,8 +181,14 @@ func (r *MCPServerReconciler) buildStdioPodSpec(ctx context.Context, ms *sympozi
 		{Name: "STDIO_SERVER_NAME", Value: ms.Name},
 		{Name: "STDIO_PORT", Value: "8080"},
 	}
-	for k, v := range dep.Env {
-		env = append(env, corev1.EnvVar{Name: "STDIO_ENV_" + k, Value: v})
+	// Sort env keys for deterministic output (prevents reconcile loops).
+	envKeys := make([]string, 0, len(dep.Env))
+	for k := range dep.Env {
+		envKeys = append(envKeys, k)
+	}
+	sort.Strings(envKeys)
+	for _, k := range envKeys {
+		env = append(env, corev1.EnvVar{Name: "STDIO_ENV_" + k, Value: dep.Env[k]})
 	}
 
 	// For stdio transport, secret env vars must be prefixed with STDIO_ENV_
@@ -193,7 +200,12 @@ func (r *MCPServerReconciler) buildStdioPodSpec(ctx context.Context, ms *sympozi
 			ctrl.LoggerFrom(ctx).Error(err, "failed to look up secret for STDIO_ENV prefixing", "secret", ref.Name)
 			continue
 		}
+		secretKeys := make([]string, 0, len(secret.Data))
 		for key := range secret.Data {
+			secretKeys = append(secretKeys, key)
+		}
+		sort.Strings(secretKeys)
+		for _, key := range secretKeys {
 			env = append(env, corev1.EnvVar{
 				Name: "STDIO_ENV_" + key,
 				ValueFrom: &corev1.EnvVarSource{
@@ -254,8 +266,13 @@ func (r *MCPServerReconciler) buildHTTPPodSpec(ms *sympoziumv1alpha1.MCPServer, 
 	}
 
 	var env []corev1.EnvVar
-	for k, v := range dep.Env {
-		env = append(env, corev1.EnvVar{Name: k, Value: v})
+	httpEnvKeys := make([]string, 0, len(dep.Env))
+	for k := range dep.Env {
+		httpEnvKeys = append(httpEnvKeys, k)
+	}
+	sort.Strings(httpEnvKeys)
+	for _, k := range httpEnvKeys {
+		env = append(env, corev1.EnvVar{Name: k, Value: dep.Env[k]})
 	}
 	var envFrom []corev1.EnvFromSource
 
