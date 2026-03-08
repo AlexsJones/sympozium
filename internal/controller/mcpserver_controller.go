@@ -233,15 +233,19 @@ func (r *MCPServerReconciler) buildStdioPodSpec(ctx context.Context, ms *sympozi
 			ProbeHandler: corev1.ProbeHandler{
 				HTTPGet: &corev1.HTTPGetAction{Path: "/healthz", Port: intstr.FromInt(8080)},
 			},
-			InitialDelaySeconds: 5,
-			PeriodSeconds:       10,
+			InitialDelaySeconds: 30,
+			PeriodSeconds:       15,
+			TimeoutSeconds:      5,
+			FailureThreshold:    5,
 		},
 		ReadinessProbe: &corev1.Probe{
 			ProbeHandler: corev1.ProbeHandler{
 				HTTPGet: &corev1.HTTPGetAction{Path: "/readyz", Port: intstr.FromInt(8080)},
 			},
-			InitialDelaySeconds: 3,
-			PeriodSeconds:       5,
+			InitialDelaySeconds: 20,
+			PeriodSeconds:       10,
+			TimeoutSeconds:      5,
+			FailureThreshold:    5,
 		},
 	}
 
