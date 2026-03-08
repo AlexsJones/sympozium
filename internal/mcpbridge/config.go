@@ -9,7 +9,7 @@ import (
 )
 
 // DefaultTimeout is the default per-server call timeout in seconds.
-const DefaultTimeout = 30
+const DefaultTimeout = 90
 
 // LoadConfig reads and parses the MCP server registry from a YAML file.
 func LoadConfig(path string) (*ServersConfig, error) {
