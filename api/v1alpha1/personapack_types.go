@@ -57,6 +57,13 @@ type PersonaPackSpec struct {
 	// Set during onboarding when the user configures skill-specific settings.
 	// +optional
 	SkillParams map[string]map[string]string `json:"skillParams,omitempty"`
+
+	// TaskOverride replaces each persona's default schedule task with a
+	// team-level objective. Set during onboarding when the user provides
+	// instructions for the team. Each persona's schedule task is prepended
+	// with this directive so every agent works toward the same goal.
+	// +optional
+	TaskOverride string `json:"taskOverride,omitempty"`
 }
 
 // PersonaSpec defines a single agent persona within a PersonaPack.

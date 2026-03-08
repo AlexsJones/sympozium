@@ -1,0 +1,59 @@
+---
+# Example: Ad-hoc SympoziumInstance with github-gitops skill.
+#
+# This creates a single agent instance (not a PersonaPack) that has
+# the github-gitops skill configured with a target repository.
+# Useful for quick one-off agents or testing.
+#
+# Prerequisites:
+#   1. Install Sympozium:  sympozium install
+#   2. Create the API key secret:
+#      kubectl create secret generic my-agent-openai-key \
+#        --from-literal=OPENAI_API_KEY=sk-...
+#   3. Create the GitHub token secret:
+#      kubectl create secret generic github-gitops-token \
+#        --from-literal=github-token=ghp_... \
+#        -n sympozium-system
+#   4. Apply:  kubectl apply -f personapack-adhoc-with-github.yaml
+#
+apiVersion: sympozium.ai/v1alpha1
+kind: SympoziumInstance
+metadata:
+  name: my-github-agent
+  namespace: default
+spec:
+  agents:
+    default:
+      model: gpt-4o
+  authRefs:
+    - provider: openai
+      secret: my-agent-openai-key
+  skills:
+    - skillPackRef: k8s-ops
+    - skillPackRef: llmfit
+    - skillPackRef: github-gitops
+      params:
+        repo: "myorg/myapp"            # owner/repo format
+  memory:
+    enabled: true
+    maxSizeKB: 256
+  policyRef: default-policy
+---
+# Heartbeat schedule that references the instance above.
+# The task includes a team objective so the agent knows what to work on.
+apiVersion: sympozium.ai/v1alpha1
+kind: SympoziumSchedule
+metadata:
+  name: my-github-agent-heartbeat
+  namespace: default
+spec:
+  instanceRef: my-github-agent
+  schedule: "0 * * * *"
+  task: |
+    OBJECTIVE: Review open PRs and triage new issues in the repository.
+
+    Review your memory. Summarise what you know so far and note anything
+    that needs attention.
+  type: heartbeat
+  concurrencyPolicy: Forbid
+  includeMemory: true

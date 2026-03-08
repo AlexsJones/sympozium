@@ -466,12 +466,25 @@ func (r *PersonaPackReconciler) buildSchedule(
 		Spec: sympoziumv1alpha1.SympoziumScheduleSpec{
 			InstanceRef:       instanceName,
 			Schedule:          cron,
-			Task:              persona.Schedule.Task,
+			Task:              r.buildScheduleTask(pack, persona),
 			Type:              persona.Schedule.Type,
 			ConcurrencyPolicy: "Forbid",
 			IncludeMemory:     true,
 		},
 	}
+}
+
+// buildScheduleTask constructs the task string for a persona's schedule.
+// If the pack has a TaskOverride, it prepends the team-level directive.
+func (r *PersonaPackReconciler) buildScheduleTask(
+	pack *sympoziumv1alpha1.PersonaPack,
+	persona *sympoziumv1alpha1.PersonaSpec,
+) string {
+	base := persona.Schedule.Task
+	if pack.Spec.TaskOverride != "" {
+		return fmt.Sprintf("TEAM OBJECTIVE: %s\n\nYOUR ROLE TASK: %s", pack.Spec.TaskOverride, base)
+	}
+	return base
 }
 
 // reconcileMemorySeeds creates or patches the memory ConfigMap with seed data.

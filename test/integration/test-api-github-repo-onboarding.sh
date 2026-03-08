@@ -23,6 +23,7 @@ ADHOC_INSTANCE_NAME="inttest-ghrepo-adhoc-$(date +%s)"
 ADHOC_SECRET_NAME="${ADHOC_INSTANCE_NAME}-openai-key"
 
 GITHUB_REPO="octocat/Hello-World"
+TEAM_TASK="Build the v2 REST API with backward compatibility"
 MODEL_NAME="gpt-4o-mini"
 
 RED='\033[0;31m'
@@ -265,6 +266,7 @@ spec:
   skillParams:
     github-gitops:
       repo: "${GITHUB_REPO}"
+  taskOverride: "${TEAM_TASK}"
   personas:
     - name: ${PERSONA_NAME}
       displayName: "Test Developer"
@@ -331,6 +333,42 @@ EOF
     fail "Pack run github repo mismatch (got '${run_repo}', want '${GITHUB_REPO}')"
   else
     pass "Pack run inherited github-gitops repo param"
+  fi
+
+  # Verify taskOverride is persisted on the PersonaPack.
+  pack_json="$(kubectl get personapack "$PACK_NAME" -n "$NAMESPACE" -o json)"
+  got_task="$(printf "%s" "$pack_json" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("spec",{}).get("taskOverride",""))')"
+  if [[ "$got_task" != "$TEAM_TASK" ]]; then
+    fail "Pack taskOverride mismatch (got '${got_task}', want '${TEAM_TASK}')"
+  else
+    pass "Pack taskOverride is set correctly"
+  fi
+
+  # Verify the schedule task includes the team objective.
+  sched_name="${PACK_INSTANCE_NAME}-schedule"
+  elapsed=0
+  while [[ "$elapsed" -lt 30 ]]; do
+    if kubectl get sympoziumschedule "$sched_name" -n "$NAMESPACE" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 2
+    elapsed=$((elapsed + 2))
+  done
+  if kubectl get sympoziumschedule "$sched_name" -n "$NAMESPACE" >/dev/null 2>&1; then
+    sched_json="$(kubectl get sympoziumschedule "$sched_name" -n "$NAMESPACE" -o json)"
+    sched_task="$(printf "%s" "$sched_json" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("spec",{}).get("task",""))')"
+    if echo "$sched_task" | grep -q "TEAM OBJECTIVE:"; then
+      pass "Schedule task contains TEAM OBJECTIVE prefix"
+    else
+      fail "Schedule task missing TEAM OBJECTIVE prefix (got: ${sched_task:0:80})"
+    fi
+    if echo "$sched_task" | grep -q "test github task"; then
+      pass "Schedule task preserves persona's original task"
+    else
+      fail "Schedule task missing persona's original task"
+    fi
+  else
+    info "Schedule '${sched_name}' not found — skipping task override check (controller may not have created it yet)"
   fi
 
   # ──────────────────────────────────────────────────────────────

@@ -241,6 +241,13 @@ spec:
                   holds key/value pairs injected as SKILL_<KEY> environment variables.
                   Set during onboarding when the user configures skill-specific settings.
                 type: object
+              taskOverride:
+                description: |-
+                  TaskOverride replaces each persona's default schedule task with a
+                  team-level objective. Set during onboarding when the user provides
+                  instructions for the team. Each persona's schedule task is prepended
+                  with this directive so every agent works toward the same goal.
+                type: string
               version:
                 description: Version is the persona pack version.
                 type: string
