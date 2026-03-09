@@ -1426,6 +1426,22 @@ func (r *AgentRunReconciler) buildContainers(
 			{Name: "MCP_IPC_PATH", Value: "/ipc/tools"},
 			{Name: "MCP_MANIFEST_PATH", Value: "/ipc/tools/mcp-tools.json"},
 		}
+
+		// Build tools filter: prefix -> allowed tool names (without prefix).
+		// If a server has no Tools list, all tools pass through.
+		toolsFilter := map[string][]string{}
+		for _, srv := range mcpServers {
+			if len(srv.Tools) > 0 {
+				toolsFilter[srv.ToolsPrefix] = srv.Tools
+			}
+		}
+		if len(toolsFilter) > 0 {
+			filterJSON, _ := json.Marshal(toolsFilter)
+			mcpEnv = append(mcpEnv, corev1.EnvVar{
+				Name:  "MCP_TOOLS_FILTER",
+				Value: string(filterJSON),
+			})
+		}
 		if tp := agentRun.Annotations["otel.dev/traceparent"]; tp != "" {
 			mcpEnv = append(mcpEnv, corev1.EnvVar{Name: "TRACEPARENT", Value: tp})
 		}
