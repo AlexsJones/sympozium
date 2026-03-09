@@ -61,9 +61,22 @@ func (m *StdioManager) startLocked() error {
 		return fmt.Errorf("stdout pipe: %w", err)
 	}
 
+	stderrPipe, err := cmd.StderrPipe()
+	if err != nil {
+		return fmt.Errorf("stderr pipe: %w", err)
+	}
+
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start process: %w", err)
 	}
+
+	// Log stderr from child process for debugging
+	go func() {
+		scanner := bufio.NewScanner(stderrPipe)
+		for scanner.Scan() {
+			log.Printf("[stdio-child stderr] %s", scanner.Text())
+		}
+	}()
 
 	m.cmd = cmd
 	m.stdin = bufio.NewWriter(stdinPipe)
