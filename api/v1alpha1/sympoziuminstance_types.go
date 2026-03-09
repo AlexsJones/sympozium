@@ -82,11 +82,6 @@ type MCPServerRef struct {
 	// Headers are additional HTTP headers to send with every request.
 	// +optional
 	Headers map[string]string `json:"headers,omitempty"`
-
-	// Tools is an optional allowlist of tool names to expose from this server.
-	// If empty, all tools are exposed. Names are without the prefix.
-	// +optional
-	Tools []string `json:"tools,omitempty"`
 }
 
 // MemorySpec configures persistent memory for a SympoziumInstance.
@@ -130,11 +125,6 @@ type ObservabilitySpec struct {
 	// Headers are additional OTLP export headers (e.g., auth tokens).
 	// +optional
 	Headers map[string]string `json:"headers,omitempty"`
-
-	// Tools is an optional allowlist of tool names to expose from this server.
-	// If empty, all tools are exposed. Names are without the prefix.
-	// +optional
-	Tools []string `json:"tools,omitempty"`
 
 	// HeadersSecretRef references a Secret containing OTLP export headers.
 	// +optional

@@ -131,45 +131,6 @@ func loadMCPTools(manifestPath string) []ToolDef {
 	}
 	mcpToolRegistryMu.Unlock()
 
-	// Apply tools filter from MCP_TOOLS_FILTER env var.
-	// Format: {"prefix": ["tool1", "tool2"]} — only listed tools pass through.
-	// Tools without a matching prefix are always included.
-	if filterJSON := os.Getenv("MCP_TOOLS_FILTER"); filterJSON != "" {
-		var filter map[string][]string
-		if err := json.Unmarshal([]byte(filterJSON), &filter); err == nil && len(filter) > 0 {
-			var filtered []ToolDef
-			for _, t := range tools {
-				// Find which prefix this tool belongs to
-				allowed := true
-				for prefix, allowList := range filter {
-					pfx := prefix + "_"
-					if strings.HasPrefix(t.Name, pfx) {
-						// Check if the unprefixed name is in the allow list
-						unprefixed := strings.TrimPrefix(t.Name, pfx)
-						allowed = false
-						for _, a := range allowList {
-							if a == unprefixed {
-								allowed = true
-								break
-							}
-						}
-						break
-					}
-				}
-				if allowed {
-					filtered = append(filtered, t)
-				} else {
-					// Remove from registry too
-					mcpToolRegistryMu.Lock()
-					delete(mcpToolRegistry, t.Name)
-					mcpToolRegistryMu.Unlock()
-				}
-			}
-			log.Printf("MCP tools filter applied: %d -> %d tools", len(tools), len(filtered))
-			tools = filtered
-		}
-	}
-
 	log.Printf("Loaded %d MCP tool(s) from manifest", len(tools))
 	return tools
 }
