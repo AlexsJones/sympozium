@@ -77,7 +77,7 @@ func (c *Client) initialize(ctx context.Context) error {
 	}
 
 	// Send initialized notification (no response expected, but we do it as a best-effort POST)
-	_ = c.notify(ctx, "notifications/initialized")
+	// _ = c.notify(ctx, "notifications/initialized") // TEMP: skip until dec8f88 adapter deployed
 
 	return nil
 }
