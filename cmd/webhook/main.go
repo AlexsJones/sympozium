@@ -12,6 +12,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	ctrlwebhook "sigs.k8s.io/controller-runtime/pkg/webhook"
+	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	sympoziumv1alpha1 "github.com/alexsjones/sympozium/api/v1alpha1"
 	"github.com/alexsjones/sympozium/internal/webhook"
@@ -54,18 +55,21 @@ func main() {
 
 	// Register webhooks
 	hookServer := mgr.GetWebhookServer()
+	decoder := admission.NewDecoder(scheme)
 
 	hookServer.Register("/validate-agent-pods", &ctrlwebhook.Admission{
 		Handler: &webhook.PolicyEnforcer{
-			Client: mgr.GetClient(),
-			Log:    log.WithName("validator"),
+			Client:  mgr.GetClient(),
+			Log:     log.WithName("validator"),
+			Decoder: decoder,
 		},
 	})
 
 	hookServer.Register("/mutate-agent-pods", &ctrlwebhook.Admission{
 		Handler: &webhook.MutatingPolicyEnforcer{
-			Client: mgr.GetClient(),
-			Log:    log.WithName("mutator"),
+			Client:  mgr.GetClient(),
+			Log:     log.WithName("mutator"),
+			Decoder: decoder,
 		},
 	})
 

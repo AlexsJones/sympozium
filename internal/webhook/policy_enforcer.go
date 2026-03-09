@@ -23,13 +23,13 @@ import (
 type PolicyEnforcer struct {
 	Client  client.Client
 	Log     logr.Logger
-	decoder admission.Decoder
+	Decoder admission.Decoder
 }
 
 // Handle validates AgentRun creation/updates against the bound SympoziumPolicy.
 func (pe *PolicyEnforcer) Handle(ctx context.Context, req admission.Request) admission.Response {
 	run := &sympoziumv1alpha1.AgentRun{}
-	if err := pe.decoder.Decode(req, run); err != nil {
+	if err := pe.Decoder.Decode(req, run); err != nil {
 		return admission.Errored(http.StatusBadRequest, err)
 	}
 
@@ -160,23 +160,18 @@ func (pe *PolicyEnforcer) validateFeatureGates(run *sympoziumv1alpha1.AgentRun, 
 	return nil
 }
 
-// InjectDecoder injects the admission decoder.
-func (pe *PolicyEnforcer) InjectDecoder(d admission.Decoder) error {
-	pe.decoder = d
-	return nil
-}
 
 // MutatingPolicyEnforcer is a mutating webhook that injects defaults based on SympoziumPolicy.
 type MutatingPolicyEnforcer struct {
 	Client  client.Client
 	Log     logr.Logger
-	decoder admission.Decoder
+	Decoder admission.Decoder
 }
 
 // Handle mutates AgentRun resources to enforce policy defaults.
 func (mpe *MutatingPolicyEnforcer) Handle(ctx context.Context, req admission.Request) admission.Response {
 	run := &sympoziumv1alpha1.AgentRun{}
-	if err := mpe.decoder.Decode(req, run); err != nil {
+	if err := mpe.Decoder.Decode(req, run); err != nil {
 		return admission.Errored(http.StatusBadRequest, err)
 	}
 
@@ -285,11 +280,6 @@ func (mpe *MutatingPolicyEnforcer) Handle(ctx context.Context, req admission.Req
 	return admission.PatchResponseFromRaw(req.Object.Raw, marshaledRun)
 }
 
-// InjectDecoder injects the admission decoder.
-func (mpe *MutatingPolicyEnforcer) InjectDecoder(d admission.Decoder) error {
-	mpe.decoder = d
-	return nil
-}
 
 // BuildAgentPodSecurityContext returns a restricted SecurityContext for agent pods.
 func BuildAgentPodSecurityContext() *corev1.SecurityContext {
