@@ -35,9 +35,11 @@ export function PoliciesPage() {
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<SympoziumPolicy | null>(null);
 
-  const filtered = (data || []).filter((p) =>
-    p.metadata.name.toLowerCase().includes(search.toLowerCase())
-  );
+  const filtered = (data || [])
+    .filter((p) =>
+      p.metadata.name.toLowerCase().includes(search.toLowerCase())
+    )
+    .sort((a, b) => a.metadata.name.localeCompare(b.metadata.name));
 
   return (
     <div className="space-y-4">

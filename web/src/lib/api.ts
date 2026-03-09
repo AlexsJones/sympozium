@@ -116,12 +116,15 @@ export interface AgentRunSpec {
   toolPolicy?: ToolPolicySpec;
   timeout?: string;
   cleanup?: string;
+  mode?: string;
 }
 
 export interface AgentRunStatus {
   phase?: string;
   podName?: string;
   jobName?: string;
+  deploymentName?: string;
+  serviceName?: string;
   startedAt?: string;
   completedAt?: string;
   result?: string;
@@ -228,12 +231,31 @@ export interface SkillSidecar {
   hostAccess?: HostAccessSpec;
 }
 
-export interface GithubAuthStartResponse {
-  userCode: string;
-  verificationUri: string;
-  expiresIn: number;
-  interval: number;
-  status: string;
+// ── Gateway Config ──────────────────────────────────────────────────────────
+
+export interface GatewayConfigResponse {
+  enabled: boolean;
+  gatewayClassName?: string;
+  name?: string;
+  baseDomain?: string;
+  tlsEnabled: boolean;
+  certManagerClusterIssuer?: string;
+  tlsSecretName?: string;
+  phase?: string;
+  ready: boolean;
+  address?: string;
+  listenerCount?: number;
+  message?: string;
+}
+
+export interface PatchGatewayConfigRequest {
+  enabled?: boolean;
+  gatewayClassName?: string;
+  name?: string;
+  baseDomain?: string;
+  tlsEnabled?: boolean;
+  certManagerClusterIssuer?: string;
+  tlsSecretName?: string;
 }
 
 export interface GithubAuthStatusResponse {
@@ -259,6 +281,23 @@ export interface ObservabilityMetricsResponse {
   outputByModel?: MetricBreakdown[];
   toolsByName?: MetricBreakdown[];
   rawMetricNames?: string[];
+}
+
+export interface GatewayBucket {
+  ts: number;
+  requests: number;
+  errors: number;
+  avgDurationSec: number;
+}
+
+export interface GatewayMetricsResponse {
+  totalRequests: number;
+  successCount: number;
+  errorCount: number;
+  avgDurationSec: number;
+  uptimeSec: number;
+  servingInstances: number;
+  buckets: GatewayBucket[];
 }
 
 export interface SkillPackSpec {
@@ -328,6 +367,11 @@ export interface PersonaMemory {
   seeds?: string[];
 }
 
+export interface PersonaWebEndpoint {
+  enabled: boolean;
+  hostname?: string;
+}
+
 export interface PersonaSpec {
   name: string;
   displayName?: string;
@@ -338,6 +382,7 @@ export interface PersonaSpec {
   schedule?: PersonaSchedule;
   memory?: PersonaMemory;
   channels?: string[];
+  webEndpoint?: PersonaWebEndpoint;
 }
 
 export interface InstalledPersona {
@@ -356,6 +401,8 @@ export interface PersonaPackSpec {
   excludePersonas?: string[];
   channelConfigs?: Record<string, string>;
   policyRef?: string;
+  skillParams?: Record<string, Record<string, string>>;
+  taskOverride?: string;
 }
 
 export interface PersonaPackStatus {
@@ -497,6 +544,11 @@ export const api = {
       apiFetch<SympoziumInstance>(`/api/v1/instances/${name}`),
     delete: (name: string) =>
       apiFetch<void>(`/api/v1/instances/${name}`, { method: "DELETE" }),
+    patch: (name: string, data: { webEndpoint?: { enabled?: boolean; hostname?: string; rateLimit?: { requestsPerMinute?: number } } }) =>
+      apiFetch<SympoziumInstance>(`/api/v1/instances/${name}`, {
+        method: "PATCH",
+        body: JSON.stringify(data),
+      }),
     create: (data: {
       name: string;
       provider: string;
@@ -582,6 +634,8 @@ export const api = {
         channelConfigs?: Record<string, string>;
         policyRef?: string;
         heartbeatInterval?: string;
+        skillParams?: Record<string, Record<string, string>>;
+        githubToken?: string;
       }
     ) =>
       apiFetch<PersonaPack>(`/api/v1/personapacks/${name}`, {
@@ -612,11 +666,27 @@ export const api = {
       apiFetch<ObservabilityMetricsResponse>("/api/v1/observability/metrics"),
   },
 
-  githubAuth: {
-    start: () =>
-      apiFetch<GithubAuthStartResponse>("/api/v1/skills/github-gitops/auth", {
+  gateway: {
+    get: () => apiFetch<GatewayConfigResponse>("/api/v1/gateway"),
+    create: (data: PatchGatewayConfigRequest) =>
+      apiFetch<GatewayConfigResponse>("/api/v1/gateway", {
         method: "POST",
+        body: JSON.stringify(data),
       }),
+    patch: (data: PatchGatewayConfigRequest) =>
+      apiFetch<GatewayConfigResponse>("/api/v1/gateway", {
+        method: "PATCH",
+        body: JSON.stringify(data),
+      }),
+    delete: () =>
+      apiFetch<void>("/api/v1/gateway", { method: "DELETE" }),
+    metrics: (range?: string) =>
+      apiFetch<GatewayMetricsResponse>(
+        `/api/v1/gateway/metrics${range ? `?range=${range}` : ""}`,
+      ),
+  },
+
+  githubAuth: {
     setToken: (token: string) =>
       apiFetch<GithubAuthStatusResponse>("/api/v1/skills/github-gitops/auth/token", {
         method: "POST",

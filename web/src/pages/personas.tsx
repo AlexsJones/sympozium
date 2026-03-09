@@ -9,7 +9,6 @@ import {
 import { StatusBadge } from "@/components/status-badge";
 import { OnboardingWizard, type WizardResult } from "@/components/onboarding-wizard";
 import { WhatsAppQRModal } from "@/components/whatsapp-qr-modal";
-import { GithubAuthDialog } from "@/components/github-auth-dialog";
 import {
   Dialog,
   DialogContent,
@@ -44,14 +43,15 @@ export function PersonasPage() {
   const [wizardOpen, setWizardOpen] = useState(false);
   const [wizardPack, setWizardPack] = useState<PersonaPack | null>(null);
   const [whatsAppPack, setWhatsAppPack] = useState<string | null>(null);
-  const [githubAuthOpen, setGithubAuthOpen] = useState(false);
 
   // Disable confirmation state
   const [disablePack, setDisablePack] = useState<PersonaPack | null>(null);
 
-  const filtered = (data || []).filter((p) =>
-    p.metadata.name.toLowerCase().includes(search.toLowerCase())
-  );
+  const filtered = (data || [])
+    .filter((p) =>
+      p.metadata.name.toLowerCase().includes(search.toLowerCase())
+    )
+    .sort((a, b) => a.metadata.name.localeCompare(b.metadata.name));
 
   function openWizard(pack: PersonaPack) {
     setWizardPack(pack);
@@ -65,6 +65,16 @@ export function PersonasPage() {
 
   function handleComplete(result: WizardResult) {
     if (!wizardPack) return;
+
+    // Build skillParams from inline skill configs
+    let skillParams: Record<string, Record<string, string>> | undefined;
+    if (result.skills.includes("github-gitops") && result.githubRepo) {
+      skillParams = {
+        ...skillParams,
+        "github-gitops": { repo: result.githubRepo },
+      };
+    }
+
     activatePack.mutate(
       {
         name: wizardPack.metadata.name,
@@ -79,14 +89,12 @@ export function PersonasPage() {
             ? result.channelConfigs
             : undefined,
         heartbeatInterval: result.heartbeatInterval || undefined,
+        skillParams,
+        githubToken: result.githubToken || undefined,
       },
       {
         onSuccess: () => {
           closeWizard();
-          if (result.skills.includes("github-gitops")) {
-            setGithubAuthOpen(true);
-            return;
-          }
           if (result.channels.includes("whatsapp")) {
             setWhatsAppPack(wizardPack.metadata.name);
           }
@@ -268,11 +276,6 @@ export function PersonasPage() {
         open={!!whatsAppPack}
         onClose={() => setWhatsAppPack(null)}
         personaPackName={whatsAppPack || undefined}
-      />
-
-      <GithubAuthDialog
-        open={githubAuthOpen}
-        onClose={() => setGithubAuthOpen(false)}
       />
 
       {/* Disable confirmation dialog */}

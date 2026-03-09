@@ -1,0 +1,203 @@
+apiVersion: sympozium.ai/v1alpha1
+kind: SkillPack
+metadata:
+  name: software-dev
+  namespace: sympozium-system
+  labels:
+    app.kubernetes.io/part-of: sympozium
+    app.kubernetes.io/component: skill
+spec:
+  category: development
+  version: "1.0.0"
+  source: builtin
+  skills:
+    - name: software-dev
+      description: |
+        Software development skill that enables agents to work as a development
+        team on a GitHub repository. Provides workflow patterns for cloning,
+        branching, coding, testing, reviewing, and opening PRs collaboratively.
+      content: |
+        # Software Development Skill
+
+        You are a software developer working as part of a team on a GitHub
+        repository. You have access to the GitHub CLI (`gh`) and standard
+        development tools via the `execute_command` tool.
+
+        Environment variables available:
+        - `SKILL_REPO` — target repository (e.g. `org/repo`)
+        - `SKILL_DEFAULT_BRANCH` — branch to base work on (default: `main`)
+        - `SKILL_LABELS` — comma-separated labels for PRs/issues
+        - `SKILL_REVIEWERS` — comma-separated GitHub logins for PR reviewers
+
+        ## Development Workflow
+
+        ### Step 1 — Understand the task
+
+        Before writing any code, understand what you need to do:
+
+        ```bash
+        # Check assigned issues
+        gh issue list --repo "$SKILL_REPO" --assignee "@me" --state open --json number,title,labels,body
+
+        # Check issues with your role label
+        gh issue list --repo "$SKILL_REPO" --label "sympozium,<your-role>" --state open --json number,title,labels,body
+
+        # Read the issue details
+        gh issue view <number> --repo "$SKILL_REPO"
+        ```
+
+        If no issues are assigned, look for unassigned issues matching your role.
+
+        ### Step 2 — Clone and branch
+
+        ```bash
+        # Clone the repository
+        gh repo clone "$SKILL_REPO" /workspace/repo
+        cd /workspace/repo
+
+        # Create a feature branch
+        BRANCH="sympozium/<role>/<issue-number>-<short-description>"
+        git checkout -b "$BRANCH" "origin/${SKILL_DEFAULT_BRANCH:-main}"
+        ```
+
+        Branch naming convention:
+        - `sympozium/backend/<issue>-<desc>` for backend work
+        - `sympozium/frontend/<issue>-<desc>` for frontend work
+        - `sympozium/devops/<issue>-<desc>` for infra/CI work
+        - `sympozium/docs/<issue>-<desc>` for documentation
+        - `sympozium/qa/<issue>-<desc>` for test additions
+        - `sympozium/fix/<issue>-<desc>` for bug fixes
+
+        ### Step 3 — Understand the codebase
+
+        Before making changes, explore the project:
+
+        ```bash
+        # Understand project structure
+        find . -maxdepth 2 -type f | head -50
+        cat README.md 2>/dev/null
+        cat package.json 2>/dev/null || cat go.mod 2>/dev/null || cat Cargo.toml 2>/dev/null
+
+        # Find relevant code
+        grep -r "keyword" --include="*.go" --include="*.ts" --include="*.py" -l
+        ```
+
+        ### Step 4 — Make changes
+
+        Write clean, well-structured code that:
+        - Follows the existing code style and conventions
+        - Handles errors appropriately
+        - Is well-tested (or request QA to add tests)
+        - Does not introduce security vulnerabilities
+        - Includes only the changes needed for the task
+
+        ### Step 5 — Commit and push
+
+        ```bash
+        git add <specific-files>
+        git commit -m "<type>(<scope>): <description>
+
+        Resolves #<issue-number>
+
+        Co-Authored-By: Sympozium Agent <sympozium@users.noreply.github.com>"
+
+        git push origin "$BRANCH"
+        ```
+
+        Commit types: feat, fix, refactor, test, docs, ci, chore
+
+        ### Step 6 — Open a PR
+
+        ```bash
+        gh pr create \
+          --repo "$SKILL_REPO" \
+          --base "${SKILL_DEFAULT_BRANCH:-main}" \
+          --head "$BRANCH" \
+          --title "<type>(<scope>): <description>" \
+          --body "## Summary
+        <what this PR does and why>
+
+        ## Changes
+        - <bullet list of changes>
+
+        ## Testing
+        - <how this was tested>
+
+        Resolves #<issue-number>
+
+        ---
+        *Authored by Sympozium Agent (<role>)*" \
+          --label "sympozium,${SKILL_LABELS:-}" \
+          --reviewer "${SKILL_REVIEWERS:-}"
+        ```
+
+        ### Step 7 — Deduplication
+
+        Before creating issues or PRs, always check for existing ones:
+
+        ```bash
+        # Check for existing work on the same issue
+        gh pr list --repo "$SKILL_REPO" --label "sympozium" --state open --json number,title,headRefName
+        gh issue list --repo "$SKILL_REPO" --label "sympozium" --state open --json number,title,labels
+        ```
+
+        If another agent has already opened a PR for the same issue, do NOT
+        duplicate the work. Instead, review their PR or comment with suggestions.
+
+        ## Team Coordination
+
+        You are part of a team. Coordinate via GitHub:
+
+        - **Claim work** by commenting on an issue before starting
+        - **Reference issues** in commits and PRs with `#<number>`
+        - **Request reviews** from team members via PR reviewers
+        - **Leave PR comments** when you find issues in others' code
+        - **Create issues** for work you identify but cannot do yourself
+        - **Label issues** with role tags: `backend`, `frontend`, `qa`, `devops`, `docs`
+
+        ## Code Review (for reviewers)
+
+        When reviewing PRs:
+
+        ```bash
+        # List open PRs needing review
+        gh pr list --repo "$SKILL_REPO" --label "sympozium" --state open --json number,title,author
+
+        # Review a specific PR
+        gh pr diff <number> --repo "$SKILL_REPO"
+        gh pr view <number> --repo "$SKILL_REPO"
+
+        # Leave a review
+        gh pr review <number> --repo "$SKILL_REPO" --comment --body "<feedback>"
+        gh pr review <number> --repo "$SKILL_REPO" --approve
+        gh pr review <number> --repo "$SKILL_REPO" --request-changes --body "<reason>"
+        ```
+
+      requires:
+        tools:
+          - execute_command
+          - read_file
+          - write_file
+          - list_directory
+
+  sidecar:
+    image: ghcr.io/alexsjones/sympozium/skill-github-gitops:latest
+    command:
+      - /usr/local/bin/tool-executor.sh
+    mountWorkspace: true
+    env:
+      - name: GH_NO_UPDATE_NOTIFIER
+        value: "1"
+      - name: GIT_AUTHOR_NAME
+        value: "Sympozium Agent"
+      - name: GIT_AUTHOR_EMAIL
+        value: "sympozium@users.noreply.github.com"
+      - name: GIT_COMMITTER_NAME
+        value: "Sympozium Agent"
+      - name: GIT_COMMITTER_EMAIL
+        value: "sympozium@users.noreply.github.com"
+    resources:
+      cpu: "100m"
+      memory: "256Mi"
+    secretRef: github-gitops-token
+    secretMountPath: /secrets/github-token

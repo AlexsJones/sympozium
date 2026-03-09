@@ -21,6 +21,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
@@ -89,6 +90,8 @@ func (s *Server) buildMux(frontendFS fs.FS, token string) http.Handler {
 	mux.HandleFunc("GET /api/v1/instances/{name}", s.getInstance)
 	mux.HandleFunc("POST /api/v1/instances", s.createInstance)
 	mux.HandleFunc("DELETE /api/v1/instances/{name}", s.deleteInstance)
+	mux.HandleFunc("PATCH /api/v1/instances/{name}", s.patchInstance)
+	mux.HandleFunc("GET /api/v1/instances/{name}/web-endpoint", s.getWebEndpointStatus)
 
 	// Run endpoints
 	mux.HandleFunc("GET /api/v1/runs", s.listRuns)
@@ -108,8 +111,7 @@ func (s *Server) buildMux(frontendFS fs.FS, token string) http.Handler {
 	mux.HandleFunc("GET /api/v1/skills", s.listSkills)
 	mux.HandleFunc("GET /api/v1/skills/{name}", s.getSkill)
 
-	// GitHub GitOps skill auth endpoints (device-flow OAuth)
-	mux.HandleFunc("POST /api/v1/skills/github-gitops/auth", s.handleGithubAuth)
+	// GitHub GitOps skill auth endpoints (PAT token)
 	mux.HandleFunc("POST /api/v1/skills/github-gitops/auth/token", s.handleGithubAuthToken)
 	mux.HandleFunc("GET /api/v1/skills/github-gitops/auth/status", s.handleGithubAuthStatus)
 
@@ -125,6 +127,13 @@ func (s *Server) buildMux(frontendFS fs.FS, token string) http.Handler {
 	mux.HandleFunc("GET /api/v1/personapacks/{name}", s.getPersonaPack)
 	mux.HandleFunc("PATCH /api/v1/personapacks/{name}", s.patchPersonaPack)
 	mux.HandleFunc("DELETE /api/v1/personapacks/{name}", s.deletePersonaPack)
+
+	// Gateway config endpoints (singleton SympoziumConfig)
+	mux.HandleFunc("GET /api/v1/gateway", s.getGatewayConfig)
+	mux.HandleFunc("POST /api/v1/gateway", s.createGatewayConfig)
+	mux.HandleFunc("PATCH /api/v1/gateway", s.patchGatewayConfig)
+	mux.HandleFunc("DELETE /api/v1/gateway", s.deleteGatewayConfig)
+	mux.HandleFunc("GET /api/v1/gateway/metrics", s.getGatewayMetrics)
 
 	// Namespace listing
 	mux.HandleFunc("GET /api/v1/namespaces", s.listNamespaces)
@@ -274,6 +283,157 @@ func (s *Server) deleteInstance(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// PatchInstanceRequest is the request body for partially updating a SympoziumInstance.
+type PatchInstanceRequest struct {
+	WebEndpoint *PatchWebEndpoint `json:"webEndpoint,omitempty"`
+}
+
+// PatchWebEndpoint is the web endpoint patch payload.
+type PatchWebEndpoint struct {
+	Enabled   *bool   `json:"enabled,omitempty"`
+	Hostname  *string `json:"hostname,omitempty"`
+	RateLimit *struct {
+		RequestsPerMinute *int `json:"requestsPerMinute,omitempty"`
+	} `json:"rateLimit,omitempty"`
+}
+
+func (s *Server) patchInstance(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	ns := r.URL.Query().Get("namespace")
+	if ns == "" {
+		ns = "default"
+	}
+
+	var req PatchInstanceRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	var inst sympoziumv1alpha1.SympoziumInstance
+	if err := s.client.Get(r.Context(), types.NamespacedName{Name: name, Namespace: ns}, &inst); err != nil {
+		if k8serrors.IsNotFound(err) {
+			http.Error(w, "instance not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if req.WebEndpoint != nil {
+		if req.WebEndpoint.Enabled != nil && !*req.WebEndpoint.Enabled {
+			// Disable — remove the web-endpoint skill.
+			var filtered []sympoziumv1alpha1.SkillRef
+			for _, s := range inst.Spec.Skills {
+				if s.SkillPackRef != "web-endpoint" && s.SkillPackRef != "skillpack-web-endpoint" {
+					filtered = append(filtered, s)
+				}
+			}
+			inst.Spec.Skills = filtered
+		} else {
+			// Enable — add web-endpoint as a skill.
+			params := map[string]string{}
+			if req.WebEndpoint.Hostname != nil && *req.WebEndpoint.Hostname != "" {
+				params["hostname"] = *req.WebEndpoint.Hostname
+			}
+			if req.WebEndpoint.RateLimit != nil && req.WebEndpoint.RateLimit.RequestsPerMinute != nil {
+				params["rate_limit_rpm"] = fmt.Sprintf("%d", *req.WebEndpoint.RateLimit.RequestsPerMinute)
+			}
+
+			// Check if web-endpoint skill already exists.
+			found := false
+			for i, s := range inst.Spec.Skills {
+				if s.SkillPackRef == "web-endpoint" || s.SkillPackRef == "skillpack-web-endpoint" {
+					inst.Spec.Skills[i].Params = params
+					found = true
+					break
+				}
+			}
+			if !found {
+				inst.Spec.Skills = append(inst.Spec.Skills, sympoziumv1alpha1.SkillRef{
+					SkillPackRef: "web-endpoint",
+					Params:       params,
+				})
+			}
+		}
+	}
+
+	if err := s.client.Update(r.Context(), &inst); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, inst)
+}
+
+// WebEndpointStatusResponse is the response for the web-endpoint status endpoint.
+type WebEndpointStatusResponse struct {
+	Enabled        bool   `json:"enabled"`
+	DeploymentName string `json:"deploymentName,omitempty"`
+	ServiceName    string `json:"serviceName,omitempty"`
+	GatewayReady   bool   `json:"gatewayReady"`
+	RouteURL       string `json:"routeURL,omitempty"`
+	AuthSecretName string `json:"authSecretName,omitempty"`
+}
+
+func (s *Server) getWebEndpointStatus(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	ns := r.URL.Query().Get("namespace")
+	if ns == "" {
+		ns = "default"
+	}
+
+	var inst sympoziumv1alpha1.SympoziumInstance
+	if err := s.client.Get(r.Context(), types.NamespacedName{Name: name, Namespace: ns}, &inst); err != nil {
+		if k8serrors.IsNotFound(err) {
+			http.Error(w, "instance not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	resp := WebEndpointStatusResponse{}
+
+	// Check for web-endpoint skill.
+	for _, skill := range inst.Spec.Skills {
+		if skill.SkillPackRef == "web-endpoint" || skill.SkillPackRef == "skillpack-web-endpoint" {
+			resp.Enabled = true
+			break
+		}
+	}
+
+	if !resp.Enabled {
+		writeJSON(w, resp)
+		return
+	}
+
+	// Find server-mode AgentRun for this instance.
+	var runs sympoziumv1alpha1.AgentRunList
+	if err := s.client.List(r.Context(), &runs,
+		client.InNamespace(ns),
+		client.MatchingLabels{"sympozium.ai/instance": name},
+	); err == nil {
+		for _, run := range runs.Items {
+			if run.Status.Phase == sympoziumv1alpha1.AgentRunPhaseServing {
+				resp.DeploymentName = run.Status.DeploymentName
+				resp.ServiceName = run.Status.ServiceName
+				break
+			}
+		}
+	}
+
+	// Check gateway readiness.
+	var config sympoziumv1alpha1.SympoziumConfig
+	if err := s.client.Get(r.Context(), types.NamespacedName{Name: "default", Namespace: "sympozium-system"}, &config); err == nil {
+		if config.Status.Gateway != nil && config.Status.Gateway.Ready {
+			resp.GatewayReady = true
+		}
+	}
+
+	writeJSON(w, resp)
 }
 
 // CreateInstanceRequest is the request body for creating a new SympoziumInstance.
@@ -832,15 +992,17 @@ func (s *Server) getPersonaPack(w http.ResponseWriter, r *http.Request) {
 
 // PatchPersonaPackRequest represents a partial update to a PersonaPack.
 type PatchPersonaPackRequest struct {
-	Enabled           *bool             `json:"enabled,omitempty"`
-	Provider          string            `json:"provider,omitempty"`
-	SecretName        string            `json:"secretName,omitempty"`
-	APIKey            string            `json:"apiKey,omitempty"`
-	Model             string            `json:"model,omitempty"`
-	BaseURL           string            `json:"baseURL,omitempty"`
-	ChannelConfigs    map[string]string `json:"channelConfigs,omitempty"`
-	PolicyRef         string            `json:"policyRef,omitempty"`
-	HeartbeatInterval string            `json:"heartbeatInterval,omitempty"`
+	Enabled           *bool                        `json:"enabled,omitempty"`
+	Provider          string                       `json:"provider,omitempty"`
+	SecretName        string                       `json:"secretName,omitempty"`
+	APIKey            string                       `json:"apiKey,omitempty"`
+	Model             string                       `json:"model,omitempty"`
+	BaseURL           string                       `json:"baseURL,omitempty"`
+	ChannelConfigs    map[string]string            `json:"channelConfigs,omitempty"`
+	PolicyRef         string                       `json:"policyRef,omitempty"`
+	HeartbeatInterval string                       `json:"heartbeatInterval,omitempty"`
+	SkillParams       map[string]map[string]string `json:"skillParams,omitempty"`
+	GithubToken       string                       `json:"githubToken,omitempty"`
 }
 
 func (s *Server) patchPersonaPack(w http.ResponseWriter, r *http.Request) {
@@ -942,6 +1104,23 @@ func (s *Server) patchPersonaPack(w http.ResponseWriter, r *http.Request) {
 				pp.Spec.Personas[i].Schedule.Interval = req.HeartbeatInterval
 				pp.Spec.Personas[i].Schedule.Cron = "" // clear cron so interval takes precedence
 			}
+		}
+	}
+
+	if len(req.SkillParams) > 0 {
+		if pp.Spec.SkillParams == nil {
+			pp.Spec.SkillParams = make(map[string]map[string]string)
+		}
+		for skill, params := range req.SkillParams {
+			pp.Spec.SkillParams[skill] = params
+		}
+	}
+
+	// Store GitHub token as a cluster secret when provided inline.
+	if req.GithubToken != "" {
+		if err := s.writeGithubTokenSecret(req.GithubToken); err != nil {
+			http.Error(w, "failed to store GitHub token: "+err.Error(), http.StatusInternalServerError)
+			return
 		}
 	}
 
@@ -1472,6 +1651,347 @@ func (s *Server) installDefaultPersonaPacks(w http.ResponseWriter, r *http.Reque
 			return
 		}
 		resp.Copied = append(resp.Copied, src.Name)
+	}
+
+	writeJSON(w, resp)
+}
+
+// GatewayConfigResponse is the response for gateway config endpoints.
+type GatewayConfigResponse struct {
+	Enabled                  bool   `json:"enabled"`
+	GatewayClassName         string `json:"gatewayClassName,omitempty"`
+	Name                     string `json:"name,omitempty"`
+	BaseDomain               string `json:"baseDomain,omitempty"`
+	TLSEnabled               bool   `json:"tlsEnabled"`
+	CertManagerClusterIssuer string `json:"certManagerClusterIssuer,omitempty"`
+	TLSSecretName            string `json:"tlsSecretName,omitempty"`
+	// Status fields
+	Phase         string `json:"phase,omitempty"`
+	Ready         bool   `json:"ready"`
+	Address       string `json:"address,omitempty"`
+	ListenerCount int    `json:"listenerCount,omitempty"`
+	Message       string `json:"message,omitempty"`
+}
+
+// PatchGatewayConfigRequest is the request body for patching gateway config.
+type PatchGatewayConfigRequest struct {
+	Enabled                  *bool   `json:"enabled,omitempty"`
+	GatewayClassName         *string `json:"gatewayClassName,omitempty"`
+	Name                     *string `json:"name,omitempty"`
+	BaseDomain               *string `json:"baseDomain,omitempty"`
+	TLSEnabled               *bool   `json:"tlsEnabled,omitempty"`
+	CertManagerClusterIssuer *string `json:"certManagerClusterIssuer,omitempty"`
+	TLSSecretName            *string `json:"tlsSecretName,omitempty"`
+}
+
+func gatewayConfigResponseFromCR(config *sympoziumv1alpha1.SympoziumConfig) GatewayConfigResponse {
+	resp := GatewayConfigResponse{
+		Phase: config.Status.Phase,
+	}
+	if config.Status.Gateway != nil {
+		resp.Ready = config.Status.Gateway.Ready
+		resp.Address = config.Status.Gateway.Address
+		resp.ListenerCount = config.Status.Gateway.ListenerCount
+	}
+	for _, c := range config.Status.Conditions {
+		if c.Type == "Ready" && c.Message != "" {
+			resp.Message = c.Message
+			break
+		}
+	}
+	if gw := config.Spec.Gateway; gw != nil {
+		resp.Enabled = gw.Enabled
+		resp.GatewayClassName = gw.GatewayClassName
+		resp.Name = gw.Name
+		resp.BaseDomain = gw.BaseDomain
+		if gw.TLS != nil {
+			resp.TLSEnabled = gw.TLS.Enabled
+			resp.CertManagerClusterIssuer = gw.TLS.CertManagerClusterIssuer
+			resp.TLSSecretName = gw.TLS.SecretName
+		}
+	}
+	return resp
+}
+
+func (s *Server) getGatewayConfig(w http.ResponseWriter, r *http.Request) {
+	ns := r.URL.Query().Get("namespace")
+	if ns == "" {
+		ns = "default"
+	}
+
+	var config sympoziumv1alpha1.SympoziumConfig
+	if err := s.client.Get(r.Context(), types.NamespacedName{Name: "default", Namespace: ns}, &config); err != nil {
+		if k8serrors.IsNotFound(err) || meta.IsNoMatchError(err) {
+			// Return empty/disabled state (handles both missing CR and missing CRD)
+			writeJSON(w, GatewayConfigResponse{})
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, gatewayConfigResponseFromCR(&config))
+}
+
+func (s *Server) createGatewayConfig(w http.ResponseWriter, r *http.Request) {
+	ns := r.URL.Query().Get("namespace")
+	if ns == "" {
+		ns = "default"
+	}
+
+	var req PatchGatewayConfigRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	config := sympoziumv1alpha1.SympoziumConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "default",
+			Namespace: ns,
+		},
+		Spec: sympoziumv1alpha1.SympoziumConfigSpec{
+			Gateway: &sympoziumv1alpha1.GatewaySpec{},
+		},
+	}
+	applyGatewayPatch(config.Spec.Gateway, &req)
+
+	if err := s.client.Create(r.Context(), &config); err != nil {
+		if k8serrors.IsAlreadyExists(err) {
+			http.Error(w, "gateway config already exists, use PATCH to update", http.StatusConflict)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusCreated)
+	writeJSON(w, gatewayConfigResponseFromCR(&config))
+}
+
+func (s *Server) patchGatewayConfig(w http.ResponseWriter, r *http.Request) {
+	ns := r.URL.Query().Get("namespace")
+	if ns == "" {
+		ns = "default"
+	}
+
+	var req PatchGatewayConfigRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	var config sympoziumv1alpha1.SympoziumConfig
+	if err := s.client.Get(r.Context(), types.NamespacedName{Name: "default", Namespace: ns}, &config); err != nil {
+		if k8serrors.IsNotFound(err) || meta.IsNoMatchError(err) {
+			http.Error(w, "gateway config not found, use POST to create", http.StatusNotFound)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if config.Spec.Gateway == nil {
+		config.Spec.Gateway = &sympoziumv1alpha1.GatewaySpec{}
+	}
+	applyGatewayPatch(config.Spec.Gateway, &req)
+
+	if err := s.client.Update(r.Context(), &config); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, gatewayConfigResponseFromCR(&config))
+}
+
+func (s *Server) deleteGatewayConfig(w http.ResponseWriter, r *http.Request) {
+	ns := r.URL.Query().Get("namespace")
+	if ns == "" {
+		ns = "default"
+	}
+
+	var config sympoziumv1alpha1.SympoziumConfig
+	if err := s.client.Get(r.Context(), types.NamespacedName{Name: "default", Namespace: ns}, &config); err != nil {
+		if k8serrors.IsNotFound(err) || meta.IsNoMatchError(err) {
+			http.Error(w, "gateway config not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if err := s.client.Delete(r.Context(), &config); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func applyGatewayPatch(gw *sympoziumv1alpha1.GatewaySpec, req *PatchGatewayConfigRequest) {
+	if req.Enabled != nil {
+		gw.Enabled = *req.Enabled
+	}
+	if req.GatewayClassName != nil {
+		gw.GatewayClassName = *req.GatewayClassName
+	}
+	if req.Name != nil {
+		gw.Name = *req.Name
+	}
+	if req.BaseDomain != nil {
+		gw.BaseDomain = *req.BaseDomain
+	}
+	if req.TLSEnabled != nil || req.CertManagerClusterIssuer != nil || req.TLSSecretName != nil {
+		if gw.TLS == nil {
+			gw.TLS = &sympoziumv1alpha1.GatewayTLSSpec{}
+		}
+		if req.TLSEnabled != nil {
+			gw.TLS.Enabled = *req.TLSEnabled
+		}
+		if req.CertManagerClusterIssuer != nil {
+			gw.TLS.CertManagerClusterIssuer = *req.CertManagerClusterIssuer
+		}
+		if req.TLSSecretName != nil {
+			gw.TLS.SecretName = *req.TLSSecretName
+		}
+	}
+}
+
+// GatewayMetricsResponse is the response for the gateway metrics endpoint.
+type GatewayMetricsResponse struct {
+	TotalRequests    int             `json:"totalRequests"`
+	SuccessCount     int             `json:"successCount"`
+	ErrorCount       int             `json:"errorCount"`
+	AvgDurationSec   float64         `json:"avgDurationSec"`
+	UptimeSec        int64           `json:"uptimeSec"`
+	ServingInstances int             `json:"servingInstances"`
+	Buckets          []GatewayBucket `json:"buckets"`
+}
+
+// GatewayBucket is a single time bucket in the gateway metrics timeseries.
+type GatewayBucket struct {
+	Timestamp   int64   `json:"ts"`
+	Requests    int     `json:"requests"`
+	Errors      int     `json:"errors"`
+	AvgDuration float64 `json:"avgDurationSec"`
+}
+
+func (s *Server) getGatewayMetrics(w http.ResponseWriter, r *http.Request) {
+	ns := r.URL.Query().Get("namespace")
+	if ns == "" {
+		ns = "default"
+	}
+	rangeParam := r.URL.Query().Get("range")
+	if rangeParam == "" {
+		rangeParam = "24h"
+	}
+
+	var window time.Duration
+	var bucketSize time.Duration
+	switch rangeParam {
+	case "1h":
+		window = 1 * time.Hour
+		bucketSize = 5 * time.Minute
+	case "7d":
+		window = 7 * 24 * time.Hour
+		bucketSize = 24 * time.Hour
+	default: // "24h"
+		window = 24 * time.Hour
+		bucketSize = 1 * time.Hour
+	}
+
+	now := time.Now().UTC()
+	cutoff := now.Add(-window)
+
+	// List web-proxy AgentRuns.
+	var runs sympoziumv1alpha1.AgentRunList
+	if err := s.client.List(r.Context(), &runs,
+		client.InNamespace(ns),
+		client.MatchingLabels{"sympozium.ai/source": "web-proxy"},
+	); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Initialize buckets.
+	numBuckets := int(window / bucketSize)
+	buckets := make([]GatewayBucket, numBuckets)
+	bucketDurTotal := make([]float64, numBuckets)
+	bucketDurCount := make([]int, numBuckets)
+	for i := range buckets {
+		buckets[i].Timestamp = cutoff.Add(time.Duration(i) * bucketSize).UnixMilli()
+	}
+
+	resp := GatewayMetricsResponse{Buckets: buckets}
+	var durTotal float64
+	var durCount int
+
+	for i := range runs.Items {
+		run := &runs.Items[i]
+		created := run.CreationTimestamp.Time
+		if created.Before(cutoff) {
+			continue
+		}
+
+		resp.TotalRequests++
+		isFailed := run.Status.Phase == sympoziumv1alpha1.AgentRunPhaseFailed
+		if isFailed {
+			resp.ErrorCount++
+		} else {
+			resp.SuccessCount++
+		}
+
+		var durSec float64
+		if run.Status.TokenUsage != nil && run.Status.TokenUsage.DurationMs > 0 {
+			durSec = float64(run.Status.TokenUsage.DurationMs) / 1000.0
+			durTotal += durSec
+			durCount++
+		}
+
+		// Place into bucket.
+		idx := int(created.Sub(cutoff) / bucketSize)
+		if idx >= numBuckets {
+			idx = numBuckets - 1
+		}
+		if idx >= 0 {
+			buckets[idx].Requests++
+			if isFailed {
+				buckets[idx].Errors++
+			}
+			if durSec > 0 {
+				bucketDurTotal[idx] += durSec
+				bucketDurCount[idx]++
+			}
+		}
+	}
+
+	// Compute bucket averages.
+	for i := range buckets {
+		if bucketDurCount[i] > 0 {
+			buckets[i].AvgDuration = bucketDurTotal[i] / float64(bucketDurCount[i])
+		}
+	}
+
+	if durCount > 0 {
+		resp.AvgDurationSec = durTotal / float64(durCount)
+	}
+
+	// Count serving instances and compute uptime.
+	var allRuns sympoziumv1alpha1.AgentRunList
+	if err := s.client.List(r.Context(), &allRuns,
+		client.InNamespace(ns),
+		client.MatchingLabels{"sympozium.ai/source": "web-proxy"},
+	); err == nil {
+		for i := range allRuns.Items {
+			run := &allRuns.Items[i]
+			if run.Status.Phase == sympoziumv1alpha1.AgentRunPhaseServing {
+				resp.ServingInstances++
+				uptime := int64(now.Sub(run.CreationTimestamp.Time).Seconds())
+				if uptime > resp.UptimeSec {
+					resp.UptimeSec = uptime
+				}
+			}
+		}
 	}
 
 	writeJSON(w, resp)

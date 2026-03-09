@@ -43,6 +43,9 @@ web/dist/*
 !web/dist/index.html
 web/node_modules/
 
+# MkDocs build output
+site/
+
 output.cast
 tmp.gif
 whatsapp

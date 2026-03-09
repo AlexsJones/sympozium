@@ -41,6 +41,7 @@ type ActivityBucket = {
   avgDurationSec: number;
   p95DurationSec: number;
   agentsInstalled: number;
+  serving: number;
 };
 
 type DurationMode = "avg" | "p95";
@@ -78,6 +79,7 @@ function buildActivityBuckets(
         avgDurationSec: 0,
         p95DurationSec: 0,
         agentsInstalled: 0,
+        serving: 0,
       });
     }
     for (const run of runs || []) {
@@ -109,6 +111,7 @@ function buildActivityBuckets(
       while (ptr < createdAt.length && createdAt[ptr] <= bucketEnd) ptr++;
       buckets[i].agentsInstalled = ptr;
     }
+    countServingPerBucket(runs, buckets, 60 * 1000);
     return buckets;
   }
 
@@ -128,6 +131,7 @@ function buildActivityBuckets(
         avgDurationSec: 0,
         p95DurationSec: 0,
         agentsInstalled: 0,
+        serving: 0,
       });
     }
     for (const run of runs || []) {
@@ -159,6 +163,7 @@ function buildActivityBuckets(
       while (ptr < createdAt.length && createdAt[ptr] <= bucketEnd) ptr++;
       buckets[i].agentsInstalled = ptr;
     }
+    countServingPerBucket(runs, buckets, 60 * 60 * 1000);
     return buckets;
   }
 
@@ -180,6 +185,7 @@ function buildActivityBuckets(
       avgDurationSec: 0,
       p95DurationSec: 0,
       agentsInstalled: 0,
+      serving: 0,
     });
   }
   for (const run of runs || []) {
@@ -211,7 +217,31 @@ function buildActivityBuckets(
     while (ptr < createdAt.length && createdAt[ptr] <= bucketEnd) ptr++;
     buckets[i].agentsInstalled = ptr;
   }
+  countServingPerBucket(runs, buckets, 24 * 60 * 60 * 1000);
   return buckets;
+}
+
+/** Count serving-phase runs active during each bucket. A serving run is active
+ *  from its creation time onward (it's long-lived), so it counts in every
+ *  bucket whose end is >= its creation timestamp. */
+function countServingPerBucket(
+  runs: NonNullable<ReturnType<typeof useRuns>["data"]>,
+  buckets: ActivityBucket[],
+  bucketMs: number,
+) {
+  const servingRuns = (runs || []).filter(
+    (r) => (r.status?.phase || "").toLowerCase() === "serving",
+  );
+  for (const run of servingRuns) {
+    const created = new Date(run.metadata.creationTimestamp || "").getTime();
+    if (!Number.isFinite(created)) continue;
+    for (let i = 0; i < buckets.length; i++) {
+      const bucketEnd = buckets[i].ts + bucketMs - 1;
+      if (created <= bucketEnd) {
+        buckets[i].serving++;
+      }
+    }
+  }
 }
 
 function linePath(points: Array<{ x: number; y: number }>) {
@@ -325,18 +355,61 @@ export function DashboardPage() {
     padX + (activity.length <= 1 ? innerW / 2 : (idx / (activity.length - 1)) * innerW);
   const yForDuration = (value: number) => padY + innerH - (value / maxDurationY) * innerH;
   const yForAgents = (value: number) => padY + innerH - (value / maxAgentsY) * innerH;
+  const maxServingY = Math.max(1, ...activity.map((b) => b.serving));
+  const yForServing = (value: number) => padY + innerH - (value / maxServingY) * innerH;
   const durationPoints = activity.map((b, i) => ({ x: xFor(i), y: yForDuration(durationFor(b)) }));
+  const servingPoints = activity.map((b, i) => ({ x: xFor(i), y: yForServing(b.serving) }));
+  const totalServing = activity.length > 0 ? activity[activity.length - 1].serving : 0;
   const activePoint = hoverIdx !== null ? activity[hoverIdx] : null;
   const activeX = hoverIdx !== null ? xFor(hoverIdx) : null;
   const activeYDuration = hoverIdx !== null ? yForDuration(durationFor(activity[hoverIdx])) : null;
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-white">Dashboard</h1>
-        <p className="text-sm text-muted-foreground">
-          Overview of your Sympozium cluster
-        </p>
+      <div className="flex items-center justify-between gap-6">
+        <div className="shrink-0">
+          <h1 className="text-2xl font-bold text-white">Dashboard</h1>
+          <p className="text-sm text-muted-foreground">
+            Overview of your Sympozium cluster
+          </p>
+        </div>
+        <div className="flex flex-1 items-center gap-6 rounded-lg border border-border/40 bg-card/50 px-5 py-3 text-sm text-muted-foreground">
+          <div className="flex items-center gap-2 font-medium text-white shrink-0">
+            <Activity className="h-4 w-4 text-emerald-400" />
+            Cluster Status
+          </div>
+          <div className="h-8 w-px bg-border/60 shrink-0" />
+          <div className="flex flex-1 items-center justify-around gap-4">
+            <div className="text-center">
+              <div className="text-xs text-muted-foreground">Instances</div>
+              <div className="text-lg font-semibold text-foreground">{instances.data?.length ?? "—"}</div>
+            </div>
+            <div className="text-center">
+              <div className="text-xs text-muted-foreground">Active Runs</div>
+              <div className="text-lg font-semibold text-foreground">{activeRuns.length}</div>
+            </div>
+            <div className="text-center">
+              <div className="text-xs text-muted-foreground">Skills</div>
+              <div className="text-lg font-semibold text-foreground">{skills.data?.length ?? "—"}</div>
+            </div>
+            <div className="text-center">
+              <div className="text-xs text-muted-foreground">Policies</div>
+              <div className="text-lg font-semibold text-foreground">{policies.data?.length ?? "—"}</div>
+            </div>
+            <div className="text-center">
+              <div className="text-xs text-muted-foreground">Failure Rate</div>
+              <div className={`text-lg font-semibold ${failureRate > 10 ? "text-red-400" : "text-foreground"}`}>
+                {totalInRange > 0 ? `${failureRate.toFixed(1)}%` : "—"}
+              </div>
+            </div>
+            <div className="text-center">
+              <div className="text-xs text-muted-foreground">Avg Duration</div>
+              <div className="text-lg font-semibold text-foreground">
+                {avgDurationSecInRange > 0 ? `${avgDurationSecInRange.toFixed(1)}s` : "—"}
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
 
       <Card className="overflow-hidden">
@@ -435,6 +508,11 @@ export function DashboardPage() {
             <span className="text-muted-foreground">
               Failure rate: <span className="text-foreground font-semibold">{failureRate.toFixed(1)}%</span>
             </span>
+            {totalServing > 0 && (
+              <span className="text-yellow-400">
+                Serving: <span className="font-semibold">{totalServing}</span>
+              </span>
+            )}
           </div>
           {runs.isLoading ? (
             <Skeleton className="h-[250px] w-full" />
@@ -490,6 +568,27 @@ export function DashboardPage() {
                   strokeWidth={2.5}
                 />
 
+                {/* Serving agents line */}
+                {totalServing > 0 && (
+                  <path
+                    d={linePath(servingPoints)}
+                    fill="none"
+                    stroke="currentColor"
+                    className="text-yellow-400"
+                    strokeWidth={2}
+                    strokeDasharray="6 3"
+                  />
+                )}
+                {totalServing > 0 && activity.map((b, i) => (
+                  <circle
+                    key={`srv-${b.ts}`}
+                    cx={xFor(i)}
+                    cy={yForServing(b.serving)}
+                    r={hoverIdx === i ? 4 : 2.5}
+                    className="fill-yellow-400"
+                  />
+                ))}
+
                 {activity.map((b, i) => (
                   <g key={`pt-${b.ts}`}>
                     <circle
@@ -543,6 +642,9 @@ export function DashboardPage() {
                   <div className="text-muted-foreground">Runs: {activePoint.runs}</div>
                   <div className="text-red-300">Failed: {activePoint.failed}</div>
                   <div className="text-cyan-300">Agents installed: {activePoint.agentsInstalled}</div>
+                  {activePoint.serving > 0 && (
+                    <div className="text-yellow-300">Serving: {activePoint.serving}</div>
+                  )}
                 </div>
               )}
               <div className="mt-1 flex items-center gap-4 px-2 text-xs">
@@ -553,6 +655,10 @@ export function DashboardPage() {
                 <span className="inline-flex items-center gap-2 text-muted-foreground">
                   <span className="h-2 w-2 rounded-sm bg-cyan-400/40" />
                   Agents installed (bars)
+                </span>
+                <span className="inline-flex items-center gap-2 text-muted-foreground">
+                  <span className="h-2 w-2 rounded-full bg-yellow-400" />
+                  Serving agents
                 </span>
                 <span className="inline-flex items-center gap-2 text-muted-foreground">
                   <span className="h-2 w-2 rounded-full bg-red-400" />

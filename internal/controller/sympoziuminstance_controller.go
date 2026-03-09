@@ -38,6 +38,7 @@ type SympoziumInstanceReconciler struct {
 // +kubebuilder:rbac:groups=sympozium.ai,resources=sympoziuminstances/finalizers,verbs=update
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=secrets;configmaps;services,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=httproutes,verbs=get;list;watch;create;update;patch;delete
 
 // Reconcile handles SympoziumInstance reconciliation.
 func (r *SympoziumInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -95,6 +96,11 @@ func (r *SympoziumInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	// Reconcile memory ConfigMap
 	if err := r.reconcileMemoryConfigMap(ctx, log, &instance); err != nil {
 		log.Error(err, "failed to reconcile memory ConfigMap")
+	}
+
+	// Reconcile web endpoint
+	if err := r.reconcileWebEndpoint(ctx, &instance); err != nil {
+		log.Error(err, "failed to reconcile web endpoint")
 	}
 
 	// Count active agent pods
@@ -404,10 +410,91 @@ func (r *SympoziumInstanceReconciler) cleanupMemoryConfigMap(ctx context.Context
 	return nil
 }
 
+// reconcileWebEndpoint ensures a server-mode AgentRun exists when the
+// "web-endpoint" skill is present. The AgentRun controller handles creating
+// the actual Deployment + Service.
+func (r *SympoziumInstanceReconciler) reconcileWebEndpoint(ctx context.Context, instance *sympoziumv1alpha1.SympoziumInstance) error {
+	for _, skill := range instance.Spec.Skills {
+		if skill.SkillPackRef == "web-endpoint" || skill.SkillPackRef == "skillpack-web-endpoint" {
+			return r.ensureWebEndpointAgentRun(ctx, instance, skill)
+		}
+	}
+	return nil
+}
+
+// ensureWebEndpointAgentRun checks for an existing server-mode AgentRun for
+// this instance and creates one if none exists. The AgentRun controller will
+// detect the RequiresServer sidecar and create a Deployment + Service.
+func (r *SympoziumInstanceReconciler) ensureWebEndpointAgentRun(ctx context.Context, instance *sympoziumv1alpha1.SympoziumInstance, webSkill sympoziumv1alpha1.SkillRef) error {
+	// Check if a serving AgentRun already exists for this instance.
+	var runs sympoziumv1alpha1.AgentRunList
+	if err := r.List(ctx, &runs,
+		client.InNamespace(instance.Namespace),
+		client.MatchingLabels{
+			"sympozium.ai/instance":  instance.Name,
+			"sympozium.ai/component": "web-endpoint",
+		},
+	); err != nil {
+		return fmt.Errorf("list web-endpoint agent runs: %w", err)
+	}
+
+	for _, run := range runs.Items {
+		if run.DeletionTimestamp.IsZero() {
+			return nil
+		}
+	}
+
+	// No existing run — create one.
+	runName := fmt.Sprintf("%s-web-endpoint", instance.Name)
+
+	agentRun := &sympoziumv1alpha1.AgentRun{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      runName,
+			Namespace: instance.Namespace,
+			Labels: map[string]string{
+				"sympozium.ai/instance":  instance.Name,
+				"sympozium.ai/component": "web-endpoint",
+			},
+		},
+		Spec: sympoziumv1alpha1.AgentRunSpec{
+			InstanceRef: instance.Name,
+			AgentID:     "web-endpoint",
+			SessionKey:  "web-endpoint",
+			Task:        "Serve HTTP requests for this instance",
+			Mode:        "server",
+			Model: sympoziumv1alpha1.ModelSpec{
+				Provider:      resolveProvider(instance),
+				Model:         instance.Spec.Agents.Default.Model,
+				AuthSecretRef: resolveAuthSecret(instance),
+			},
+			Skills: []sympoziumv1alpha1.SkillRef{webSkill},
+		},
+	}
+
+	if instance.Spec.Agents.Default.BaseURL != "" {
+		agentRun.Spec.Model.BaseURL = instance.Spec.Agents.Default.BaseURL
+	}
+
+	if err := controllerutil.SetControllerReference(instance, agentRun, r.Scheme); err != nil {
+		return fmt.Errorf("set owner reference: %w", err)
+	}
+
+	if err := r.Create(ctx, agentRun); err != nil {
+		if errors.IsAlreadyExists(err) {
+			return nil
+		}
+		return fmt.Errorf("create web-endpoint AgentRun: %w", err)
+	}
+
+	r.Log.Info("created web-endpoint AgentRun", "instance", instance.Name, "run", runName)
+	return nil
+}
+
 // SetupWithManager sets up the controller with the Manager.
 func (r *SympoziumInstanceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&sympoziumv1alpha1.SympoziumInstance{}).
 		Owns(&appsv1.Deployment{}).
+		Owns(&corev1.Service{}).
 		Complete(r)
 }

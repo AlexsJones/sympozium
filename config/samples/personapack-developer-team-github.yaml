@@ -1,0 +1,104 @@
+---
+# Example: Developer Team PersonaPack pointed at a GitHub repository.
+#
+# This activates the built-in developer-team pack with:
+#   - A target GitHub repo for all agents to collaborate on
+#   - A team-level objective that overrides each persona's default task
+#   - OpenAI provider with a pre-created secret
+#
+# Prerequisites:
+#   1. Install Sympozium:  sympozium install
+#   2. Create the API key secret:
+#      kubectl create secret generic dev-team-openai-key \
+#        --from-literal=OPENAI_API_KEY=sk-...
+#   3. Create the GitHub token secret:
+#      kubectl create secret generic github-gitops-token \
+#        --from-literal=github-token=ghp_... \
+#        -n sympozium-system
+#   4. Apply this file:  kubectl apply -f personapack-developer-team-github.yaml
+#
+apiVersion: sympozium.ai/v1alpha1
+kind: PersonaPack
+metadata:
+  name: developer-team
+  namespace: default
+spec:
+  enabled: true
+  description: "A 2-pizza software development team collaborating on a single GitHub repository."
+  category: development
+  version: "1.0.0"
+
+  # AI provider credentials
+  authRefs:
+    - provider: openai
+      secret: dev-team-openai-key
+
+  # Target GitHub repository — all personas with the github-gitops skill
+  # will receive this as SKILL_REPO in their sidecar container.
+  skillParams:
+    github-gitops:
+      repo: "myorg/myapp"
+
+  # Team-level objective — prepended to every persona's scheduled task.
+  # Each persona still executes their role-specific task, but with this
+  # overarching goal guiding their work.
+  taskOverride: "We are building a REST API for user management. Focus on the /api/v1/users endpoints. Follow the existing Go project conventions."
+
+  personas:
+    - name: tech-lead
+      displayName: "Tech Lead"
+      model: gpt-4o
+      systemPrompt: |
+        You are the tech lead of a software development team.
+        You coordinate work by triaging issues, reviewing architecture,
+        and ensuring PRs meet quality standards before merge.
+      skills:
+        - github-gitops
+        - code-review
+        - software-dev
+      schedule:
+        type: scheduled
+        interval: "2h"
+        task: "Review open PRs, triage new issues, and merge approved PRs that pass CI."
+      memory:
+        enabled: true
+        seeds:
+          - "Track team velocity and open PR count across runs"
+
+    - name: backend-dev
+      displayName: "Backend Developer"
+      model: gpt-4o
+      systemPrompt: |
+        You are a backend software developer. You implement server-side
+        features, APIs, data models, and business logic.
+      skills:
+        - github-gitops
+        - code-review
+        - software-dev
+      schedule:
+        type: sweep
+        interval: "1h"
+        task: "Pick up the highest priority backend issue, implement the fix, write tests, and open a PR."
+      memory:
+        enabled: true
+        seeds:
+          - "Note the project's tech stack and code conventions"
+
+    - name: qa-engineer
+      displayName: "QA Engineer"
+      model: gpt-4o
+      systemPrompt: |
+        You are a QA engineer. You ensure software quality through
+        testing, bug discovery, and coverage analysis.
+      skills:
+        - github-gitops
+        - code-review
+        - software-dev
+      schedule:
+        type: sweep
+        interval: "45m"
+        task: "Review recent PRs for test coverage gaps and open follow-up PRs adding tests."
+      memory:
+        enabled: true
+        seeds:
+          - "Track test coverage trends and areas with low coverage"

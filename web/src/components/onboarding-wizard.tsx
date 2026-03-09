@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useModelList } from "@/hooks/use-model-list";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -79,6 +80,16 @@ export interface WizardResult {
   channels: string[];
   channelConfigs: Record<string, string>;
   heartbeatInterval: string;
+  /** Web endpoint rate limit (requests per minute) when web-endpoint skill is selected */
+  webEndpointRPM?: string;
+  /** Custom hostname for web endpoint HTTPRoute */
+  webEndpointHostname?: string;
+  /** GitHub repository (owner/repo) when github-gitops skill is selected */
+  githubRepo?: string;
+  /** GitHub personal access token for the github-gitops skill */
+  githubToken?: string;
+  /** Team instructions propagated into each instance's memory */
+  githubTeamInstructions?: string;
 }
 
 interface OnboardingWizardProps {
@@ -280,6 +291,11 @@ export function OnboardingWizard({
     channels: defaults?.channels || Object.keys(defaults?.channelConfigs || {}),
     channelConfigs: defaults?.channelConfigs || {},
     heartbeatInterval: defaults?.heartbeatInterval || "",
+    webEndpointRPM: defaults?.webEndpointRPM || "60",
+    webEndpointHostname: defaults?.webEndpointHostname || "",
+    githubRepo: defaults?.githubRepo || "",
+    githubToken: defaults?.githubToken || "",
+    githubTeamInstructions: defaults?.githubTeamInstructions || "",
   });
   const [channelActionIdx, setChannelActionIdx] = useState(0);
 
@@ -354,6 +370,11 @@ export function OnboardingWizard({
       channels: d.channels || Object.keys(d.channelConfigs || {}),
       channelConfigs: d.channelConfigs || {},
       heartbeatInterval: d.heartbeatInterval || "",
+      webEndpointRPM: d.webEndpointRPM || "60",
+      webEndpointHostname: d.webEndpointHostname || "",
+      githubRepo: d.githubRepo || "",
+      githubToken: d.githubToken || "",
+      githubTeamInstructions: d.githubTeamInstructions || "",
     });
     setStep(steps[0]);
     setChannelActionIdx(0);
@@ -529,6 +550,7 @@ export function OnboardingWizard({
 
         {/* ── Skills step ───────────────────────────────────────────── */}
         {step === "skills" && (
+          <ScrollArea className="max-h-[60vh]">
           <div className="space-y-3">
             <p className="text-sm text-muted-foreground">
               Select SkillPacks to attach.
@@ -540,7 +562,7 @@ export function OnboardingWizard({
             ) : (
               <ScrollArea className="h-52 rounded-md border border-border/50">
                 <div className="p-1 space-y-1">
-                  {availableSkills.map((skill) => {
+                  {[...availableSkills].sort((a, b) => a.localeCompare(b)).map((skill) => {
                     const selected = form.skills.includes(skill);
                     return (
                       <button
@@ -572,7 +594,79 @@ export function OnboardingWizard({
                 ? `${form.skills.length} skill${form.skills.length === 1 ? "" : "s"} selected`
                 : "No skills selected"}
             </p>
+
+            {/* Web endpoint inline config */}
+            {form.skills.includes("web-endpoint") && (
+              <div className="rounded-md border border-indigo-500/20 bg-indigo-500/5 p-3 space-y-2">
+                <p className="text-xs font-medium text-indigo-400">Web Endpoint Config</p>
+                <div className="space-y-1">
+                  <Label className="text-xs">Rate Limit (req/min)</Label>
+                  <Input
+                    type="number"
+                    value={form.webEndpointRPM || "60"}
+                    onChange={(e) => setForm({ ...form, webEndpointRPM: e.target.value })}
+                    className="h-7 text-xs"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Custom Hostname <span className="text-muted-foreground">(optional)</span></Label>
+                  <Input
+                    value={form.webEndpointHostname || ""}
+                    onChange={(e) => setForm({ ...form, webEndpointHostname: e.target.value })}
+                    placeholder="auto from gateway"
+                    className="h-7 text-xs"
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* GitHub GitOps inline config */}
+            {form.skills.includes("github-gitops") && (
+              <div className="rounded-md border border-indigo-500/20 bg-indigo-500/5 p-3 space-y-2">
+                <p className="text-xs font-medium text-indigo-400">GitHub GitOps Config</p>
+                <div className="space-y-1">
+                  <Label className="text-xs">Repository</Label>
+                  <Input
+                    value={form.githubRepo || ""}
+                    onChange={(e) => setForm({ ...form, githubRepo: e.target.value })}
+                    placeholder="owner/repo"
+                    className="h-7 text-xs font-mono"
+                  />
+                  <p className="text-[10px] text-muted-foreground">
+                    The GitHub repository this team will target for issues and PRs.
+                  </p>
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Personal Access Token</Label>
+                  <Input
+                    type="password"
+                    value={form.githubToken || ""}
+                    onChange={(e) => setForm({ ...form, githubToken: e.target.value })}
+                    placeholder="github_pat_..."
+                    autoComplete="off"
+                    className="h-7 text-xs font-mono"
+                  />
+                  <p className="text-[10px] text-muted-foreground">
+                    A token with repo access. Stored as a cluster secret.
+                  </p>
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Team Instructions <span className="text-muted-foreground">(optional)</span></Label>
+                  <Textarea
+                    value={form.githubTeamInstructions || ""}
+                    onChange={(e) => setForm({ ...form, githubTeamInstructions: e.target.value })}
+                    placeholder="Describe the project goals, coding standards, architecture decisions, or any context each instance should know…"
+                    rows={4}
+                    className="text-xs resize-y"
+                  />
+                  <p className="text-[10px] text-muted-foreground">
+                    Shared instructions propagated into every instance's memory. Each instance will use these alongside its role.
+                  </p>
+                </div>
+              </div>
+            )}
           </div>
+          </ScrollArea>
         )}
 
         {/* ── Heartbeat step ──────────────────────────────────────── */}
@@ -702,6 +796,33 @@ export function OnboardingWizard({
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Channels</span>
                   <span>{form.channels.join(", ")}</span>
+                </div>
+              )}
+              {form.skills.includes("web-endpoint") && (
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Web Endpoint</span>
+                  <span className="text-xs">
+                    {form.webEndpointRPM || "60"} rpm
+                    {form.webEndpointHostname ? `, ${form.webEndpointHostname}` : ""}
+                  </span>
+                </div>
+              )}
+              {form.skills.includes("github-gitops") && form.githubRepo && (
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">GitHub Repo</span>
+                  <span className="font-mono text-xs">{form.githubRepo}</span>
+                </div>
+              )}
+              {form.skills.includes("github-gitops") && form.githubToken && (
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">GitHub Token</span>
+                  <span className="text-xs text-emerald-400">provided</span>
+                </div>
+              )}
+              {form.skills.includes("github-gitops") && form.githubTeamInstructions && (
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Team Instructions</span>
+                  <span className="text-xs text-emerald-400">provided</span>
                 </div>
               )}
             </div>

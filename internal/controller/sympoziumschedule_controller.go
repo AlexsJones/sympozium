@@ -79,12 +79,16 @@ func (r *SympoziumScheduleReconciler) Reconcile(ctx context.Context, req ctrl.Re
 
 	now := time.Now()
 
-	// Compute next run time from last run or creation time.
+	// Compute next run time from last run.  When a schedule has never fired
+	// (LastRunTime is nil) we use a time far enough in the past that
+	// sched.Next() returns a time before now, causing an immediate trigger.
 	var lastRun time.Time
 	if schedule.Status.LastRunTime != nil {
 		lastRun = schedule.Status.LastRunTime.Time
 	} else {
-		lastRun = schedule.CreationTimestamp.Time
+		// First run — trigger immediately by pretending the last run was
+		// long ago so the next computed cron tick is already in the past.
+		lastRun = schedule.CreationTimestamp.Time.Add(-24 * time.Hour)
 	}
 	nextRun := sched.Next(lastRun)
 
@@ -112,10 +116,29 @@ func (r *SympoziumScheduleReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		}, lastAgentRun); err == nil {
 			if lastAgentRun.Status.Phase == sympoziumv1alpha1.AgentRunPhaseRunning ||
 				lastAgentRun.Status.Phase == sympoziumv1alpha1.AgentRunPhasePending ||
+				lastAgentRun.Status.Phase == sympoziumv1alpha1.AgentRunPhaseServing ||
 				lastAgentRun.Status.Phase == "" {
 				log.Info("Skipping trigger — previous run still active (Forbid policy)")
 				_ = r.Status().Update(ctx, schedule)
 				return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+			}
+		}
+	}
+
+	// Skip if there's already a serving AgentRun for this instance.
+	// A serving run means a web-proxy Deployment is active — no need to
+	// spawn additional heartbeat runs.
+	var allRuns sympoziumv1alpha1.AgentRunList
+	if err := r.List(ctx, &allRuns,
+		client.InNamespace(schedule.Namespace),
+		client.MatchingLabels{"sympozium.ai/instance": schedule.Spec.InstanceRef},
+	); err == nil {
+		for _, run := range allRuns.Items {
+			if run.Status.Phase == sympoziumv1alpha1.AgentRunPhaseServing {
+				log.Info("Skipping trigger — instance has a serving AgentRun",
+					"servingRun", run.Name)
+				_ = r.Status().Update(ctx, schedule)
+				return ctrl.Result{RequeueAfter: 60 * time.Second}, nil
 			}
 		}
 	}
@@ -175,8 +198,14 @@ func (r *SympoziumScheduleReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	// Resolve auth secret from the instance.
 	agentRun.Spec.Model.AuthSecretRef = resolveAuthSecret(instance)
 
-	// Copy skill refs.
-	agentRun.Spec.Skills = instance.Spec.Skills
+	// Copy skill refs, excluding server-mode skills (e.g. web-endpoint) that
+	// should not be spawned as ephemeral schedule runs.
+	for _, skill := range instance.Spec.Skills {
+		if skill.SkillPackRef == "web-endpoint" || skill.SkillPackRef == "skillpack-web-endpoint" {
+			continue
+		}
+		agentRun.Spec.Skills = append(agentRun.Spec.Skills, skill)
+	}
 
 	if err := r.Create(ctx, agentRun); err != nil {
 		if !errors.IsAlreadyExists(err) {

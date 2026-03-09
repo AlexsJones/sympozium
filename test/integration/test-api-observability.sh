@@ -174,9 +174,16 @@ main() {
     fail "observability namespace mismatch: got '${api_ns}', expected '${NAMESPACE}'"
     exit 1
   fi
-  if [[ "$raw_metric_count" -lt 3 ]]; then
+  # When the collector is reachable but no agent runs have emitted OTLP
+  # telemetry yet, rawMetricNames will be empty (cold start). This is
+  # expected.  Only assert >= 3 when the collector is unreachable and the
+  # fallback CRD-aggregation path populates hardcoded metric names.
+  if [[ "$collector_reachable" != "true" && "$raw_metric_count" -lt 3 ]]; then
     fail "observability response rawMetricNames too small (got ${raw_metric_count})"
     exit 1
+  fi
+  if [[ "$collector_reachable" == "true" && "$raw_metric_count" -eq 0 ]]; then
+    info "Collector reachable but no metrics yet (cold start) — rawMetricNames=0 is acceptable"
   fi
 
   # Numeric sanity check (non-negative).

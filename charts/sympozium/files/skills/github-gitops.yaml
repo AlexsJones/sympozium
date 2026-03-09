@@ -1,0 +1,96 @@
+apiVersion: sympozium.ai/v1alpha1
+kind: SkillPack
+metadata:
+  name: github-gitops
+  namespace: sympozium-system
+  labels:
+    app.kubernetes.io/part-of: sympozium
+    app.kubernetes.io/component: skill
+spec:
+  category: gitops
+  version: "1.0.0"
+  source: builtin
+  skills:
+    - name: github-gitops
+      description: |
+        GitOps skill that enables agents to interact with GitHub repositories.
+        Agents can open Pull Requests or Issues for cluster findings, with
+        automatic deduplication to prevent duplicate submissions.
+      content: |
+        # GitHub GitOps Skill
+
+        You have access to the GitHub CLI (`gh`) via the `execute_command` tool.
+        The environment variable `SKILL_REPO` contains the target repository
+        (e.g. `org/repo`). Additional context is available in:
+        - `SKILL_DEFAULT_BRANCH` — branch to target when opening PRs (default: `main`)
+        - `SKILL_LABELS` — comma-separated labels to apply to new issues/PRs
+        - `SKILL_REVIEWERS` — comma-separated GitHub logins of requested reviewers
+
+        ## Workflow
+
+        When you discover a cluster issue that warrants GitHub action, follow these
+        steps **in order**:
+
+        ### Step 1 — Classify: Issue or PR?
+
+        Use this decision matrix:
+
+        | Finding | Action |
+        |---------|--------|
+        | Config drift, missing manifest, wrong replica count | **PR** — fix it directly |
+        | Crashlooping pod, OOMKilled, resource exhaustion | **Issue** — escalate for human review |
+        | Missing RBAC, exposed secret, network policy gap | **PR** if low-risk, **Issue** if high-risk |
+        | Degraded node, cloud-provider outage | **Issue** only |
+
+        If in doubt, open an **Issue** to avoid unintended cluster changes.
+
+        ### Step 2 — Deduplication check
+
+        Before creating anything, run:
+
+        ```bash
+        gh issue list --repo "$SKILL_REPO" --label "sympozium-fp:<fingerprint>" --state all --json number,title,state
+        gh pr list --repo "$SKILL_REPO" --label "sympozium-fp:<fingerprint>" --state all --json number,title,state
+        ```
+
+        Where fingerprint = sympozium_fingerprint "<resource-kind>/<name>/<finding-type>"
+
+        **If an open item with that fingerprint already exists**, add a comment instead of creating a new one.
+        **If the existing item is closed**, recreate it.
+        **If nothing exists**, proceed to Step 3.
+
+        ### Step 3 — Create with fingerprint label
+
+        **Opening a PR:**
+        Clone the repo, create a branch, push changes, then:
+        gh pr create --repo "$SKILL_REPO" --base "${SKILL_DEFAULT_BRANCH:-main}" --head "$BRANCH" --title "<title>" --body "<body>" --label "sympozium,sympozium-fp:<fingerprint>"
+
+        **Opening an Issue:**
+        gh issue create --repo "$SKILL_REPO" --title "<title>" --body "<body>" --label "sympozium,sympozium-fp:<fingerprint>"
+
+        ### Step 4 — Report outcome
+
+        After creation, call send_channel_message (if a channel is configured)
+        with a summary including the PR/Issue URL.
+
+  sidecar:
+    image: ghcr.io/alexsjones/sympozium/skill-github-gitops:latest
+    command:
+      - /usr/local/bin/tool-executor.sh
+    mountWorkspace: true
+    env:
+      - name: GH_NO_UPDATE_NOTIFIER
+        value: "1"
+      - name: GIT_AUTHOR_NAME
+        value: "Sympozium Agent"
+      - name: GIT_AUTHOR_EMAIL
+        value: "sympozium@users.noreply.github.com"
+      - name: GIT_COMMITTER_NAME
+        value: "Sympozium Agent"
+      - name: GIT_COMMITTER_EMAIL
+        value: "sympozium@users.noreply.github.com"
+    resources:
+      cpu: "50m"
+      memory: "128Mi"
+    secretRef: github-gitops-token
+    secretMountPath: /secrets/github-token

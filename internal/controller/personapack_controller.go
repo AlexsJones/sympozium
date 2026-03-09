@@ -397,9 +397,16 @@ func (r *PersonaPackReconciler) buildInstance(
 
 	// Skills
 	for _, s := range persona.Skills {
-		inst.Spec.Skills = append(inst.Spec.Skills, sympoziumv1alpha1.SkillRef{
+		ref := sympoziumv1alpha1.SkillRef{
 			SkillPackRef: s,
-		})
+		}
+		// Apply pack-level skill params if configured (e.g. repo for github-gitops).
+		if pack.Spec.SkillParams != nil {
+			if params, ok := pack.Spec.SkillParams[s]; ok && len(params) > 0 {
+				ref.Params = params
+			}
+		}
+		inst.Spec.Skills = append(inst.Spec.Skills, ref)
 	}
 
 	// Channels
@@ -420,6 +427,18 @@ func (r *PersonaPackReconciler) buildInstance(
 
 	// Policy — use the pack's policy ref if set.
 	inst.Spec.PolicyRef = pack.Spec.PolicyRef
+
+	// Web endpoint — add the web-endpoint skill instead of the legacy field.
+	if persona.WebEndpoint != nil && persona.WebEndpoint.Enabled {
+		params := map[string]string{}
+		if persona.WebEndpoint.Hostname != "" {
+			params["hostname"] = persona.WebEndpoint.Hostname
+		}
+		inst.Spec.Skills = append(inst.Spec.Skills, sympoziumv1alpha1.SkillRef{
+			SkillPackRef: "web-endpoint",
+			Params:       params,
+		})
+	}
 
 	return inst
 }
@@ -447,12 +466,25 @@ func (r *PersonaPackReconciler) buildSchedule(
 		Spec: sympoziumv1alpha1.SympoziumScheduleSpec{
 			InstanceRef:       instanceName,
 			Schedule:          cron,
-			Task:              persona.Schedule.Task,
+			Task:              r.buildScheduleTask(pack, persona),
 			Type:              persona.Schedule.Type,
 			ConcurrencyPolicy: "Forbid",
 			IncludeMemory:     true,
 		},
 	}
+}
+
+// buildScheduleTask constructs the task string for a persona's schedule.
+// If the pack has a TaskOverride, it prepends the team-level directive.
+func (r *PersonaPackReconciler) buildScheduleTask(
+	pack *sympoziumv1alpha1.PersonaPack,
+	persona *sympoziumv1alpha1.PersonaSpec,
+) string {
+	base := persona.Schedule.Task
+	if pack.Spec.TaskOverride != "" {
+		return fmt.Sprintf("TEAM OBJECTIVE: %s\n\nYOUR ROLE TASK: %s", pack.Spec.TaskOverride, base)
+	}
+	return base
 }
 
 // reconcileMemorySeeds creates or patches the memory ConfigMap with seed data.

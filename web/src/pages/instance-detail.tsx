@@ -3,7 +3,7 @@ import { useParams, Link, useSearchParams } from "react-router-dom";
 import { useInstance } from "@/hooks/use-api";
 import { StatusBadge } from "@/components/status-badge";
 import { GithubAuthDialog } from "@/components/github-auth-dialog";
-import { api, type SkillRef } from "@/lib/api";
+import { api, type SkillRef, type SympoziumInstance } from "@/lib/api";
 import {
   Card,
   CardHeader,
@@ -20,7 +20,7 @@ import { formatAge } from "@/lib/utils";
 export function InstanceDetailPage() {
   const { name } = useParams<{ name: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
-  const allowedTabs = new Set(["overview", "channels", "skills", "memory"]);
+  const allowedTabs = new Set(["overview", "channels", "skills", "memory", "web-endpoint"]);
   const paramTab = searchParams.get("tab");
   const [activeTab, setActiveTab] = useState<string>(
     paramTab && allowedTabs.has(paramTab) ? paramTab : "overview",
@@ -76,6 +76,7 @@ export function InstanceDetailPage() {
           <TabsTrigger value="channels">Channels</TabsTrigger>
           <TabsTrigger value="skills">Skills</TabsTrigger>
           <TabsTrigger value="memory">Memory</TabsTrigger>
+          <TabsTrigger value="web-endpoint">Web Endpoint</TabsTrigger>
         </TabsList>
 
         <TabsContent value="overview">
@@ -201,8 +202,47 @@ export function InstanceDetailPage() {
             </CardContent>
           </Card>
         </TabsContent>
+
+        <TabsContent value="web-endpoint">
+          <WebEndpointTab inst={inst} />
+        </TabsContent>
       </Tabs>
     </div>
+  );
+}
+
+function WebEndpointTab({ inst }: { inst: SympoziumInstance }) {
+  const webSkill = inst.spec.skills?.find(
+    (s) => s.skillPackRef === "web-endpoint" || s.skillPackRef === "skillpack-web-endpoint",
+  );
+
+  if (webSkill) {
+    return (
+      <Card>
+        <CardContent className="pt-6 space-y-3">
+          <Row label="Rate Limit" value={`${webSkill.params?.rate_limit_rpm || "60"} req/min`} />
+          <Row label="Hostname" value={webSkill.params?.hostname || "auto from gateway"} />
+          <Separator />
+          <p className="text-sm font-medium">Status</p>
+          <p className="text-xs text-muted-foreground">
+            The web-proxy runs as a server-mode AgentRun. Check the Runs page for
+            a run in "Serving" phase with a Deployment and Service.
+          </p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  // Not enabled
+  return (
+    <Card>
+      <CardContent className="pt-6">
+        <p className="text-sm text-muted-foreground">
+          Web endpoint is not enabled. Add the "web-endpoint" skill to expose this
+          agent as an HTTP API.
+        </p>
+      </CardContent>
+    </Card>
   );
 }
 

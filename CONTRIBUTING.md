@@ -25,10 +25,65 @@ See [`AGENTS.md`](AGENTS.md) for the full setup guide. The short version:
 # Prerequisites: Go 1.25+, Docker, Kind, kubectl
 kind create cluster --name kind
 make install                          # Install CRDs
-make docker-build TAG=v0.0.32        # Build all images
+make docker-build TAG=v0.1.0         # Build all images
 # Load images into Kind (see AGENTS.md for the full loop)
 kubectl apply -k config/             # Deploy control plane
 ```
+
+---
+
+## Local Development (no Docker build/push cycle)
+
+For day-to-day development you can run the controller and API server as local processes against a remote (or local) cluster. This skips the Docker build → image load → rollout cycle entirely, which is especially helpful on low-bandwidth connections or when iterating quickly on controller logic.
+
+All you need is a running cluster with CRDs installed and a valid kubeconfig.
+
+### Run everything locally
+
+```bash
+make dev-all
+```
+
+This starts four services in parallel:
+
+| Service | Address | What it does |
+|---------|---------|-------------|
+| Controller | `:9090` (metrics), `:9091` (health) | All CRD reconcilers running locally |
+| API server | `:8080` | REST API for the UI |
+| Vite dev server | `:5173` | Frontend with hot-reload |
+| NATS port-forward | `:4222` | Forwards cluster NATS to localhost |
+
+The in-cluster controller deployment is automatically scaled to zero so there's no conflict. When you Ctrl+C, the in-cluster controller is restored to 1 replica.
+
+Open `http://localhost:5173` in your browser. The API token is `dev-token` (override with `SYMPOZIUM_TOKEN`).
+
+### Run just the controller locally
+
+If you're only working on controller logic and already have `make dev` running for the UI:
+
+```bash
+make run-controller
+```
+
+This builds and runs the controller manager locally, scaling down the in-cluster one. On exit it restores the in-cluster deployment.
+
+### Run just the API server + UI
+
+If you're only working on the API or frontend and want the in-cluster controller to keep running:
+
+```bash
+make dev
+```
+
+### Undeploy cluster workloads (keep CRDs)
+
+To stop all in-cluster Sympozium deployments while keeping CRDs and their instances intact:
+
+```bash
+kubectl scale deploy -n sympozium-system --replicas=0 --all
+```
+
+This is useful when you want the local processes to be the only thing running, or when switching between local and cluster-based development.
 
 ---
 
@@ -114,8 +169,8 @@ chore(deps): bump gorilla/websocket to v1.5.1
 
 Sympozium follows [Semantic Versioning](https://semver.org/) (`vMAJOR.MINOR.PATCH`):
 
-- **PATCH** (`v0.0.31` → `v0.0.32`) — Bug fixes, docs, minor improvements
-- **MINOR** (`v0.1.0`) — New features, new CRD fields (backward-compatible)
+- **PATCH** (`v0.1.0` → `v0.1.1`) — Bug fixes, docs, minor improvements
+- **MINOR** (`v0.1.0` → `v0.2.0`) — New features, new CRD fields (backward-compatible)
 - **MAJOR** (`v1.0.0`) — Breaking API/CRD changes
 
 ### Releasing
@@ -123,8 +178,8 @@ Sympozium follows [Semantic Versioning](https://semver.org/) (`vMAJOR.MINOR.PATC
 1. Ensure all changes are committed and pushed to `main`.
 2. Create and push a tag:
    ```bash
-   git tag v0.0.33
-   git push origin v0.0.33
+   git tag v0.1.1
+   git push origin v0.1.1
    ```
 3. The release workflow automatically:
    - Builds CLI binaries for all platforms

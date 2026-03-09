@@ -50,6 +50,20 @@ type PersonaPackSpec struct {
 	// PolicyRef references the SympoziumPolicy to apply to all generated instances.
 	// +optional
 	PolicyRef string `json:"policyRef,omitempty"`
+
+	// SkillParams provides per-skill parameters applied to all generated instances.
+	// The outer key is the SkillPack name (e.g. "github-gitops"), and the inner map
+	// holds key/value pairs injected as SKILL_<KEY> environment variables.
+	// Set during onboarding when the user configures skill-specific settings.
+	// +optional
+	SkillParams map[string]map[string]string `json:"skillParams,omitempty"`
+
+	// TaskOverride replaces each persona's default schedule task with a
+	// team-level objective. Set during onboarding when the user provides
+	// instructions for the team. Each persona's schedule task is prepended
+	// with this directive so every agent works toward the same goal.
+	// +optional
+	TaskOverride string `json:"taskOverride,omitempty"`
 }
 
 // PersonaSpec defines a single agent persona within a PersonaPack.
@@ -89,6 +103,20 @@ type PersonaSpec struct {
 	// Users can modify channel bindings later via the TUI edit modal.
 	// +optional
 	Channels []string `json:"channels,omitempty"`
+
+	// WebEndpoint configures the web endpoint for this persona.
+	// +optional
+	WebEndpoint *PersonaWebEndpoint `json:"webEndpoint,omitempty"`
+}
+
+// PersonaWebEndpoint configures the web endpoint for a persona.
+type PersonaWebEndpoint struct {
+	// Enabled indicates whether the web endpoint is active.
+	Enabled bool `json:"enabled"`
+
+	// Hostname overrides the auto-derived hostname.
+	// +optional
+	Hostname string `json:"hostname,omitempty"`
 }
 
 // PersonaToolPolicy defines tool access for a persona.

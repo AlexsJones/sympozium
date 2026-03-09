@@ -23,6 +23,7 @@ cmd/
   apiserver/            # HTTP + WebSocket API server
   controller/           # Controller manager (all reconcilers + routers)
   ipc-bridge/           # IPC bridge sidecar (fsnotify → NATS)
+  web-proxy/            # Web proxy (OpenAI-compat API + MCP gateway)
   sympozium/             # CLI + TUI (Bubble Tea)
   webhook/              # Admission webhook server
 channels/
@@ -49,6 +50,7 @@ internal/
   orchestrator/         # Pod builder + spawner for agent Jobs
   session/              # Session store
   webhook/              # Policy enforcer
+  webproxy/             # Web proxy handlers (OpenAI, MCP, rate limiting)
 migrations/             # PostgreSQL schema migrations
 test/integration/       # Integration test scripts (shell)
 docs/                   # Design & contributor documentation
@@ -96,13 +98,13 @@ kind create cluster --name kind
 make install
 
 # Build all images
-make docker-build TAG=v0.0.32
+make docker-build TAG=v0.1.0
 
 # Load images into Kind (all components)
-for img in controller apiserver ipc-bridge webhook agent-runner \
+for img in controller apiserver ipc-bridge webhook agent-runner web-proxy \
            channel-telegram channel-slack channel-discord channel-whatsapp \
            skill-k8s-ops skill-sre-observability skill-llmfit; do
-  kind load docker-image ghcr.io/alexsjones/sympozium/$img:v0.0.32 --name kind
+  kind load docker-image ghcr.io/alexsjones/sympozium/$img:v0.1.0 --name kind
 done
 
 # Deploy the control plane
@@ -121,8 +123,8 @@ make build
 make test
 
 # Build specific image + reload into Kind
-make docker-build-agent-runner TAG=v0.0.32
-kind load docker-image ghcr.io/alexsjones/sympozium/agent-runner:v0.0.32 --name kind
+make docker-build-agent-runner TAG=v0.1.0
+kind load docker-image ghcr.io/alexsjones/sympozium/agent-runner:v0.1.0 --name kind
 
 # Restart the controller to pick up new images
 kubectl rollout restart deployment sympozium-controller-manager -n sympozium-system
@@ -139,7 +141,7 @@ make vet                # go vet
 make fmt                # gofmt
 make tidy               # go mod tidy
 make docker-build       # Build all Docker images
-make docker-build-<name> TAG=v0.0.32   # Build a specific image
+make docker-build-<name> TAG=v0.1.0   # Build a specific image
 make generate           # Regenerate deepcopy + CRD manifests
 make manifests          # Regenerate CRD YAML only
 make clean              # Remove build artifacts
@@ -174,6 +176,7 @@ TEST_MODEL=gpt-5.2 TEST_TIMEOUT=180 ./test/integration/test-write-file.sh
 | `test-llmfit-cluster-fit.sh` | `llmfit` skill — agent runs node-level llmfit placement probe workflow |
 | `test-telegram-channel.sh` | Telegram channel deployment + message flow |
 | `test-slack-channel.sh` | Slack channel deployment (Socket Mode) |
+| `test-web-proxy-api.sh` | Web proxy API — healthz, auth, models, chat completions (blocking + streaming), MCP SSE |
 
 ### Writing New Tests
 
@@ -243,6 +246,8 @@ SkillPacks are CRDs containing Markdown instructions + optional sidecar definiti
 | Writing tools | `docs/writing-tools.md` | How to add new agent tools |
 | Writing skills | `docs/writing-skills.md` | How to create SkillPack CRDs |
 | Writing integration tests | `docs/writing-integration-tests.md` | Test patterns and templates |
+| Web endpoint skill | `docs/skill-web-endpoint.md` | How to expose agents as HTTP APIs (OpenAI-compat + MCP) |
+| Serving mode | `docs/serving-mode.md` | How serving mode works for long-lived agent deployments |
 | Sample CRs | `config/samples/` | Example SympoziumInstance, AgentRun, SympoziumPolicy, SympoziumSchedule, SkillPack |
 | CRD definitions | `api/v1alpha1/` | Go type definitions for all CRDs |
 | Built-in PersonaPacks | `config/personas/` | Pre-configured agent bundles (platform-team, devops-essentials) |
@@ -283,10 +288,10 @@ SkillPacks are CRDs containing Markdown instructions + optional sidecar definiti
 go build ./...
 
 # Rebuild affected images
-make docker-build-<component> TAG=v0.0.32
+make docker-build-<component> TAG=v0.1.0
 
 # Load into Kind
-kind load docker-image ghcr.io/alexsjones/sympozium/<component>:v0.0.32 --name kind
+kind load docker-image ghcr.io/alexsjones/sympozium/<component>:v0.1.0 --name kind
 
 # Restart controller if controller/ipc-bridge/agent-runner changed
 kubectl rollout restart deployment sympozium-controller-manager -n sympozium-system

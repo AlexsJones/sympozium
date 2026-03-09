@@ -35,9 +35,11 @@ export function SkillsPage() {
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<SkillPack | null>(null);
 
-  const filtered = (data || []).filter((s) =>
-    s.metadata.name.toLowerCase().includes(search.toLowerCase())
-  );
+  const filtered = (data || [])
+    .filter((s) =>
+      s.metadata.name.toLowerCase().includes(search.toLowerCase())
+    )
+    .sort((a, b) => a.metadata.name.localeCompare(b.metadata.name));
 
   return (
     <div className="space-y-4">

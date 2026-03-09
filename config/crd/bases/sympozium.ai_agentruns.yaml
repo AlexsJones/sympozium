@@ -72,6 +72,15 @@ spec:
                 description: InstanceRef is the name of the SympoziumInstance this
                   run belongs to.
                 type: string
+              mode:
+                default: task
+                description: |-
+                  Mode: "task" (default, Job) or "server" (Deployment, long-running).
+                  Auto-set to "server" when any skill has RequiresServer=true.
+                enum:
+                - task
+                - server
+                type: string
               model:
                 description: Model specifies the LLM configuration for this run.
                 properties:
@@ -297,6 +306,10 @@ spec:
                   - type
                   type: object
                 type: array
+              deploymentName:
+                description: DeploymentName is the name of the Deployment created
+                  for server-mode runs.
+                type: string
               error:
                 description: Error is the error message (populated on failure).
                 type: string
@@ -316,6 +329,10 @@ spec:
                 type: string
               result:
                 description: Result is the agent's final reply (populated on success).
+                type: string
+              serviceName:
+                description: ServiceName is the name of the Service created for server-mode
+                  runs.
                 type: string
               startedAt:
                 description: StartedAt is when the agent run started.

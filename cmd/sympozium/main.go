@@ -27,6 +27,7 @@ import (
 	"github.com/spf13/cobra"
 
 	corev1 "k8s.io/api/core/v1"
+	k8serr "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -431,8 +432,9 @@ func newVersionCmd() *cobra.Command {
 }
 
 const (
-	ghRepo        = "AlexsJones/sympozium"
-	manifestAsset = "sympozium-manifests.tar.gz"
+	ghRepo            = "AlexsJones/sympozium"
+	manifestAsset     = "sympozium-manifests.tar.gz"
+	gatewayAPICRDsURL = "https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.1/standard-install.yaml"
 )
 
 // ── Onboard ──────────────────────────────────────────────────────────────────
@@ -456,7 +458,7 @@ func runOnboard() error {
 	printBanner()
 
 	// ── Step 1: Check Sympozium is installed ───────────────────────────────
-	fmt.Println("\n📋 Step 1/6 — Checking cluster...")
+	fmt.Println("\n📋 Step 1/9 — Checking cluster...")
 	if err := initClient(); err != nil {
 		fmt.Println("\n  ❌ Cannot connect to your cluster.")
 		fmt.Println("  Make sure kubectl is configured and run: sympozium install")
@@ -472,13 +474,21 @@ func runOnboard() error {
 	}
 	fmt.Println("  ✅ Sympozium is installed and CRDs are available.")
 
-	// ── Step 2: Instance name ────────────────────────────────────────────
-	fmt.Println("\n📋 Step 2/6 — Create your SympoziumInstance")
+	// ── Step 2: Namespace ────────────────────────────────────────────────
+	fmt.Println("\n📋 Step 2/9 — Target Namespace")
+	fmt.Println("  Which namespace should resources be created in?")
+	targetNS := prompt(reader, "  Namespace", namespace)
+	if targetNS != "" {
+		namespace = targetNS
+	}
+
+	// ── Step 3: Instance name ────────────────────────────────────────────
+	fmt.Println("\n📋 Step 3/9 — Create your SympoziumInstance")
 	fmt.Println("  An instance represents you (or a tenant) in the system.")
 	instanceName := prompt(reader, "  Instance name", "my-agent")
 
 	// ── Step 3: AI provider ──────────────────────────────────────────────
-	fmt.Println("\n📋 Step 3/6 — AI Provider")
+	fmt.Println("\n📋 Step 4/9 — AI Provider")
 	fmt.Println("  Which model provider do you want to use?")
 	fmt.Println("    1) OpenAI")
 	fmt.Println("    2) Anthropic")
@@ -534,8 +544,20 @@ func runOnboard() error {
 
 	providerSecretName := fmt.Sprintf("%s-%s-key", instanceName, providerName)
 
-	// ── Step 4: Channel ──────────────────────────────────────────────────
-	fmt.Println("\n📋 Step 4/6 — Connect a Channel (optional)")
+	// ── Step 4: GitHub Repository ────────────────────────────────────────
+	fmt.Println("\n📋 Step 5/9 — GitHub Repository (optional)")
+	fmt.Println("  Point your agent at a GitHub repository to enable")
+	fmt.Println("  issue triage, PR reviews, and code contributions.")
+	githubRepo := prompt(reader, "  GitHub repo owner/repo (Enter to skip)", "")
+
+	// ── Step 5: Team Instructions ────────────────────────────────────────
+	fmt.Println("\n📋 Step 6/9 — Instructions (optional)")
+	fmt.Println("  Give your agent an objective or task to work on.")
+	fmt.Println("  This will be included in every heartbeat run.")
+	teamTask := prompt(reader, "  What should the agent work on? (Enter to skip)", "")
+
+	// ── Step 6: Channel ──────────────────────────────────────────────────
+	fmt.Println("\n📋 Step 7/9 — Connect a Channel (optional)")
 	fmt.Println("  Channels let your agent receive messages from external platforms.")
 	fmt.Println("    1) Telegram  — easiest, just talk to @BotFather")
 	fmt.Println("    2) Slack")
@@ -576,12 +598,12 @@ func runOnboard() error {
 	channelSecretName := fmt.Sprintf("%s-%s-secret", instanceName, channelType)
 
 	// ── Step 5: Apply default policy? ────────────────────────────────────
-	fmt.Println("\n📋 Step 5/6 — Default Policy")
+	fmt.Println("\n📋 Step 8/9 — Default Policy")
 	fmt.Println("  A SympoziumPolicy controls what tools agents can use, sandboxing, etc.")
 	applyPolicy := promptYN(reader, "  Apply the default policy?", true)
 
 	// ── Step 6: Heartbeat interval ──────────────────────────────────────
-	fmt.Println("\n📋 Step 6/6 — Heartbeat Schedule")
+	fmt.Println("\n📋 Step 9/9 — Heartbeat Schedule")
 	fmt.Println("  A heartbeat lets your agent wake up periodically to review memory")
 	fmt.Println("  and note anything that needs attention.")
 	fmt.Println("    1) Every 30 minutes")
@@ -617,6 +639,16 @@ func runOnboard() error {
 	fmt.Printf("  Provider:   %s  (model: %s)\n", providerName, modelName)
 	if baseURL != "" {
 		fmt.Printf("  Base URL:   %s\n", baseURL)
+	}
+	if githubRepo != "" {
+		fmt.Printf("  GitHub:     %s\n", githubRepo)
+	}
+	if teamTask != "" {
+		display := teamTask
+		if len(display) > 50 {
+			display = display[:47] + "..."
+		}
+		fmt.Printf("  Task:       %s\n", display)
 	}
 	if channelType != "" {
 		fmt.Printf("  Channel:    %s\n", channelType)
@@ -690,7 +722,7 @@ func runOnboard() error {
 	}
 	instanceYAML := buildSympoziumInstanceYAML(instanceName, namespace, modelName, baseURL,
 		providerName, instanceSecret, channelType, chSecret,
-		policyName, applyPolicy)
+		policyName, applyPolicy, githubRepo)
 	if err := kubectlApplyStdin(instanceYAML); err != nil {
 		return fmt.Errorf("apply instance: %w", err)
 	}
@@ -699,6 +731,10 @@ func runOnboard() error {
 	if heartbeatCron != "" {
 		heartbeatName := fmt.Sprintf("%s-heartbeat", instanceName)
 		fmt.Printf("  Creating heartbeat schedule %s (%s)...\n", heartbeatName, heartbeatLabel)
+		hbTask := "Review your memory. Summarise what you know so far and note anything that needs attention."
+		if teamTask != "" {
+			hbTask = fmt.Sprintf("OBJECTIVE: %s\n\n%s", teamTask, hbTask)
+		}
 		heartbeatYAML := fmt.Sprintf(`apiVersion: sympozium.ai/v1alpha1
 kind: SympoziumSchedule
 metadata:
@@ -707,11 +743,11 @@ metadata:
 spec:
   instanceRef: %s
   schedule: "%s"
-  task: "Review your memory. Summarise what you know so far and note anything that needs attention."
+  task: %q
   type: heartbeat
   concurrencyPolicy: Forbid
   includeMemory: true
-`, heartbeatName, namespace, instanceName, heartbeatCron)
+`, heartbeatName, namespace, instanceName, heartbeatCron, hbTask)
 		if err := kubectlApplyStdin(heartbeatYAML); err != nil {
 			return fmt.Errorf("apply heartbeat schedule: %w", err)
 		}
@@ -909,7 +945,7 @@ spec:
 }
 
 func buildSympoziumInstanceYAML(name, ns, model, baseURL, provider, providerSecret,
-	channelType, channelSecret, policyName string, hasPolicy bool) string {
+	channelType, channelSecret, policyName string, hasPolicy bool, githubRepo string) string {
 
 	var channelsBlock string
 	if channelType != "" {
@@ -945,6 +981,14 @@ func buildSympoziumInstanceYAML(name, ns, model, baseURL, provider, providerSecr
 `, provider, providerSecret)
 	}
 
+	var githubSkillBlock string
+	if githubRepo != "" {
+		githubSkillBlock = fmt.Sprintf(`    - skillPackRef: github-gitops
+      params:
+        repo: %s
+`, githubRepo)
+	}
+
 	return fmt.Sprintf(`apiVersion: sympozium.ai/v1alpha1
 kind: SympoziumInstance
 metadata:
@@ -956,11 +1000,11 @@ spec:
       model: %s
 %s%s%s  skills:
     - skillPackRef: k8s-ops
-		- skillPackRef: llmfit
-  memory:
+    - skillPackRef: llmfit
+%s  memory:
     enabled: true
     maxSizeKB: 256
-`, name, ns, channelsBlock, model, baseURLLine, authRefsBlock, policyBlock)
+`, name, ns, channelsBlock, model, baseURLLine, authRefsBlock, policyBlock, githubSkillBlock)
 }
 
 func kubectlApplyStdin(yaml string) error {
@@ -1058,6 +1102,12 @@ func runInstall(ver, imageTag string) error {
 	fmt.Println("  Applying CRDs...")
 	if err := kubectl("apply", "--server-side", "--force-conflicts", "-f", filepath.Join(tmpDir, "config/crd/bases/")); err != nil {
 		return err
+	}
+
+	// Install Gateway API CRDs (required for GatewayClass, Gateway, HTTPRoute).
+	fmt.Println("  Installing Gateway API CRDs...")
+	if err := kubectl("apply", "--server-side", "--force-conflicts", "-f", gatewayAPICRDsURL); err != nil {
+		return fmt.Errorf("install Gateway API CRDs: %w", err)
 	}
 
 	// Create namespace before RBAC (ServiceAccounts reference it).
@@ -1204,10 +1254,17 @@ func runInstall(ver, imageTag string) error {
 func runUninstall() error {
 	fmt.Println("  Removing Sympozium...")
 
-	// Delete default SkillPacks from sympozium-system first (before CRDs go away).
-	fmt.Println("  Removing default SkillPacks...")
-	_ = kubectl("delete", "skillpacks.sympozium.ai", "--ignore-not-found",
-		"-n", "sympozium-system", "-l", "sympozium.ai/builtin=true")
+	// Strip finalizers from all Sympozium CRD instances BEFORE deleting the
+	// controller, so resources don't get stuck in Terminating state.
+	fmt.Println("  Removing finalizers from Sympozium resources...")
+	resources := []string{"agentruns", "sympoziuminstances", "sympoziumpolicies", "skillpacks", "sympoziumschedules", "personapacks"}
+	for _, res := range resources {
+		stripFinalizers(res)
+	}
+	fmt.Println("  Deleting Sympozium custom resources...")
+	for _, res := range resources {
+		_ = kubectl("delete", res+".sympozium.ai", "--all", "--all-namespaces", "--ignore-not-found", "--timeout=60s")
+	}
 
 	// Delete in reverse order.
 	manifests := []string{
@@ -1225,18 +1282,6 @@ func runUninstall() error {
 		_ = kubectl("delete", "--ignore-not-found", "-f", m)
 	}
 
-	// Strip finalizers from all Sympozium CRD instances so CRD deletion doesn't
-	// hang waiting for the (now-deleted) controller to reconcile them.
-	fmt.Println("  Removing finalizers from Sympozium resources...")
-	resources := []string{"agentruns", "sympoziuminstances", "sympoziumpolicies", "skillpacks", "sympoziumschedules", "personapacks"}
-	for _, res := range resources {
-		stripFinalizers(res)
-	}
-	fmt.Println("  Deleting Sympozium custom resources...")
-	for _, res := range resources {
-		_ = kubectl("delete", res+".sympozium.ai", "--all", "--all-namespaces", "--ignore-not-found", "--timeout=60s")
-	}
-
 	// CRDs last.
 	crdBase := "https://raw.githubusercontent.com/" + ghRepo + "/main/config/crd/bases/"
 	crds := []string{
@@ -1250,6 +1295,10 @@ func runUninstall() error {
 	for _, c := range crds {
 		_ = kubectl("delete", "--ignore-not-found", "-f", crdBase+c)
 	}
+
+	// Remove Gateway API CRDs installed by sympozium.
+	fmt.Println("  Removing Gateway API CRDs...")
+	_ = kubectl("delete", "--ignore-not-found", "-f", gatewayAPICRDsURL)
 
 	// Remove the system namespace created during install.
 	fmt.Println("  Deleting namespace sympozium-system...")
@@ -1380,10 +1429,11 @@ const (
 	viewSkills
 	viewChannels
 	viewSchedules
+	viewGateway
 	viewPods
 )
 
-var viewNames = []string{"Personas", "Instances", "Runs", "Policies", "Skills", "Channels", "Schedules", "Pods"}
+var viewNames = []string{"Personas", "Instances", "Runs", "Policies", "Skills", "Channels", "Schedules", "Gateway", "Pods"}
 
 // detailPaneState controls the visibility of the right-hand detail pane.
 type detailPaneState int
@@ -1571,15 +1621,16 @@ type suggestionsMsg struct {
 	items []suggestion
 }
 type dataRefreshMsg struct {
-	instances    *[]sympoziumv1alpha1.SympoziumInstance
-	runs         *[]sympoziumv1alpha1.AgentRun
-	policies     *[]sympoziumv1alpha1.SympoziumPolicy
-	skills       *[]sympoziumv1alpha1.SkillPack
-	channels     *[]channelRow
-	pods         *[]podRow
-	schedules    *[]sympoziumv1alpha1.SympoziumSchedule
-	personaPacks *[]sympoziumv1alpha1.PersonaPack
-	fetchErr     string
+	instances     *[]sympoziumv1alpha1.SympoziumInstance
+	runs          *[]sympoziumv1alpha1.AgentRun
+	policies      *[]sympoziumv1alpha1.SympoziumPolicy
+	skills        *[]sympoziumv1alpha1.SkillPack
+	channels      *[]channelRow
+	pods          *[]podRow
+	schedules     *[]sympoziumv1alpha1.SympoziumSchedule
+	personaPacks  *[]sympoziumv1alpha1.PersonaPack
+	gatewayConfig *sympoziumv1alpha1.SympoziumConfig
+	fetchErr      string
 }
 
 // ── Suggestion ───────────────────────────────────────────────────────────────
@@ -1989,11 +2040,14 @@ type wizardStep int
 const (
 	wizStepNone         wizardStep = iota
 	wizStepCheckCluster            // auto — verify CRDs
+	wizStepNamespace               // text: target namespace
 	wizStepInstanceName            // text: instance name
 	wizStepProvider                // menu 1-6: provider
 	wizStepModel                   // text: model name
 	wizStepBaseURL                 // text: base URL (some providers)
 	wizStepAPIKey                  // text: API key (non-ollama)
+	wizStepGithubRepo              // text: GitHub repo (owner/repo)
+	wizStepTeamTask                // text: team-level task/instructions
 	wizStepChannel                 // menu 1-5: channel type
 	wizStepChannelToken            // text: channel bot token
 	wizStepPolicy                  // y/n: apply default policy
@@ -2009,6 +2063,8 @@ const (
 	wizStepPersonaBaseURL      // text: base URL
 	wizStepPersonaAPIKey       // text: API key
 	wizStepPersonaModel        // text: model name
+	wizStepPersonaGithubRepo   // text: GitHub repo (owner/repo)
+	wizStepPersonaTeamTask     // text: team-level task/instructions
 	wizStepPersonaChannels     // multi-toggle: channels to bind
 	wizStepPersonaChannelToken // text: channel token (per selected channel)
 	wizStepPersonaHeartbeat    // menu 1-5: heartbeat interval override
@@ -2024,6 +2080,7 @@ type wizardState struct {
 	resultMsgs []string
 
 	// Collected values
+	targetNamespace string
 	instanceName    string
 	providerChoice  string // "1"–"6"
 	providerName    string
@@ -2038,6 +2095,8 @@ type wizardState struct {
 	applyPolicy     bool
 	heartbeatCron   string // cron expression for heartbeat schedule
 	heartbeatLabel  string // human-readable label (e.g. "every hour")
+	githubRepo      string // GitHub repo (owner/repo) for github-gitops skill
+	teamTask        string // Team-level instructions/objective
 
 	// Dynamic model list (fetched from provider API when key is supplied).
 	fetchedModels []string // model IDs fetched from the API
@@ -2095,14 +2154,15 @@ type tuiModel struct {
 	wizard wizardState
 
 	// Cached K8s data
-	instances    []sympoziumv1alpha1.SympoziumInstance
-	runs         []sympoziumv1alpha1.AgentRun
-	policies     []sympoziumv1alpha1.SympoziumPolicy
-	skills       []sympoziumv1alpha1.SkillPack
-	channels     []channelRow
-	pods         []podRow
-	schedules    []sympoziumv1alpha1.SympoziumSchedule
-	personaPacks []sympoziumv1alpha1.PersonaPack
+	instances     []sympoziumv1alpha1.SympoziumInstance
+	runs          []sympoziumv1alpha1.AgentRun
+	policies      []sympoziumv1alpha1.SympoziumPolicy
+	skills        []sympoziumv1alpha1.SkillPack
+	channels      []channelRow
+	pods          []podRow
+	schedules     []sympoziumv1alpha1.SympoziumSchedule
+	personaPacks  []sympoziumv1alpha1.PersonaPack
+	gatewayConfig *sympoziumv1alpha1.SympoziumConfig
 
 	// Input
 	input        textinput.Model
@@ -2153,11 +2213,14 @@ type tuiModel struct {
 	githubAuthStatus     string // "pending" | "done" | "error"
 	githubAuthMessage    string // success note or error detail
 
-	editSkills              []editSkillItem   // toggleable skills list
-	editChannels            []editChannelItem // channel bindings
-	editPersonaPackName     string            // non-empty when editing a PersonaPack
-	editPersonas            []editPersonaItem // toggleable personas list
-	editPersonaHeartbeatIdx int               // index into personaHeartbeatOptions
+	editSkills              []editSkillItem     // toggleable skills list
+	editChannels            []editChannelItem   // channel bindings
+	editWebEndpoint         editWebEndpointForm // web endpoint config
+	editGateway             editGatewayForm     // gateway config
+	showGatewayEditModal    bool                // separate modal for gateway
+	editPersonaPackName     string              // non-empty when editing a PersonaPack
+	editPersonas            []editPersonaItem   // toggleable personas list
+	editPersonaHeartbeatIdx int                 // index into personaHeartbeatOptions
 
 	// Detail pane
 	detailPane       detailPaneState // collapsed, panel, or fullscreen
@@ -2201,6 +2264,29 @@ type editChannelItem struct {
 	tokenKey  string // env var name for the token (e.g. TELEGRAM_BOT_TOKEN)
 }
 
+// editWebEndpointForm holds the editable web endpoint fields.
+type editWebEndpointForm struct {
+	enabled   bool
+	hostname  string
+	rateLimit string // requests per minute, edited as text
+}
+
+// editWebEndpointFieldCount is the number of fields in the web endpoint tab.
+var editWebEndpointFieldCount = 3 // enabled, hostname, rateLimit
+
+// editGatewayForm holds the editable gateway configuration fields.
+type editGatewayForm struct {
+	enabled                  bool
+	baseDomain               string
+	gatewayClassName         string
+	gatewayName              string
+	tlsEnabled               bool
+	certManagerClusterIssuer string
+	tlsSecretName            string
+}
+
+var editGatewayFieldCount = 7
+
 // editPersonaItem represents a toggleable persona in the PersonaPack edit modal.
 type editPersonaItem struct {
 	name        string // persona name within the pack
@@ -2212,7 +2298,7 @@ var editScheduleTypes = []string{"heartbeat", "scheduled", "sweep"}
 var editConcurrencyPolicies = []string{"Forbid", "Allow", "Replace"}
 var editMemoryFieldCount = 3    // enabled, maxSizeKB, systemPrompt
 var editHeartbeatFieldCount = 6 // schedule, task, type, concurrencyPolicy, includeMemory, suspend
-var editTabNames = []string{"Memory", "Heartbeat", "Skills", "Channels"}
+var editTabNames = []string{"Memory", "Heartbeat", "Skills", "Channels", "Web Endpoint"}
 var availableChannelTypes = []string{"telegram", "slack", "discord", "whatsapp"}
 
 // personaHeartbeatOptions defines the selectable intervals for PersonaPack editing.
@@ -2357,13 +2443,14 @@ func refreshDataCmd() tea.Cmd {
 		defer cancel()
 
 		var (
-			inst    sympoziumv1alpha1.SympoziumInstanceList
-			runs    sympoziumv1alpha1.AgentRunList
-			pols    sympoziumv1alpha1.SympoziumPolicyList
-			skls    sympoziumv1alpha1.SkillPackList
-			scheds  sympoziumv1alpha1.SympoziumScheduleList
-			packs   sympoziumv1alpha1.PersonaPackList
-			podList corev1.PodList
+			inst      sympoziumv1alpha1.SympoziumInstanceList
+			runs      sympoziumv1alpha1.AgentRunList
+			pols      sympoziumv1alpha1.SympoziumPolicyList
+			skls      sympoziumv1alpha1.SkillPackList
+			scheds    sympoziumv1alpha1.SympoziumScheduleList
+			packs     sympoziumv1alpha1.PersonaPackList
+			podList   corev1.PodList
+			gwConfigs sympoziumv1alpha1.SympoziumConfigList
 		)
 
 		var mu sync.Mutex
@@ -2376,7 +2463,7 @@ func refreshDataCmd() tea.Cmd {
 
 		// Fetch all resources in parallel.
 		var wg sync.WaitGroup
-		wg.Add(7)
+		wg.Add(8)
 
 		go func() {
 			defer wg.Done()
@@ -2420,6 +2507,12 @@ func refreshDataCmd() tea.Cmd {
 				addErr(fmt.Sprintf("personapacks: %v", err))
 			}
 		}()
+		go func() {
+			defer wg.Done()
+			if err := k8sClient.List(ctx, &gwConfigs); err != nil {
+				addErr(fmt.Sprintf("gatewayconfig: %v", err))
+			}
+		}()
 
 		wg.Wait()
 
@@ -2446,6 +2539,9 @@ func refreshDataCmd() tea.Cmd {
 		}
 		if !containsPrefix(errs, "personapacks:") {
 			msg.personaPacks = &packs.Items
+		}
+		if !containsPrefix(errs, "gatewayconfig:") && len(gwConfigs.Items) > 0 {
+			msg.gatewayConfig = &gwConfigs.Items[0]
 		}
 
 		// Build channel rows from instances.
@@ -2680,6 +2776,8 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					max = len(m.editSkills)
 				} else if m.editTab == 3 {
 					max = len(m.editChannels)
+				} else if m.editTab == 4 {
+					max = editWebEndpointFieldCount
 				}
 				if m.editField < max-1 {
 					m.editField++
@@ -2750,6 +2848,10 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							}
 						}
 					}
+				} else if m.editTab == 4 {
+					if m.editField == 0 {
+						m.editWebEndpoint.enabled = !m.editWebEndpoint.enabled
+					}
 				}
 				return m, nil
 			case "left", "h":
@@ -2789,6 +2891,17 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					case 2:
 						if len(m.editMemory.systemPrompt) > 0 {
 							m.editMemory.systemPrompt = m.editMemory.systemPrompt[:len(m.editMemory.systemPrompt)-1]
+						}
+					}
+				} else if m.editTab == 4 {
+					switch m.editField {
+					case 1:
+						if len(m.editWebEndpoint.hostname) > 0 {
+							m.editWebEndpoint.hostname = m.editWebEndpoint.hostname[:len(m.editWebEndpoint.hostname)-1]
+						}
+					case 2:
+						if len(m.editWebEndpoint.rateLimit) > 0 {
+							m.editWebEndpoint.rateLimit = m.editWebEndpoint.rateLimit[:len(m.editWebEndpoint.rateLimit)-1]
 						}
 					}
 				} else {
@@ -2871,6 +2984,10 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							}
 						}
 					}
+				} else if m.editTab == 4 {
+					if m.editField == 0 {
+						m.editWebEndpoint.enabled = !m.editWebEndpoint.enabled
+					}
 				}
 				return m, nil
 			case "a":
@@ -2908,11 +3025,91 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						case 2:
 							m.editMemory.systemPrompt += ch
 						}
+					} else if m.editTab == 4 {
+						switch m.editField {
+						case 1:
+							m.editWebEndpoint.hostname += ch
+						case 2:
+							if ch >= "0" && ch <= "9" {
+								m.editWebEndpoint.rateLimit += ch
+							}
+						}
 					} else {
 						switch m.editField {
 						case 0:
 							m.editHeartbeat.schedule += ch
 						}
+					}
+				}
+				return m, nil
+			}
+		}
+
+		if m.showGatewayEditModal {
+			switch msg.String() {
+			case "esc":
+				m.showGatewayEditModal = false
+				m.addLog(tuiDimStyle.Render("Gateway edit cancelled"))
+				return m, nil
+			case "j", "down":
+				if m.editField < editGatewayFieldCount-1 {
+					m.editField++
+				}
+				return m, nil
+			case "k", "up":
+				if m.editField > 0 {
+					m.editField--
+				}
+				return m, nil
+			case " ", "enter":
+				switch m.editField {
+				case 0:
+					m.editGateway.enabled = !m.editGateway.enabled
+				case 4:
+					m.editGateway.tlsEnabled = !m.editGateway.tlsEnabled
+				}
+				return m, nil
+			case "backspace":
+				switch m.editField {
+				case 1:
+					if len(m.editGateway.baseDomain) > 0 {
+						m.editGateway.baseDomain = m.editGateway.baseDomain[:len(m.editGateway.baseDomain)-1]
+					}
+				case 2:
+					if len(m.editGateway.gatewayClassName) > 0 {
+						m.editGateway.gatewayClassName = m.editGateway.gatewayClassName[:len(m.editGateway.gatewayClassName)-1]
+					}
+				case 3:
+					if len(m.editGateway.gatewayName) > 0 {
+						m.editGateway.gatewayName = m.editGateway.gatewayName[:len(m.editGateway.gatewayName)-1]
+					}
+				case 5:
+					if len(m.editGateway.certManagerClusterIssuer) > 0 {
+						m.editGateway.certManagerClusterIssuer = m.editGateway.certManagerClusterIssuer[:len(m.editGateway.certManagerClusterIssuer)-1]
+					}
+				case 6:
+					if len(m.editGateway.tlsSecretName) > 0 {
+						m.editGateway.tlsSecretName = m.editGateway.tlsSecretName[:len(m.editGateway.tlsSecretName)-1]
+					}
+				}
+				return m, nil
+			case "ctrl+s":
+				m.showGatewayEditModal = false
+				return m, m.applyGatewayEdit()
+			default:
+				ch := msg.String()
+				if len(ch) == 1 {
+					switch m.editField {
+					case 1:
+						m.editGateway.baseDomain += ch
+					case 2:
+						m.editGateway.gatewayClassName += ch
+					case 3:
+						m.editGateway.gatewayName += ch
+					case 5:
+						m.editGateway.certManagerClusterIssuer += ch
+					case 6:
+						m.editGateway.tlsSecretName += ch
 					}
 				}
 				return m, nil
@@ -3022,7 +3219,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if m.wizard.step == wizStepWhatsAppQR {
 						m.wizard.step = wizStepDone
 						m.wizard.resultMsgs = append(m.wizard.resultMsgs,
-							tuiDimStyle.Render("⚠ WhatsApp QR pairing skipped — scan later via: kubectl logs -l sympozium.ai/channel=whatsapp,sympozium.ai/instance="+m.wizard.instanceName+" -n "+m.namespace))
+							tuiDimStyle.Render("⚠ WhatsApp QR pairing skipped — scan later via: kubectl logs -l sympozium.ai/channel=whatsapp,sympozium.ai/instance="+m.wizard.instanceName+" -n "+m.wizard.targetNamespace))
 						m.input.Placeholder = "Press Enter to return"
 						return m, nil
 					}
@@ -3238,6 +3435,11 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.tableScroll = 0
 			return m, nil
 		case "8":
+			m.activeView = viewGateway
+			m.selectedRow = 0
+			m.tableScroll = 0
+			return m, nil
+		case "9":
 			m.activeView = viewPods
 			m.selectedRow = 0
 			m.tableScroll = 0
@@ -3386,6 +3588,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.personaPacks != nil {
 			m.personaPacks = *msg.personaPacks
 		}
+		m.gatewayConfig = msg.gatewayConfig
 		if msg.fetchErr != "" {
 			m.addLog(tuiErrorStyle.Render("✗ Fetch error: " + msg.fetchErr))
 			m.connected = false
@@ -3419,7 +3622,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.wizard.step = wizStepWhatsAppQR
 				m.wizard.qrStatus = "waiting"
 				m.input.Placeholder = "Waiting for WhatsApp pod... (press Esc to skip)"
-				return m, pollWhatsAppQRCmd(m.namespace, m.wizard.instanceName)
+				return m, pollWhatsAppQRCmd(m.wizard.targetNamespace, m.wizard.instanceName)
 			}
 
 			m.wizard.step = wizStepDone
@@ -3454,7 +3657,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.wizard.qrErr = msg.err.Error()
 				m.wizard.qrStatus = "error"
 				// Retry despite error
-				return m, pollWhatsAppQRCmd(m.namespace, m.wizard.instanceName)
+				return m, pollWhatsAppQRCmd(m.wizard.targetNamespace, m.wizard.instanceName)
 			}
 			m.wizard.qrStatus = msg.status
 			if len(msg.qrLines) > 0 {
@@ -3469,7 +3672,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			// Keep polling
-			return m, pollWhatsAppQRCmd(m.namespace, m.wizard.instanceName)
+			return m, pollWhatsAppQRCmd(m.wizard.targetNamespace, m.wizard.instanceName)
 		}
 		return m, nil
 
@@ -3544,6 +3747,11 @@ func (m tuiModel) activeViewCount() int {
 		return len(m.filteredPods())
 	case viewSchedules:
 		return len(m.schedules)
+	case viewGateway:
+		if m.gatewayConfig == nil {
+			return 0
+		}
+		return 1 + len(m.gatewayRoutes())
 	case viewPersonas:
 		return len(m.personaPacks)
 	}
@@ -3985,6 +4193,19 @@ func (m tuiModel) handleRowEdit() (tea.Model, tea.Cmd) {
 				tokenKey:  channelTokenKeyFor(ct),
 			})
 		}
+		// Populate web endpoint tab
+		m.editWebEndpoint = editWebEndpointForm{
+			enabled:   false,
+			hostname:  "",
+			rateLimit: "60",
+		}
+		if inst.Spec.WebEndpoint != nil {
+			m.editWebEndpoint.enabled = inst.Spec.WebEndpoint.Enabled
+			m.editWebEndpoint.hostname = inst.Spec.WebEndpoint.Hostname
+			if inst.Spec.WebEndpoint.RateLimit != nil && inst.Spec.WebEndpoint.RateLimit.RequestsPerMinute > 0 {
+				m.editWebEndpoint.rateLimit = fmt.Sprintf("%d", inst.Spec.WebEndpoint.RateLimit.RequestsPerMinute)
+			}
+		}
 		m.showEditModal = true
 	case viewSchedules:
 		if m.selectedRow >= len(m.schedules) {
@@ -4111,6 +4332,32 @@ func (m tuiModel) handleRowEdit() (tea.Model, tea.Cmd) {
 			})
 		}
 		m.showEditModal = true
+	case viewGateway:
+		m.editGateway = editGatewayForm{
+			gatewayClassName: "sympozium",
+			gatewayName:      "sympozium-gateway",
+			tlsSecretName:    "sympozium-wildcard-cert",
+		}
+		if m.gatewayConfig != nil && m.gatewayConfig.Spec.Gateway != nil {
+			gw := m.gatewayConfig.Spec.Gateway
+			m.editGateway.enabled = gw.Enabled
+			m.editGateway.baseDomain = gw.BaseDomain
+			if gw.GatewayClassName != "" {
+				m.editGateway.gatewayClassName = gw.GatewayClassName
+			}
+			if gw.Name != "" {
+				m.editGateway.gatewayName = gw.Name
+			}
+			if gw.TLS != nil {
+				m.editGateway.tlsEnabled = gw.TLS.Enabled
+				m.editGateway.certManagerClusterIssuer = gw.TLS.CertManagerClusterIssuer
+				if gw.TLS.SecretName != "" {
+					m.editGateway.tlsSecretName = gw.TLS.SecretName
+				}
+			}
+		}
+		m.editField = 0
+		m.showGatewayEditModal = true
 	default:
 		m.addLog(tuiDimStyle.Render("Edit not available for this view"))
 	}
@@ -4123,6 +4370,7 @@ func (m tuiModel) applyEditModal() tea.Cmd {
 	schedName := m.editScheduleName
 	mem := m.editMemory
 	hb := m.editHeartbeat
+	webEP := m.editWebEndpoint
 	skills := make([]editSkillItem, len(m.editSkills))
 	copy(skills, m.editSkills)
 	channels := make([]editChannelItem, len(m.editChannels))
@@ -4202,6 +4450,23 @@ func (m tuiModel) applyEditModal() tea.Cmd {
 				}
 			}
 			inst.Spec.Channels = channelSpecs
+
+			// Apply web endpoint toggle
+			if webEP.enabled {
+				rpm := 60
+				if v, err := strconv.Atoi(webEP.rateLimit); err == nil && v > 0 {
+					rpm = v
+				}
+				inst.Spec.WebEndpoint = &sympoziumv1alpha1.WebEndpointSpec{
+					Enabled:  true,
+					Hostname: webEP.hostname,
+					RateLimit: &sympoziumv1alpha1.RateLimitSpec{
+						RequestsPerMinute: rpm,
+					},
+				}
+			} else {
+				inst.Spec.WebEndpoint = nil
+			}
 
 			if err := k8sClient.Update(ctx, &inst); err != nil {
 				return cmdResultMsg{err: fmt.Errorf("update instance %q: %w", instName, err)}
@@ -4289,6 +4554,73 @@ func (m tuiModel) applyEditModal() tea.Cmd {
 
 		result := tuiSuccessStyle.Render("✓ " + strings.Join(msgs, ", "))
 		return cmdResultMsg{output: result}
+	}
+}
+
+// applyGatewayEdit saves the gateway configuration to a SympoziumConfig CR.
+func (m tuiModel) applyGatewayEdit() tea.Cmd {
+	ns := m.namespace
+	gw := m.editGateway
+	return func() tea.Msg {
+		if k8sClient == nil {
+			return cmdResultMsg{err: fmt.Errorf("not connected to cluster")}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		var config sympoziumv1alpha1.SympoziumConfig
+		err := k8sClient.Get(ctx, client.ObjectKey{Name: "default", Namespace: ns}, &config)
+		if err != nil {
+			if !k8serr.IsNotFound(err) {
+				return cmdResultMsg{err: fmt.Errorf("get SympoziumConfig: %w", err)}
+			}
+			// Create new
+			config = sympoziumv1alpha1.SympoziumConfig{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "default",
+					Namespace: ns,
+				},
+			}
+			config.Spec.Gateway = &sympoziumv1alpha1.GatewaySpec{
+				Enabled:          gw.enabled,
+				GatewayClassName: gw.gatewayClassName,
+				Name:             gw.gatewayName,
+				BaseDomain:       gw.baseDomain,
+			}
+			if gw.tlsEnabled {
+				config.Spec.Gateway.TLS = &sympoziumv1alpha1.GatewayTLSSpec{
+					Enabled:                  gw.tlsEnabled,
+					CertManagerClusterIssuer: gw.certManagerClusterIssuer,
+					SecretName:               gw.tlsSecretName,
+				}
+			}
+			if err := k8sClient.Create(ctx, &config); err != nil {
+				return cmdResultMsg{err: fmt.Errorf("create SympoziumConfig: %w", err)}
+			}
+			return cmdResultMsg{output: "Gateway config created"}
+		}
+		// Update existing
+		if config.Spec.Gateway == nil {
+			config.Spec.Gateway = &sympoziumv1alpha1.GatewaySpec{}
+		}
+		config.Spec.Gateway.Enabled = gw.enabled
+		config.Spec.Gateway.GatewayClassName = gw.gatewayClassName
+		config.Spec.Gateway.Name = gw.gatewayName
+		config.Spec.Gateway.BaseDomain = gw.baseDomain
+		if gw.tlsEnabled {
+			if config.Spec.Gateway.TLS == nil {
+				config.Spec.Gateway.TLS = &sympoziumv1alpha1.GatewayTLSSpec{}
+			}
+			config.Spec.Gateway.TLS.Enabled = gw.tlsEnabled
+			config.Spec.Gateway.TLS.CertManagerClusterIssuer = gw.certManagerClusterIssuer
+			config.Spec.Gateway.TLS.SecretName = gw.tlsSecretName
+		} else {
+			config.Spec.Gateway.TLS = nil
+		}
+		if err := k8sClient.Update(ctx, &config); err != nil {
+			return cmdResultMsg{err: fmt.Errorf("update SympoziumConfig: %w", err)}
+		}
+		return cmdResultMsg{output: "Gateway config saved"}
 	}
 }
 
@@ -5124,6 +5456,9 @@ func (m tuiModel) View() string {
 	if m.showEditModal {
 		return m.renderEditModal(base)
 	}
+	if m.showGatewayEditModal {
+		return m.renderGatewayEditModal(base)
+	}
 	if m.showModal {
 		return m.renderModalOverlay(base)
 	}
@@ -5201,6 +5536,8 @@ func (m tuiModel) renderTable(tableH int) string {
 		b.WriteString(m.renderPodsTable(tableH))
 	case viewSchedules:
 		b.WriteString(m.renderSchedulesTable(tableH))
+	case viewGateway:
+		b.WriteString(m.renderGatewayTable(tableH))
 	case viewPersonas:
 		b.WriteString(m.renderPersonasTable(tableH))
 	}
@@ -5656,6 +5993,115 @@ func (m tuiModel) renderSchedulesTable(tableH int) string {
 			}
 		}
 		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+// gatewayRoutes returns instances that have web endpoints enabled.
+func (m tuiModel) gatewayRoutes() []sympoziumv1alpha1.SympoziumInstance {
+	var routes []sympoziumv1alpha1.SympoziumInstance
+	for _, inst := range m.instances {
+		if inst.Spec.WebEndpoint != nil && inst.Spec.WebEndpoint.Enabled {
+			routes = append(routes, inst)
+		}
+	}
+	return routes
+}
+
+func (m tuiModel) renderGatewayTable(tableH int) string {
+	var b strings.Builder
+
+	header := fmt.Sprintf(" %-12s %-30s %-12s %-10s %-20s %-8s", "ENABLED", "BASE DOMAIN", "PHASE", "TLS", "ADDRESS", "LISTENERS")
+	b.WriteString(tuiColHeaderStyle.Render(padRight(header, m.width)))
+	b.WriteString("\n")
+
+	if m.gatewayConfig == nil {
+		b.WriteString(m.renderEmptyTable(tableH-1, "No gateway configured — create a SympoziumConfig to manage the gateway"))
+		return b.String()
+	}
+
+	gw := m.gatewayConfig.Spec.Gateway
+	enabled := "No"
+	baseDomain := "-"
+	tls := "Off"
+	if gw != nil {
+		if gw.Enabled {
+			enabled = "Yes"
+		}
+		if gw.BaseDomain != "" {
+			baseDomain = gw.BaseDomain
+		}
+		if gw.TLS != nil && gw.TLS.Enabled {
+			tls = "On"
+		}
+	}
+
+	phase := m.gatewayConfig.Status.Phase
+	if phase == "" {
+		phase = "-"
+	}
+	address := "-"
+	listeners := "-"
+	if m.gatewayConfig.Status.Gateway != nil {
+		if m.gatewayConfig.Status.Gateway.Address != "" {
+			address = m.gatewayConfig.Status.Gateway.Address
+		}
+		listeners = fmt.Sprintf("%d", m.gatewayConfig.Status.Gateway.ListenerCount)
+	}
+
+	row := fmt.Sprintf(" %-12s %-30s %-12s %-10s %-20s %-8s",
+		enabled, truncate(baseDomain, 30), phase, tls, truncate(address, 20), listeners)
+	b.WriteString(m.styleRow(0, row))
+	b.WriteString("\n")
+
+	rowsUsed := 1
+
+	// Routes section
+	routes := m.gatewayRoutes()
+	if rowsUsed < tableH-1 {
+		routeHeader := fmt.Sprintf(" %-22s %-30s %-12s %-40s", "INSTANCE", "HOSTNAME", "STATUS", "URL")
+		b.WriteString(tuiColHeaderStyle.Render(padRight(routeHeader, m.width)))
+		b.WriteString("\n")
+		rowsUsed++
+	}
+
+	if len(routes) == 0 {
+		if rowsUsed < tableH-1 {
+			b.WriteString(m.renderEmptyTable(tableH-1-rowsUsed, "No routes — enable web endpoints on instances"))
+			return b.String()
+		}
+	} else {
+		for i, inst := range routes {
+			if rowsUsed >= tableH-1 {
+				break
+			}
+			hostname := "-"
+			url := "-"
+			status := "-"
+			if inst.Spec.WebEndpoint.Hostname != "" {
+				hostname = inst.Spec.WebEndpoint.Hostname
+			} else if gw != nil && gw.BaseDomain != "" {
+				hostname = inst.Name + "." + gw.BaseDomain
+			}
+			if inst.Status.WebEndpoint != nil {
+				if inst.Status.WebEndpoint.Status != "" {
+					status = inst.Status.WebEndpoint.Status
+				}
+				if inst.Status.WebEndpoint.URL != "" {
+					url = inst.Status.WebEndpoint.URL
+				}
+			}
+			routeRow := fmt.Sprintf(" %-22s %-30s %-12s %-40s",
+				truncate(inst.Name, 22), truncate(hostname, 30), status, truncate(url, 40))
+			b.WriteString(m.styleRow(1+i, routeRow))
+			b.WriteString("\n")
+			rowsUsed++
+		}
+	}
+
+	// Fill remaining rows
+	for i := rowsUsed; i < tableH-1; i++ {
+		b.WriteString(strings.Repeat(" ", m.width) + "\n")
 	}
 	return b.String()
 }
@@ -6528,6 +6974,74 @@ func (m tuiModel) renderModalOverlay(base string) string {
 	return strings.Join(lines, "\n")
 }
 
+func (m tuiModel) renderGatewayEditModal(base string) string {
+	var content strings.Builder
+
+	content.WriteString(tuiModalTitleStyle.Render("  ✎  Edit Gateway Configuration"))
+	content.WriteString("\n\n")
+
+	highlight := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#1A1A2E")).
+		Background(lipgloss.Color("#E94560")).
+		Bold(true)
+	label := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#CDD6F4")).
+		Background(lipgloss.Color("#16213E")).
+		Width(28)
+	value := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#89DCEB")).
+		Background(lipgloss.Color("#16213E"))
+
+	renderField := func(idx int, name string, val string) {
+		lbl := label.Render("  " + name + ":")
+		v := value.Render(val)
+		if m.editField == idx {
+			content.WriteString(highlight.Render("▸") + " " + lbl + " " + v)
+		} else {
+			content.WriteString("  " + lbl + " " + v)
+		}
+		content.WriteString("\n")
+	}
+	renderBool := func(idx int, name string, val bool) {
+		s := "Off"
+		if val {
+			s = "On"
+		}
+		renderField(idx, name, "["+s+"]")
+	}
+
+	renderBool(0, "Enabled", m.editGateway.enabled)
+	renderField(1, "Base Domain", m.editGateway.baseDomain)
+	renderField(2, "GatewayClass Name", m.editGateway.gatewayClassName)
+	renderField(3, "Gateway Name", m.editGateway.gatewayName)
+	renderBool(4, "TLS Enabled", m.editGateway.tlsEnabled)
+	renderField(5, "CertManager Issuer", m.editGateway.certManagerClusterIssuer)
+	renderField(6, "TLS Secret Name", m.editGateway.tlsSecretName)
+
+	content.WriteString("\n")
+	content.WriteString(tuiDimStyle.Render("  Ctrl+S to save • Esc to cancel"))
+
+	modal := tuiModalBorderStyle.Render(content.String())
+	lines := strings.Split(base, "\n")
+	modalLines := strings.Split(modal, "\n")
+	startRow := (len(lines) - len(modalLines)) / 2
+	if startRow < 1 {
+		startRow = 1
+	}
+	for i, ml := range modalLines {
+		row := startRow + i
+		if row >= 0 && row < len(lines) {
+			mw := lipgloss.Width(ml)
+			pad := (m.width - mw) / 2
+			if pad < 0 {
+				pad = 0
+			}
+			lines[row] = strings.Repeat(" ", pad) + ml
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
 func (m tuiModel) renderEditModal(base string) string {
 	var content strings.Builder
 
@@ -6734,6 +7248,30 @@ func (m tuiModel) renderEditModal(base string) string {
 					lbl = value.Render(lbl)
 				}
 				content.WriteString("  " + lbl + "\n")
+			}
+		}
+	} else if m.editTab == 4 {
+		// Web Endpoint tab
+		renderBool(0, "Enabled", m.editWebEndpoint.enabled)
+		renderField(1, "Hostname", m.editWebEndpoint.hostname)
+		renderField(2, "Rate Limit (rpm)", m.editWebEndpoint.rateLimit)
+
+		// Show status (read-only) when the instance has a web endpoint status
+		if m.editInstanceName != "" {
+			for _, inst := range m.instances {
+				if inst.Name == m.editInstanceName && inst.Status.WebEndpoint != nil {
+					we := inst.Status.WebEndpoint
+					content.WriteString("\n")
+					content.WriteString(tuiDimStyle.Render("  ── Status ──────────────────────") + "\n")
+					content.WriteString(fmt.Sprintf("  %s %s\n", label.Render("  Status:"), value.Render(we.Status)))
+					if we.URL != "" {
+						content.WriteString(fmt.Sprintf("  %s %s\n", label.Render("  URL:"), value.Render(we.URL)))
+					}
+					if we.AuthSecretName != "" {
+						content.WriteString(fmt.Sprintf("  %s %s\n", label.Render("  API Key Secret:"), value.Render(we.AuthSecretName)))
+					}
+					break
+				}
 			}
 		}
 	}
@@ -7448,6 +7986,15 @@ func (m tuiModel) advanceWizard(val string) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		w.err = ""
+		w.step = wizStepNamespace
+		m.input.Placeholder = fmt.Sprintf("Namespace (default: %s)", m.namespace)
+		return m, nil
+
+	case wizStepNamespace:
+		if val == "" {
+			val = m.namespace
+		}
+		w.targetNamespace = val
 		w.step = wizStepInstanceName
 		m.input.Placeholder = "Instance name (default: my-agent)"
 		return m, nil
@@ -7578,13 +8125,18 @@ func (m tuiModel) advanceWizard(val string) (tea.Model, tea.Cmd) {
 			}
 		}
 		w.modelName = val
-		if w.secretEnvKey == "" || w.apiKey != "" {
-			// Already have the key (or don't need one) — skip to channel.
-			w.step = wizStepChannel
-			m.input.Placeholder = "Channel [1-5] (default: 5 — skip)"
-			return m, nil
-		}
-		// Edge case: key was skipped — already handled above.
+		w.step = wizStepGithubRepo
+		m.input.Placeholder = "GitHub repo owner/repo (Enter to skip)"
+		return m, nil
+
+	case wizStepGithubRepo:
+		w.githubRepo = strings.TrimSpace(val)
+		w.step = wizStepTeamTask
+		m.input.Placeholder = "What should the agent work on? (Enter to skip)"
+		return m, nil
+
+	case wizStepTeamTask:
+		w.teamTask = strings.TrimSpace(val)
 		w.step = wizStepChannel
 		m.input.Placeholder = "Channel [1-5] (default: 5 — skip)"
 		return m, nil
@@ -7676,12 +8228,17 @@ func (m tuiModel) advanceWizard(val string) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		w.step = wizStepApplying
+		ns := w.targetNamespace
 		return m, m.asyncCmd(func() (string, error) {
-			return tuiOnboardApply(m.namespace, w)
+			return tuiOnboardApply(ns, w)
 		})
 
 	case wizStepDone:
 		// User pressed Enter on final screen — close wizard.
+		// Switch TUI namespace to match the one used during onboarding.
+		if w.targetNamespace != "" && w.targetNamespace != m.namespace {
+			m.namespace = w.targetNamespace
+		}
 		w.reset()
 		m.inputFocused = false
 		m.input.Blur()
@@ -7833,6 +8390,41 @@ func (m tuiModel) advanceWizard(val string) (tea.Model, tea.Cmd) {
 			}
 		}
 		w.modelName = val
+		// Check if any persona in the pack uses github-gitops.
+		hasGithub := false
+		for _, pp := range m.personaPacks {
+			if pp.Name == w.personaPackName {
+				for _, p := range pp.Spec.Personas {
+					for _, sk := range p.Skills {
+						if sk == "github-gitops" {
+							hasGithub = true
+							break
+						}
+					}
+					if hasGithub {
+						break
+					}
+				}
+				break
+			}
+		}
+		if hasGithub {
+			w.step = wizStepPersonaGithubRepo
+			m.input.Placeholder = "GitHub repo owner/repo (e.g. myorg/myapp)"
+			return m, nil
+		}
+		w.step = wizStepPersonaTeamTask
+		m.input.Placeholder = "Instructions for the team (Enter to use defaults)"
+		return m, nil
+
+	case wizStepPersonaGithubRepo:
+		w.githubRepo = strings.TrimSpace(val)
+		w.step = wizStepPersonaTeamTask
+		m.input.Placeholder = "Instructions for the team (Enter to use defaults)"
+		return m, nil
+
+	case wizStepPersonaTeamTask:
+		w.teamTask = strings.TrimSpace(val)
 		w.step = wizStepPersonaChannels
 		m.input.Placeholder = "Toggle channels with number, Enter when done"
 		return m, nil
@@ -7967,6 +8559,9 @@ func (m tuiModel) renderWizardPanel(h int) string {
 		lines = append(lines, labelStyle.Render("  ✅ Cluster check passed"))
 		lines = append(lines, "")
 	}
+	if w.targetNamespace != "" && w.step > wizStepNamespace {
+		lines = append(lines, hintStyle.Render("  Namespace: ")+valueStyle.Render(w.targetNamespace))
+	}
 
 	if w.step > wizStepInstanceName {
 		stepNum = 2
@@ -7985,6 +8580,16 @@ func (m tuiModel) renderWizardPanel(h int) string {
 		if w.apiKey != "" && w.step > wizStepAPIKey {
 			lines = append(lines, hintStyle.Render("  API Key:  ")+valueStyle.Render("••••••••"))
 		}
+	}
+	if w.githubRepo != "" && w.step > wizStepGithubRepo {
+		lines = append(lines, hintStyle.Render("  GitHub:   ")+valueStyle.Render(w.githubRepo))
+	}
+	if w.teamTask != "" && w.step > wizStepTeamTask {
+		display := w.teamTask
+		if len(display) > 40 {
+			display = display[:37] + "..."
+		}
+		lines = append(lines, hintStyle.Render("  Task:     ")+valueStyle.Render(display))
 	}
 	if w.step > wizStepChannelToken && w.step > wizStepChannel {
 		stepNum = 4
@@ -8011,23 +8616,30 @@ func (m tuiModel) renderWizardPanel(h int) string {
 		lines = append(lines, hintStyle.Render("  Heartbeat: ")+valueStyle.Render(hbLabel))
 	}
 
-	if w.step >= wizStepInstanceName && w.step <= wizStepHeartbeat {
+	if w.step >= wizStepNamespace && w.step <= wizStepHeartbeat {
 		lines = append(lines, "")
 	}
 
 	// Show current step prompt.
 	switch w.step {
 	case wizStepCheckCluster:
-		lines = append(lines, stepStyle.Render("  📋 Step 1/6 — Checking cluster..."))
+		lines = append(lines, stepStyle.Render("  📋 Step 1/9 — Checking cluster..."))
+
+	case wizStepNamespace:
+		lines = append(lines, stepStyle.Render("  📋 Step 2/9 — Target Namespace"))
+		lines = append(lines, menuStyle.Render("  Which namespace should resources be created in?"))
+		lines = append(lines, "")
+		lines = append(lines, labelStyle.Render("  Enter namespace:"))
+		lines = append(lines, hintStyle.Render(fmt.Sprintf("  Press Enter to use current: %s", m.namespace)))
 
 	case wizStepInstanceName:
-		lines = append(lines, stepStyle.Render("  📋 Step 1/6 — Create your SympoziumInstance"))
+		lines = append(lines, stepStyle.Render("  📋 Step 3/9 — Create your SympoziumInstance"))
 		lines = append(lines, menuStyle.Render("  An instance represents you (or a tenant) in the system."))
 		lines = append(lines, "")
 		lines = append(lines, labelStyle.Render("  Enter instance name:"))
 
 	case wizStepProvider:
-		lines = append(lines, stepStyle.Render("  📋 Step 2/6 — AI Provider"))
+		lines = append(lines, stepStyle.Render("  📋 Step 3/9 — AI Provider"))
 		lines = append(lines, menuStyle.Render("  Which model provider do you want to use?"))
 		lines = append(lines, "")
 		lines = append(lines, menuNumStyle.Render("  1)")+menuStyle.Render(" OpenAI"))
@@ -8037,11 +8649,11 @@ func (m tuiModel) renderWizardPanel(h int) string {
 		lines = append(lines, menuNumStyle.Render("  5)")+menuStyle.Render(" Other / OpenAI-compatible"))
 
 	case wizStepBaseURL:
-		lines = append(lines, stepStyle.Render("  📋 Step 2/6 — AI Provider (continued)"))
+		lines = append(lines, stepStyle.Render("  📋 Step 3/9 — AI Provider (continued)"))
 		lines = append(lines, labelStyle.Render("  Enter base URL:"))
 
 	case wizStepAPIKey:
-		lines = append(lines, stepStyle.Render("  📋 Step 2/6 — AI Provider (continued)"))
+		lines = append(lines, stepStyle.Render("  📋 Step 3/9 — AI Provider (continued)"))
 		lines = append(lines, labelStyle.Render(fmt.Sprintf("  Paste your %s:", w.secretEnvKey)))
 		envVal := os.Getenv(w.secretEnvKey)
 		if envVal != "" {
@@ -8052,7 +8664,7 @@ func (m tuiModel) renderWizardPanel(h int) string {
 		lines = append(lines, hintStyle.Render("  (providing a key lets us fetch your available models)"))
 
 	case wizStepModel:
-		lines = append(lines, stepStyle.Render("  📋 Step 2/6 — Select Model"))
+		lines = append(lines, stepStyle.Render("  📋 Step 3/9 — Select Model"))
 		if len(w.fetchedModels) > 0 {
 			lines = append(lines, menuStyle.Render(fmt.Sprintf("  Found %d models from your %s account:", len(w.fetchedModels), w.providerName)))
 			lines = append(lines, "")
@@ -8116,8 +8728,24 @@ func (m tuiModel) renderWizardPanel(h int) string {
 			lines = append(lines, labelStyle.Render("  Enter model name:"))
 		}
 
+	case wizStepGithubRepo:
+		lines = append(lines, stepStyle.Render("  📋 Step 4/9 — GitHub Repository (optional)"))
+		lines = append(lines, menuStyle.Render("  Point your agent at a GitHub repository to enable"))
+		lines = append(lines, menuStyle.Render("  issue triage, PR reviews, and code contributions."))
+		lines = append(lines, "")
+		lines = append(lines, labelStyle.Render("  Enter repo (owner/repo):"))
+		lines = append(lines, hintStyle.Render("  Press Enter to skip — you can configure this later."))
+
+	case wizStepTeamTask:
+		lines = append(lines, stepStyle.Render("  📋 Step 5/9 — Instructions (optional)"))
+		lines = append(lines, menuStyle.Render("  Give your agent an objective or task to work on."))
+		lines = append(lines, menuStyle.Render("  This will be included in every heartbeat run."))
+		lines = append(lines, "")
+		lines = append(lines, labelStyle.Render("  What should the agent work on?"))
+		lines = append(lines, hintStyle.Render("  Press Enter to skip."))
+
 	case wizStepChannel:
-		lines = append(lines, stepStyle.Render("  📋 Step 3/6 — Connect a Channel (optional)"))
+		lines = append(lines, stepStyle.Render("  📋 Step 6/9 — Connect a Channel (optional)"))
 		lines = append(lines, menuStyle.Render("  Channels let your agent receive messages from external platforms."))
 		lines = append(lines, "")
 		lines = append(lines, menuNumStyle.Render("  1)")+menuStyle.Render(" Telegram  — easiest, just talk to @BotFather"))
@@ -8127,16 +8755,16 @@ func (m tuiModel) renderWizardPanel(h int) string {
 		lines = append(lines, menuNumStyle.Render("  5)")+menuStyle.Render(" Skip — I'll add a channel later"))
 
 	case wizStepChannelToken:
-		lines = append(lines, stepStyle.Render("  📋 Step 3/6 — Connect a Channel (continued)"))
+		lines = append(lines, stepStyle.Render("  📋 Step 6/9 — Connect a Channel (continued)"))
 		lines = append(lines, labelStyle.Render(fmt.Sprintf("  Paste your %s token:", w.channelType)))
 
 	case wizStepPolicy:
-		lines = append(lines, stepStyle.Render("  📋 Step 4/6 — Default Policy"))
+		lines = append(lines, stepStyle.Render("  📋 Step 7/9 — Default Policy"))
 		lines = append(lines, menuStyle.Render("  A SympoziumPolicy controls what tools agents can use, sandboxing, etc."))
 		lines = append(lines, labelStyle.Render("  Apply the default policy?"))
 
 	case wizStepHeartbeat:
-		lines = append(lines, stepStyle.Render("  📋 Step 5/6 — Heartbeat Schedule"))
+		lines = append(lines, stepStyle.Render("  📋 Step 8/9 — Heartbeat Schedule"))
 		lines = append(lines, menuStyle.Render("  A heartbeat lets your agent wake up periodically to review memory"))
 		lines = append(lines, menuStyle.Render("  and note anything that needs attention."))
 		lines = append(lines, "")
@@ -8147,17 +8775,27 @@ func (m tuiModel) renderWizardPanel(h int) string {
 		lines = append(lines, menuNumStyle.Render("  5)")+menuStyle.Render(" Disabled — no heartbeat"))
 
 	case wizStepConfirm:
-		lines = append(lines, stepStyle.Render("  📋 Step 6/6 — Confirm"))
+		lines = append(lines, stepStyle.Render("  📋 Step 9/9 — Confirm"))
 		lines = append(lines, "")
 		lines = append(lines, tuiSepStyle.Render("  "+strings.Repeat("━", 50)))
 		lines = append(lines, labelStyle.Render("  Summary"))
 		lines = append(lines, tuiSepStyle.Render("  "+strings.Repeat("━", 50)))
 		lines = append(lines, hintStyle.Render("  Instance:  ")+valueStyle.Render(w.instanceName)+
-			hintStyle.Render("  (namespace: ")+valueStyle.Render(m.namespace)+hintStyle.Render(")"))
+			hintStyle.Render("  (namespace: ")+valueStyle.Render(w.targetNamespace)+hintStyle.Render(")"))
 		lines = append(lines, hintStyle.Render("  Provider:  ")+valueStyle.Render(w.providerName)+
 			hintStyle.Render("  (model: ")+valueStyle.Render(w.modelName)+hintStyle.Render(")"))
 		if w.baseURL != "" {
 			lines = append(lines, hintStyle.Render("  Base URL:  ")+valueStyle.Render(w.baseURL))
+		}
+		if w.githubRepo != "" {
+			lines = append(lines, hintStyle.Render("  GitHub:    ")+valueStyle.Render(w.githubRepo))
+		}
+		if w.teamTask != "" {
+			display := w.teamTask
+			if len(display) > 50 {
+				display = display[:47] + "..."
+			}
+			lines = append(lines, hintStyle.Render("  Task:      ")+valueStyle.Render(display))
 		}
 		if w.channelType != "" {
 			lines = append(lines, hintStyle.Render("  Channel:   ")+valueStyle.Render(w.channelType))
@@ -8297,6 +8935,16 @@ func (m tuiModel) renderPersonaWizardPanel(h int,
 	if w.apiKey != "" && w.step > wizStepPersonaAPIKey {
 		lines = append(lines, hintStyle.Render("  API Key: ")+valueStyle.Render("••••"+w.apiKey[max(0, len(w.apiKey)-4):]))
 	}
+	if w.githubRepo != "" && w.step > wizStepPersonaGithubRepo {
+		lines = append(lines, hintStyle.Render("  GitHub:  ")+valueStyle.Render(w.githubRepo))
+	}
+	if w.teamTask != "" && w.step > wizStepPersonaTeamTask {
+		display := w.teamTask
+		if len(display) > 40 {
+			display = display[:37] + "..."
+		}
+		lines = append(lines, hintStyle.Render("  Task:    ")+valueStyle.Render(display))
+	}
 
 	// Current step.
 	switch w.step {
@@ -8360,8 +9008,27 @@ func (m tuiModel) renderPersonaWizardPanel(h int,
 			lines = append(lines, "")
 		}
 
+	case wizStepPersonaGithubRepo:
+		lines = append(lines, stepStyle.Render("  Step 5: GitHub Repository"))
+		lines = append(lines, "")
+		lines = append(lines, hintStyle.Render("  This pack uses the github-gitops skill."))
+		lines = append(lines, hintStyle.Render("  Point all personas at a GitHub repository for"))
+		lines = append(lines, hintStyle.Render("  issue triage, PR reviews, and code contributions."))
+		lines = append(lines, "")
+		lines = append(lines, labelStyle.Render("  Enter repo (owner/repo):"))
+
+	case wizStepPersonaTeamTask:
+		lines = append(lines, stepStyle.Render("  Step 6: Team Instructions"))
+		lines = append(lines, "")
+		lines = append(lines, hintStyle.Render("  Give the team an objective or set of instructions."))
+		lines = append(lines, hintStyle.Render("  This is prepended to each persona's scheduled task"))
+		lines = append(lines, hintStyle.Render("  so every agent works toward the same goal."))
+		lines = append(lines, "")
+		lines = append(lines, labelStyle.Render("  What should the team work on?"))
+		lines = append(lines, hintStyle.Render("  Press Enter to use each persona's default task."))
+
 	case wizStepPersonaChannels:
-		lines = append(lines, stepStyle.Render("  Step 5: Channel Bindings"))
+		lines = append(lines, stepStyle.Render("  Step 7: Channel Bindings"))
 		lines = append(lines, "")
 		lines = append(lines, hintStyle.Render("  Toggle channels to bind to all personas in this pack."))
 		lines = append(lines, hintStyle.Render("  Type a number to toggle, press Enter when done."))
@@ -8379,14 +9046,14 @@ func (m tuiModel) renderPersonaWizardPanel(h int,
 	case wizStepPersonaChannelToken:
 		if w.personaChannelIdx < len(w.personaChannels) {
 			ch := w.personaChannels[w.personaChannelIdx]
-			lines = append(lines, stepStyle.Render(fmt.Sprintf("  Step 5b: %s Token", strings.Title(ch.chType))))
+			lines = append(lines, stepStyle.Render(fmt.Sprintf("  Step 7b: %s Token", strings.Title(ch.chType))))
 			lines = append(lines, "")
 			lines = append(lines, hintStyle.Render(fmt.Sprintf("  Paste %s or press Enter to skip.", ch.tokenKey)))
 		}
 		lines = append(lines, "")
 
 	case wizStepPersonaHeartbeat:
-		lines = append(lines, stepStyle.Render("  Step 6: Heartbeat Interval"))
+		lines = append(lines, stepStyle.Render("  Step 8: Heartbeat Interval"))
 		lines = append(lines, "")
 		lines = append(lines, hintStyle.Render("  How often should personas wake up?"))
 		lines = append(lines, hintStyle.Render("  This overrides each persona's default schedule."))
@@ -8399,12 +9066,22 @@ func (m tuiModel) renderPersonaWizardPanel(h int,
 		lines = append(lines, "")
 
 	case wizStepPersonaConfirm:
-		lines = append(lines, stepStyle.Render("  Step 7: Confirm"))
+		lines = append(lines, stepStyle.Render("  Step 9: Confirm"))
 		lines = append(lines, "")
 		lines = append(lines, labelStyle.Render("  Summary:"))
 		lines = append(lines, hintStyle.Render("  Pack:      ")+valueStyle.Render(w.personaPackName))
 		lines = append(lines, hintStyle.Render("  Provider:  ")+valueStyle.Render(w.providerName))
 		lines = append(lines, hintStyle.Render("  Model:     ")+valueStyle.Render(w.modelName))
+		if w.githubRepo != "" {
+			lines = append(lines, hintStyle.Render("  GitHub:    ")+valueStyle.Render(w.githubRepo))
+		}
+		if w.teamTask != "" {
+			display := w.teamTask
+			if len(display) > 50 {
+				display = display[:47] + "..."
+			}
+			lines = append(lines, hintStyle.Render("  Task:      ")+valueStyle.Render(display))
+		}
 		hbLabel := w.heartbeatLabel
 		if hbLabel == "" {
 			hbLabel = "every hour"
@@ -8726,6 +9403,19 @@ func tuiPersonaApply(ns string, w *wizardState) (string, error) {
 		},
 	}
 
+	// Store GitHub repo as skill params so the controller passes it to instances.
+	if w.githubRepo != "" {
+		if pack.Spec.SkillParams == nil {
+			pack.Spec.SkillParams = make(map[string]map[string]string)
+		}
+		pack.Spec.SkillParams["github-gitops"] = map[string]string{"repo": w.githubRepo}
+	}
+
+	// Store team task override.
+	if w.teamTask != "" {
+		pack.Spec.TaskOverride = w.teamTask
+	}
+
 	// Update each persona with the chosen model and channel bindings.
 	var enabledChannels []string
 	channelConfigs := make(map[string]string)
@@ -8768,6 +9458,16 @@ func tuiPersonaApply(ns string, w *wizardState) (string, error) {
 
 // tuiOnboardApply creates all K8s resources for the onboard wizard.
 // Uses the K8s client directly — no kubectl exec — so it's TUI-safe.
+// onboardHeartbeatTask returns the heartbeat task, incorporating the user's
+// team objective if one was provided during onboarding.
+func onboardHeartbeatTask(teamTask string) string {
+	base := "Review your memory. Summarise what you know so far and note anything that needs attention."
+	if teamTask != "" {
+		return fmt.Sprintf("OBJECTIVE: %s\n\n%s", teamTask, base)
+	}
+	return base
+}
+
 func tuiOnboardApply(ns string, w *wizardState) (string, error) {
 	ctx := context.Background()
 	var msgs []string
@@ -8906,6 +9606,14 @@ func tuiOnboardApply(ns string, w *wizardState) (string, error) {
 		{SkillPackRef: "llmfit"},
 	}
 
+	// Add github-gitops skill if a repo was specified.
+	if w.githubRepo != "" {
+		inst.Spec.Skills = append(inst.Spec.Skills, sympoziumv1alpha1.SkillRef{
+			SkillPackRef: "github-gitops",
+			Params:       map[string]string{"repo": w.githubRepo},
+		})
+	}
+
 	// Memory is on by default.
 	inst.Spec.Memory = &sympoziumv1alpha1.MemorySpec{
 		Enabled:   true,
@@ -8943,7 +9651,7 @@ func tuiOnboardApply(ns string, w *wizardState) (string, error) {
 			Spec: sympoziumv1alpha1.SympoziumScheduleSpec{
 				InstanceRef:       w.instanceName,
 				Schedule:          heartbeatCron,
-				Task:              "Review your memory. Summarise what you know so far and note anything that needs attention.",
+				Task:              onboardHeartbeatTask(w.teamTask),
 				Type:              "heartbeat",
 				ConcurrencyPolicy: "Forbid",
 				IncludeMemory:     true,

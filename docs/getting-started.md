@@ -451,7 +451,7 @@ iteration without approval gates.
 
 ## Built-in SkillPacks
 
-Sympozium ships with four built-in SkillPacks. Enable them on any
+Sympozium ships with six built-in SkillPacks. Enable them on any
 SympoziumInstance:
 
 | SkillPack | Category | What it includes |
@@ -460,6 +460,8 @@ SympoziumInstance:
 | **sre-observability** | SRE | Observability triage with Prometheus queries, Loki/kubectl log analysis, and event correlation. Comes with a sidecar and read-only observability RBAC. |
 | **incident-response** | SRE | Structured incident triage, log analysis, rollback procedures. |
 | **code-review** | Development | Code review checklist, security anti-patterns, Go-specific review patterns. |
+| **llmfit** | SRE | Node-level model placement analysis. Runs llmfit probes per node and ranks best nodes for requested models. Comes with a sidecar containing `llmfit`, `kubectl`, and `jq`. |
+| **web-endpoint** | Connectivity | Expose agents as HTTP APIs — OpenAI-compatible chat completions and MCP protocol. Deploys a long-lived web-proxy sidecar with bearer-token auth and rate limiting. See [Web Endpoint Skill](skills/web-endpoint.md). |
 
 Apply them from the `config/skills/` directory:
 
@@ -604,9 +606,41 @@ activate it with your API key — the controller does the rest.
 
 ---
 
+## Troubleshooting
+
+### NetworkPolicy blocks API server on non-standard ports (k3s)
+
+Sympozium's default network policies allow egress on ports `443` and `6443` for
+Kubernetes API server access. On clusters where the API server listens on a
+non-standard port (e.g. k3s with `https-listen-port: 6444`), the `kubernetes`
+ClusterIP service maps `443 → 6444`. Some CNI implementations (notably
+kube-router in k3s) evaluate egress rules **after DNAT**, so the actual
+destination port seen by the policy is `6444` — which is not in the default
+allow list.
+
+**Symptoms:** `kubectl` commands from `skill-k8s-ops` sidecars fail with
+`The connection to the server <ip>:443 was refused`.
+
+**Fix:** Add the non-standard port to `networkPolicies.extraEgressPorts` in your
+Helm values:
+
+```yaml
+networkPolicies:
+  enabled: true
+  extraEgressPorts: [6444]
+```
+
+Then upgrade:
+
+```bash
+helm upgrade sympozium oci://ghcr.io/alexsjones/sympozium/charts/sympozium \
+  -n sympozium-system -f values.yaml
+```
+
 ## What's next
 
-- **Write a custom SkillPack** — see [Writing Skills](writing-skills.md)
-- **Add a new tool** — see [Writing Tools](writing-tools.md)
-- **Write integration tests** — see [Writing Integration Tests](writing-integration-tests.md)
-- **Read the full architecture** — see [Design Document](sympozium-design.md)
+- **Expose agents as HTTP APIs** — see [Web Endpoint Skill](skills/web-endpoint.md)
+- **Write a custom SkillPack** — see [Writing Skills](guides/writing-skills.md)
+- **Add a new tool** — see [Writing Tools](guides/writing-tools.md)
+- **Write integration tests** — see [Writing Integration Tests](guides/writing-integration-tests.md)
+- **Read the full architecture** — see [Design Document](design.md)

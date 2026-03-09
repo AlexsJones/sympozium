@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { useInstances, useDeleteInstance, useCreateInstance, useSkills } from "@/hooks/use-api";
 import { StatusBadge } from "@/components/status-badge";
 import { OnboardingWizard, type WizardResult } from "@/components/onboarding-wizard";
@@ -12,6 +12,7 @@ import {
   TableBody,
   TableCell,
 } from "@/components/ui/table";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -19,7 +20,6 @@ import { Plus, Trash2, ExternalLink } from "lucide-react";
 import { formatAge } from "@/lib/utils";
 
 export function InstancesPage() {
-  const navigate = useNavigate();
   const { data, isLoading } = useInstances();
   const { data: skillPacks } = useSkills();
   const deleteInstance = useDeleteInstance();
@@ -28,9 +28,11 @@ export function InstancesPage() {
   const [search, setSearch] = useState("");
   const [whatsAppInstance, setWhatsAppInstance] = useState<string | null>(null);
 
-  const filtered = (data || []).filter((inst) =>
-    inst.metadata.name.toLowerCase().includes(search.toLowerCase())
-  );
+  const filtered = (data || [])
+    .filter((inst) =>
+      inst.metadata.name.toLowerCase().includes(search.toLowerCase())
+    )
+    .sort((a, b) => a.metadata.name.localeCompare(b.metadata.name));
 
   function handleComplete(result: WizardResult) {
     createInstance.mutate(
@@ -41,7 +43,19 @@ export function InstancesPage() {
         baseURL: result.baseURL || undefined,
         secretName: result.secretName || undefined,
         apiKey: result.apiKey || undefined,
-        skills: result.skills.map((skillPackRef) => ({ skillPackRef })),
+        skills: result.skills.map((skillPackRef) => {
+          if (skillPackRef === "web-endpoint") {
+            const params: Record<string, string> = {};
+            if (result.webEndpointRPM && result.webEndpointRPM !== "60") {
+              params.rate_limit_rpm = result.webEndpointRPM;
+            }
+            if (result.webEndpointHostname) {
+              params.hostname = result.webEndpointHostname;
+            }
+            return { skillPackRef, params: Object.keys(params).length > 0 ? params : undefined };
+          }
+          return { skillPackRef };
+        }),
         channels: result.channels.map((type) => ({
           type,
           configRef: result.channelConfigs[type]
@@ -53,10 +67,6 @@ export function InstancesPage() {
       {
         onSuccess: () => {
           setWizardOpen(false);
-          if (result.skills.includes("github-gitops")) {
-            navigate(`/instances/${result.name}?tab=skills&connect=github`);
-            return;
-          }
           if (result.channels.includes("whatsapp")) {
             setWhatsAppInstance(result.name);
           }
@@ -120,13 +130,20 @@ export function InstancesPage() {
             {filtered.map((inst) => (
               <TableRow key={inst.metadata.name}>
                 <TableCell className="font-mono text-sm">
-                  <Link
-                    to={`/instances/${inst.metadata.name}`}
-                    className="hover:text-primary flex items-center gap-1"
-                  >
-                    {inst.metadata.name}
-                    <ExternalLink className="h-3 w-3 opacity-50" />
-                  </Link>
+                  <div className="flex items-center gap-2">
+                    <Link
+                      to={`/instances/${inst.metadata.name}`}
+                      className="hover:text-primary flex items-center gap-1"
+                    >
+                      {inst.metadata.name}
+                      <ExternalLink className="h-3 w-3 opacity-50" />
+                    </Link>
+                    {inst.metadata.labels?.["sympozium.ai/persona-pack"] && (
+                      <Badge variant="outline" className="text-[10px] px-1.5 py-0 text-indigo-400 border-indigo-500/30">
+                        {inst.metadata.labels["sympozium.ai/persona-pack"]}
+                      </Badge>
+                    )}
+                  </div>
                 </TableCell>
                 <TableCell className="text-sm">
                   {inst.spec.authRefs?.[0]?.provider || "—"}

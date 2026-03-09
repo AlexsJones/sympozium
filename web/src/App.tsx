@@ -12,6 +12,7 @@ import { SkillsPage } from "@/pages/skills";
 import { SchedulesPage } from "@/pages/schedules";
 import { PersonasPage } from "@/pages/personas";
 import { PersonaDetailPage } from "@/pages/persona-detail";
+import { GatewayPage } from "@/pages/gateway";
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = useAuth();
@@ -51,6 +52,7 @@ export default function App() {
         <Route path="/schedules" element={<SchedulesPage />} />
         <Route path="/personas" element={<PersonasPage />} />
         <Route path="/personas/:name" element={<PersonaDetailPage />} />
+        <Route path="/gateway" element={<GatewayPage />} />
       </Route>
       <Route path="/login" element={<LoginPage />} />
       <Route path="*" element={<Navigate to="/dashboard" replace />} />

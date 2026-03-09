@@ -106,6 +106,7 @@ jobs:
           - skill-sre-observability
           - skill-github-gitops
           - skill-llmfit
+          - web-proxy
     steps:
       - uses: actions/checkout@v4
 

@@ -132,6 +132,29 @@ type SkillSidecar struct {
 	// must inspect node-local host resources (for example, hardware probes).
 	// +optional
 	HostAccess *HostAccessSpec `json:"hostAccess,omitempty"`
+
+	// RequiresServer indicates this sidecar needs a long-running Deployment
+	// instead of an ephemeral Job. The AgentRun controller detects this and
+	// creates a Deployment + Service.
+	// +optional
+	RequiresServer bool `json:"requiresServer,omitempty"`
+
+	// Ports exposed by this sidecar, used to create a Service when RequiresServer is true.
+	// +optional
+	Ports []SidecarPort `json:"ports,omitempty"`
+}
+
+// SidecarPort defines a port exposed by a skill sidecar.
+type SidecarPort struct {
+	// Name is the port name (e.g. "http").
+	Name string `json:"name"`
+
+	// ContainerPort is the port number on the container.
+	ContainerPort int32 `json:"containerPort"`
+
+	// Protocol defaults to TCP.
+	// +optional
+	Protocol string `json:"protocol,omitempty"`
 }
 
 // HostAccessSpec defines opt-in host-level pod settings and hostPath mounts

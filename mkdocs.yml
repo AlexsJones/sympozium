@@ -1,0 +1,102 @@
+site_name: Sympozium
+site_url: https://deploy.sympozium.ai/docs/
+site_description: Kubernetes-native AI Agent Management Platform
+site_author: Alex Jones
+repo_url: https://github.com/AlexsJones/sympozium
+repo_name: AlexsJones/sympozium
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: deep purple
+      accent: pink
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: deep purple
+      accent: pink
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.action.edit
+  icon:
+    repo: fontawesome/brands/github
+  logo: assets/logo.png
+  favicon: assets/logo.png
+
+plugins:
+  - search
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - tables
+  - attr_list
+  - md_in_html
+  - toc:
+      permalink: true
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/AlexsJones/sympozium
+
+copyright: Copyright &copy; 2024-2026 Alex Jones — Apache License 2.0
+
+nav:
+  - Home: index.md
+  - Getting Started: getting-started.md
+  - Architecture: architecture.md
+  - Concepts:
+    - Custom Resources: concepts/custom-resources.md
+    - PersonaPacks: concepts/personapacks.md
+    - Skills & Sidecars: concepts/skills.md
+    - Channels: concepts/channels.md
+    - Security: concepts/security.md
+    - Persistent Memory: concepts/persistent-memory.md
+    - Scheduled Tasks: concepts/scheduled-tasks.md
+    - Observability: concepts/observability.md
+  - Guides:
+    - Using Ollama: guides/ollama.md
+    - Serving Mode: guides/serving-mode.md
+    - Writing Skills: guides/writing-skills.md
+    - Writing Tools: guides/writing-tools.md
+    - Writing Integration Tests: guides/writing-integration-tests.md
+  - Skills Reference:
+    - LLMFit: skills/llmfit.md
+    - Web Endpoint: skills/web-endpoint.md
+    - GitHub GitOps: skills/github-gitops.md
+    - Developer Team Pack: skills/developer-team.md
+  - Reference:
+    - CLI Commands: reference/cli.md
+    - TUI Dashboard: reference/tui.md
+    - Configuration: reference/configuration.md
+    - Helm Chart: reference/helm.md
+    - Testing: reference/testing.md
+  - Design Document: design.md
+  - Roadmap: roadmap.md

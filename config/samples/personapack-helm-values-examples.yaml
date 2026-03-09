@@ -1,0 +1,98 @@
+---
+# Helm values examples for deploying PersonaPacks via the Sympozium chart.
+#
+# Install with:
+#   helm install sympozium ./charts/sympozium -f personapack-helm-values-examples.yaml
+#
+# These values show different ways to configure persona packs at install time.
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Example 1: Enable built-in packs (deployed from charts/sympozium/files/personas/)
+# ─────────────────────────────────────────────────────────────────────────────
+defaultPersonas:
+  enabled: true    # Installs developer-team, devops-essentials, platform-team
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Example 2: Override values for an existing pack post-install
+# ─────────────────────────────────────────────────────────────────────────────
+# After helm install, activate and configure the developer-team pack:
+#
+#   kubectl patch personapack developer-team --type=merge -p '{
+#     "spec": {
+#       "enabled": true,
+#       "authRefs": [{"provider": "openai", "secret": "dev-team-openai-key"}],
+#       "skillParams": {
+#         "github-gitops": {"repo": "myorg/myapp"}
+#       },
+#       "taskOverride": "Build the v2 REST API. Focus on backward compatibility."
+#     }
+#   }'
+#
+# Or via the TUI:  sympozium  → Personas tab → select pack → Enter
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Example 3: Activate via the Sympozium API server
+# ─────────────────────────────────────────────────────────────────────────────
+# The API server exposes a PATCH endpoint for PersonaPacks:
+#
+#   curl -X PATCH http://localhost:19090/api/v1/personapacks/developer-team \
+#     -H "Content-Type: application/json" \
+#     -d '{
+#       "enabled": true,
+#       "provider": "anthropic",
+#       "secretName": "dev-team-anthropic-key",
+#       "model": "claude-sonnet-4-20250514",
+#       "skillParams": {
+#         "github-gitops": {"repo": "myorg/myapp"}
+#       },
+#       "taskOverride": "Migrate the codebase from Express to Fastify."
+#     }'
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Example 4: Custom PersonaPack in a Helm post-install hook
+# ─────────────────────────────────────────────────────────────────────────────
+# Place this in charts/sympozium/templates/custom-pack.yaml:
+#
+# apiVersion: sympozium.ai/v1alpha1
+# kind: PersonaPack
+# metadata:
+#   name: my-custom-team
+#   annotations:
+#     "helm.sh/hook": post-install
+# spec:
+#   enabled: true
+#   description: "My custom team"
+#   category: custom
+#   authRefs:
+#     - provider: openai
+#       secret: my-team-openai-key
+#   skillParams:
+#     github-gitops:
+#       repo: "myorg/myapp"
+#   taskOverride: "Ship the MVP by end of sprint."
+#   personas:
+#     - name: dev
+#       displayName: "Developer"
+#       systemPrompt: "You are a full-stack developer."
+#       model: gpt-4o
+#       skills: [github-gitops, code-review, software-dev]
+#       schedule:
+#         type: sweep
+#         interval: "1h"
+#         task: "Pick up the top issue and implement it."
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Example 5: Deploying with Ollama (no API key, local models)
+# ─────────────────────────────────────────────────────────────────────────────
+#   kubectl patch personapack developer-team --type=merge -p '{
+#     "spec": {
+#       "enabled": true,
+#       "authRefs": [{"provider": "ollama"}],
+#       "skillParams": {
+#         "github-gitops": {"repo": "myorg/myapp"}
+#       }
+#     }
+#   }'
+#
+# Each persona will use Ollama's default model. Override per-persona with:
+#   spec.personas[].model: "llama3"

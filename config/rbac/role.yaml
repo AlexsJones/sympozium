@@ -101,6 +101,20 @@ rules:
   - update
   - watch
 - apiGroups:
+  - gateway.networking.k8s.io
+  resources:
+  - gatewayclasses
+  - gateways
+  - httproutes
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
   - networking.k8s.io
   resources:
   - ingressclasses
@@ -157,6 +171,7 @@ rules:
   - mcpservers
   - personapacks
   - skillpacks
+  - sympoziumconfigs
   - sympoziuminstances
   - sympoziumpolicies
   - sympoziumschedules
@@ -174,6 +189,7 @@ rules:
   - agentruns/finalizers
   - personapacks/finalizers
   - skillpacks/finalizers
+  - sympoziumconfigs/finalizers
   - sympoziuminstances/finalizers
   - sympoziumpolicies/finalizers
   - sympoziumschedules/finalizers
@@ -186,6 +202,7 @@ rules:
   - mcpservers/status
   - personapacks/status
   - skillpacks/status
+  - sympoziumconfigs/status
   - sympoziuminstances/status
   - sympoziumpolicies/status
   - sympoziumschedules/status
