@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 	"os/exec"
 	"sync"
 	"syscall"
@@ -47,9 +48,27 @@ func (m *StdioManager) Start() error {
 
 func (m *StdioManager) startLocked() error {
 	cmd := exec.Command(m.cmdPath, m.args...)
-	// Inherit parent environment and append child-specific vars.
-	// Without this, the child process loses PATH, HOME, etc.
-	cmd.Env = append(os.Environ(), m.env...)
+	// Build a clean environment for the child process:
+	// 1. Essential system vars from parent (PATH, HOME, etc.)
+	// 2. Stripped STDIO_ENV_* vars (DT_ENVIRONMENT, etc.)
+	// Do NOT inherit the full parent env — vars like
+	// OTEL_EXPORTER_OTLP_ENDPOINT or MCP_STDIO_ADAPTER can
+	// interfere with the child process.
+	essentialPrefixes := []string{
+		"PATH=", "HOME=", "USER=", "LANG=", "LC_",
+		"NODE_", "NPM_", "HOSTNAME=", "TERM=",
+		"SSL_CERT", "CA_CERT", "CURL_CA",
+	}
+	var childEnv []string
+	for _, e := range os.Environ() {
+		for _, prefix := range essentialPrefixes {
+			if strings.HasPrefix(e, prefix) {
+				childEnv = append(childEnv, e)
+				break
+			}
+		}
+	}
+	cmd.Env = append(childEnv, m.env...)
 
 	stdinPipe, err := cmd.StdinPipe()
 	if err != nil {
