@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -21,7 +22,7 @@ type StdioManager struct {
 
 	mu     sync.Mutex
 	cmd    *exec.Cmd
-	stdin  *bufio.Writer
+	stdin  io.WriteCloser
 	stdout *bufio.Scanner
 	alive  bool
 
@@ -99,7 +100,7 @@ func (m *StdioManager) startLocked() error {
 	}()
 
 	m.cmd = cmd
-	m.stdin = bufio.NewWriter(stdinPipe)
+	m.stdin = stdinPipe
 	m.stdout = bufio.NewScanner(stdoutPipe)
 	m.stdout.Buffer(make([]byte, 0, 1024*1024), 10*1024*1024) // 10MB max line
 	m.alive = true
@@ -171,16 +172,11 @@ func (m *StdioManager) Send(ctx context.Context, request []byte) ([]byte, error)
 		return nil, fmt.Errorf("stdio process is not alive")
 	}
 
-	// Write request followed by newline
-	log.Printf("stdio Send: writing %d bytes to stdin", len(request))
-	if _, err := m.stdin.Write(request); err != nil {
+	// Write request followed by newline directly to pipe (no buffering)
+	msg := append(request, '\n')
+	log.Printf("stdio Send: writing %d bytes to stdin (direct)", len(msg))
+	if _, err := m.stdin.Write(msg); err != nil {
 		return nil, fmt.Errorf("write to stdin: %w", err)
-	}
-	if err := m.stdin.WriteByte('\n'); err != nil {
-		return nil, fmt.Errorf("write newline: %w", err)
-	}
-	if err := m.stdin.Flush(); err != nil {
-		return nil, fmt.Errorf("flush stdin: %w", err)
 	}
 
 	// Read one line from stdout (line-delimited JSON)
