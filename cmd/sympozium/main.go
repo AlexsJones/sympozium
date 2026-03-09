@@ -458,7 +458,7 @@ func runOnboard() error {
 	printBanner()
 
 	// ── Step 1: Check Sympozium is installed ───────────────────────────────
-	fmt.Println("\n📋 Step 1/8 — Checking cluster...")
+	fmt.Println("\n📋 Step 1/9 — Checking cluster...")
 	if err := initClient(); err != nil {
 		fmt.Println("\n  ❌ Cannot connect to your cluster.")
 		fmt.Println("  Make sure kubectl is configured and run: sympozium install")
@@ -474,13 +474,21 @@ func runOnboard() error {
 	}
 	fmt.Println("  ✅ Sympozium is installed and CRDs are available.")
 
-	// ── Step 2: Instance name ────────────────────────────────────────────
-	fmt.Println("\n📋 Step 2/8 — Create your SympoziumInstance")
+	// ── Step 2: Namespace ────────────────────────────────────────────────
+	fmt.Println("\n📋 Step 2/9 — Target Namespace")
+	fmt.Println("  Which namespace should resources be created in?")
+	targetNS := prompt(reader, "  Namespace", namespace)
+	if targetNS != "" {
+		namespace = targetNS
+	}
+
+	// ── Step 3: Instance name ────────────────────────────────────────────
+	fmt.Println("\n📋 Step 3/9 — Create your SympoziumInstance")
 	fmt.Println("  An instance represents you (or a tenant) in the system.")
 	instanceName := prompt(reader, "  Instance name", "my-agent")
 
 	// ── Step 3: AI provider ──────────────────────────────────────────────
-	fmt.Println("\n📋 Step 3/8 — AI Provider")
+	fmt.Println("\n📋 Step 4/9 — AI Provider")
 	fmt.Println("  Which model provider do you want to use?")
 	fmt.Println("    1) OpenAI")
 	fmt.Println("    2) Anthropic")
@@ -537,19 +545,19 @@ func runOnboard() error {
 	providerSecretName := fmt.Sprintf("%s-%s-key", instanceName, providerName)
 
 	// ── Step 4: GitHub Repository ────────────────────────────────────────
-	fmt.Println("\n📋 Step 4/8 — GitHub Repository (optional)")
+	fmt.Println("\n📋 Step 5/9 — GitHub Repository (optional)")
 	fmt.Println("  Point your agent at a GitHub repository to enable")
 	fmt.Println("  issue triage, PR reviews, and code contributions.")
 	githubRepo := prompt(reader, "  GitHub repo owner/repo (Enter to skip)", "")
 
 	// ── Step 5: Team Instructions ────────────────────────────────────────
-	fmt.Println("\n📋 Step 5/8 — Instructions (optional)")
+	fmt.Println("\n📋 Step 6/9 — Instructions (optional)")
 	fmt.Println("  Give your agent an objective or task to work on.")
 	fmt.Println("  This will be included in every heartbeat run.")
 	teamTask := prompt(reader, "  What should the agent work on? (Enter to skip)", "")
 
 	// ── Step 6: Channel ──────────────────────────────────────────────────
-	fmt.Println("\n📋 Step 6/8 — Connect a Channel (optional)")
+	fmt.Println("\n📋 Step 7/9 — Connect a Channel (optional)")
 	fmt.Println("  Channels let your agent receive messages from external platforms.")
 	fmt.Println("    1) Telegram  — easiest, just talk to @BotFather")
 	fmt.Println("    2) Slack")
@@ -590,12 +598,12 @@ func runOnboard() error {
 	channelSecretName := fmt.Sprintf("%s-%s-secret", instanceName, channelType)
 
 	// ── Step 5: Apply default policy? ────────────────────────────────────
-	fmt.Println("\n📋 Step 7/8 — Default Policy")
+	fmt.Println("\n📋 Step 8/9 — Default Policy")
 	fmt.Println("  A SympoziumPolicy controls what tools agents can use, sandboxing, etc.")
 	applyPolicy := promptYN(reader, "  Apply the default policy?", true)
 
 	// ── Step 6: Heartbeat interval ──────────────────────────────────────
-	fmt.Println("\n📋 Step 8/8 — Heartbeat Schedule")
+	fmt.Println("\n📋 Step 9/9 — Heartbeat Schedule")
 	fmt.Println("  A heartbeat lets your agent wake up periodically to review memory")
 	fmt.Println("  and note anything that needs attention.")
 	fmt.Println("    1) Every 30 minutes")
@@ -2032,6 +2040,7 @@ type wizardStep int
 const (
 	wizStepNone         wizardStep = iota
 	wizStepCheckCluster            // auto — verify CRDs
+	wizStepNamespace               // text: target namespace
 	wizStepInstanceName            // text: instance name
 	wizStepProvider                // menu 1-6: provider
 	wizStepModel                   // text: model name
@@ -2071,6 +2080,7 @@ type wizardState struct {
 	resultMsgs []string
 
 	// Collected values
+	targetNamespace string
 	instanceName    string
 	providerChoice  string // "1"–"6"
 	providerName    string
@@ -3209,7 +3219,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if m.wizard.step == wizStepWhatsAppQR {
 						m.wizard.step = wizStepDone
 						m.wizard.resultMsgs = append(m.wizard.resultMsgs,
-							tuiDimStyle.Render("⚠ WhatsApp QR pairing skipped — scan later via: kubectl logs -l sympozium.ai/channel=whatsapp,sympozium.ai/instance="+m.wizard.instanceName+" -n "+m.namespace))
+							tuiDimStyle.Render("⚠ WhatsApp QR pairing skipped — scan later via: kubectl logs -l sympozium.ai/channel=whatsapp,sympozium.ai/instance="+m.wizard.instanceName+" -n "+m.wizard.targetNamespace))
 						m.input.Placeholder = "Press Enter to return"
 						return m, nil
 					}
@@ -3612,7 +3622,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.wizard.step = wizStepWhatsAppQR
 				m.wizard.qrStatus = "waiting"
 				m.input.Placeholder = "Waiting for WhatsApp pod... (press Esc to skip)"
-				return m, pollWhatsAppQRCmd(m.namespace, m.wizard.instanceName)
+				return m, pollWhatsAppQRCmd(m.wizard.targetNamespace, m.wizard.instanceName)
 			}
 
 			m.wizard.step = wizStepDone
@@ -3647,7 +3657,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.wizard.qrErr = msg.err.Error()
 				m.wizard.qrStatus = "error"
 				// Retry despite error
-				return m, pollWhatsAppQRCmd(m.namespace, m.wizard.instanceName)
+				return m, pollWhatsAppQRCmd(m.wizard.targetNamespace, m.wizard.instanceName)
 			}
 			m.wizard.qrStatus = msg.status
 			if len(msg.qrLines) > 0 {
@@ -3662,7 +3672,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			// Keep polling
-			return m, pollWhatsAppQRCmd(m.namespace, m.wizard.instanceName)
+			return m, pollWhatsAppQRCmd(m.wizard.targetNamespace, m.wizard.instanceName)
 		}
 		return m, nil
 
@@ -7976,6 +7986,15 @@ func (m tuiModel) advanceWizard(val string) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		w.err = ""
+		w.step = wizStepNamespace
+		m.input.Placeholder = fmt.Sprintf("Namespace (default: %s)", m.namespace)
+		return m, nil
+
+	case wizStepNamespace:
+		if val == "" {
+			val = m.namespace
+		}
+		w.targetNamespace = val
 		w.step = wizStepInstanceName
 		m.input.Placeholder = "Instance name (default: my-agent)"
 		return m, nil
@@ -8209,12 +8228,17 @@ func (m tuiModel) advanceWizard(val string) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		w.step = wizStepApplying
+		ns := w.targetNamespace
 		return m, m.asyncCmd(func() (string, error) {
-			return tuiOnboardApply(m.namespace, w)
+			return tuiOnboardApply(ns, w)
 		})
 
 	case wizStepDone:
 		// User pressed Enter on final screen — close wizard.
+		// Switch TUI namespace to match the one used during onboarding.
+		if w.targetNamespace != "" && w.targetNamespace != m.namespace {
+			m.namespace = w.targetNamespace
+		}
 		w.reset()
 		m.inputFocused = false
 		m.input.Blur()
@@ -8535,6 +8559,9 @@ func (m tuiModel) renderWizardPanel(h int) string {
 		lines = append(lines, labelStyle.Render("  ✅ Cluster check passed"))
 		lines = append(lines, "")
 	}
+	if w.targetNamespace != "" && w.step > wizStepNamespace {
+		lines = append(lines, hintStyle.Render("  Namespace: ")+valueStyle.Render(w.targetNamespace))
+	}
 
 	if w.step > wizStepInstanceName {
 		stepNum = 2
@@ -8589,23 +8616,30 @@ func (m tuiModel) renderWizardPanel(h int) string {
 		lines = append(lines, hintStyle.Render("  Heartbeat: ")+valueStyle.Render(hbLabel))
 	}
 
-	if w.step >= wizStepInstanceName && w.step <= wizStepHeartbeat {
+	if w.step >= wizStepNamespace && w.step <= wizStepHeartbeat {
 		lines = append(lines, "")
 	}
 
 	// Show current step prompt.
 	switch w.step {
 	case wizStepCheckCluster:
-		lines = append(lines, stepStyle.Render("  📋 Step 1/8 — Checking cluster..."))
+		lines = append(lines, stepStyle.Render("  📋 Step 1/9 — Checking cluster..."))
+
+	case wizStepNamespace:
+		lines = append(lines, stepStyle.Render("  📋 Step 2/9 — Target Namespace"))
+		lines = append(lines, menuStyle.Render("  Which namespace should resources be created in?"))
+		lines = append(lines, "")
+		lines = append(lines, labelStyle.Render("  Enter namespace:"))
+		lines = append(lines, hintStyle.Render(fmt.Sprintf("  Press Enter to use current: %s", m.namespace)))
 
 	case wizStepInstanceName:
-		lines = append(lines, stepStyle.Render("  📋 Step 1/8 — Create your SympoziumInstance"))
+		lines = append(lines, stepStyle.Render("  📋 Step 3/9 — Create your SympoziumInstance"))
 		lines = append(lines, menuStyle.Render("  An instance represents you (or a tenant) in the system."))
 		lines = append(lines, "")
 		lines = append(lines, labelStyle.Render("  Enter instance name:"))
 
 	case wizStepProvider:
-		lines = append(lines, stepStyle.Render("  📋 Step 2/8 — AI Provider"))
+		lines = append(lines, stepStyle.Render("  📋 Step 3/9 — AI Provider"))
 		lines = append(lines, menuStyle.Render("  Which model provider do you want to use?"))
 		lines = append(lines, "")
 		lines = append(lines, menuNumStyle.Render("  1)")+menuStyle.Render(" OpenAI"))
@@ -8615,11 +8649,11 @@ func (m tuiModel) renderWizardPanel(h int) string {
 		lines = append(lines, menuNumStyle.Render("  5)")+menuStyle.Render(" Other / OpenAI-compatible"))
 
 	case wizStepBaseURL:
-		lines = append(lines, stepStyle.Render("  📋 Step 2/8 — AI Provider (continued)"))
+		lines = append(lines, stepStyle.Render("  📋 Step 3/9 — AI Provider (continued)"))
 		lines = append(lines, labelStyle.Render("  Enter base URL:"))
 
 	case wizStepAPIKey:
-		lines = append(lines, stepStyle.Render("  📋 Step 2/8 — AI Provider (continued)"))
+		lines = append(lines, stepStyle.Render("  📋 Step 3/9 — AI Provider (continued)"))
 		lines = append(lines, labelStyle.Render(fmt.Sprintf("  Paste your %s:", w.secretEnvKey)))
 		envVal := os.Getenv(w.secretEnvKey)
 		if envVal != "" {
@@ -8630,7 +8664,7 @@ func (m tuiModel) renderWizardPanel(h int) string {
 		lines = append(lines, hintStyle.Render("  (providing a key lets us fetch your available models)"))
 
 	case wizStepModel:
-		lines = append(lines, stepStyle.Render("  📋 Step 2/8 — Select Model"))
+		lines = append(lines, stepStyle.Render("  📋 Step 3/9 — Select Model"))
 		if len(w.fetchedModels) > 0 {
 			lines = append(lines, menuStyle.Render(fmt.Sprintf("  Found %d models from your %s account:", len(w.fetchedModels), w.providerName)))
 			lines = append(lines, "")
@@ -8695,7 +8729,7 @@ func (m tuiModel) renderWizardPanel(h int) string {
 		}
 
 	case wizStepGithubRepo:
-		lines = append(lines, stepStyle.Render("  📋 Step 3/8 — GitHub Repository (optional)"))
+		lines = append(lines, stepStyle.Render("  📋 Step 4/9 — GitHub Repository (optional)"))
 		lines = append(lines, menuStyle.Render("  Point your agent at a GitHub repository to enable"))
 		lines = append(lines, menuStyle.Render("  issue triage, PR reviews, and code contributions."))
 		lines = append(lines, "")
@@ -8703,7 +8737,7 @@ func (m tuiModel) renderWizardPanel(h int) string {
 		lines = append(lines, hintStyle.Render("  Press Enter to skip — you can configure this later."))
 
 	case wizStepTeamTask:
-		lines = append(lines, stepStyle.Render("  📋 Step 4/8 — Instructions (optional)"))
+		lines = append(lines, stepStyle.Render("  📋 Step 5/9 — Instructions (optional)"))
 		lines = append(lines, menuStyle.Render("  Give your agent an objective or task to work on."))
 		lines = append(lines, menuStyle.Render("  This will be included in every heartbeat run."))
 		lines = append(lines, "")
@@ -8711,7 +8745,7 @@ func (m tuiModel) renderWizardPanel(h int) string {
 		lines = append(lines, hintStyle.Render("  Press Enter to skip."))
 
 	case wizStepChannel:
-		lines = append(lines, stepStyle.Render("  📋 Step 5/8 — Connect a Channel (optional)"))
+		lines = append(lines, stepStyle.Render("  📋 Step 6/9 — Connect a Channel (optional)"))
 		lines = append(lines, menuStyle.Render("  Channels let your agent receive messages from external platforms."))
 		lines = append(lines, "")
 		lines = append(lines, menuNumStyle.Render("  1)")+menuStyle.Render(" Telegram  — easiest, just talk to @BotFather"))
@@ -8721,16 +8755,16 @@ func (m tuiModel) renderWizardPanel(h int) string {
 		lines = append(lines, menuNumStyle.Render("  5)")+menuStyle.Render(" Skip — I'll add a channel later"))
 
 	case wizStepChannelToken:
-		lines = append(lines, stepStyle.Render("  📋 Step 5/8 — Connect a Channel (continued)"))
+		lines = append(lines, stepStyle.Render("  📋 Step 6/9 — Connect a Channel (continued)"))
 		lines = append(lines, labelStyle.Render(fmt.Sprintf("  Paste your %s token:", w.channelType)))
 
 	case wizStepPolicy:
-		lines = append(lines, stepStyle.Render("  📋 Step 6/8 — Default Policy"))
+		lines = append(lines, stepStyle.Render("  📋 Step 7/9 — Default Policy"))
 		lines = append(lines, menuStyle.Render("  A SympoziumPolicy controls what tools agents can use, sandboxing, etc."))
 		lines = append(lines, labelStyle.Render("  Apply the default policy?"))
 
 	case wizStepHeartbeat:
-		lines = append(lines, stepStyle.Render("  📋 Step 7/8 — Heartbeat Schedule"))
+		lines = append(lines, stepStyle.Render("  📋 Step 8/9 — Heartbeat Schedule"))
 		lines = append(lines, menuStyle.Render("  A heartbeat lets your agent wake up periodically to review memory"))
 		lines = append(lines, menuStyle.Render("  and note anything that needs attention."))
 		lines = append(lines, "")
@@ -8741,13 +8775,13 @@ func (m tuiModel) renderWizardPanel(h int) string {
 		lines = append(lines, menuNumStyle.Render("  5)")+menuStyle.Render(" Disabled — no heartbeat"))
 
 	case wizStepConfirm:
-		lines = append(lines, stepStyle.Render("  📋 Step 8/8 — Confirm"))
+		lines = append(lines, stepStyle.Render("  📋 Step 9/9 — Confirm"))
 		lines = append(lines, "")
 		lines = append(lines, tuiSepStyle.Render("  "+strings.Repeat("━", 50)))
 		lines = append(lines, labelStyle.Render("  Summary"))
 		lines = append(lines, tuiSepStyle.Render("  "+strings.Repeat("━", 50)))
 		lines = append(lines, hintStyle.Render("  Instance:  ")+valueStyle.Render(w.instanceName)+
-			hintStyle.Render("  (namespace: ")+valueStyle.Render(m.namespace)+hintStyle.Render(")"))
+			hintStyle.Render("  (namespace: ")+valueStyle.Render(w.targetNamespace)+hintStyle.Render(")"))
 		lines = append(lines, hintStyle.Render("  Provider:  ")+valueStyle.Render(w.providerName)+
 			hintStyle.Render("  (model: ")+valueStyle.Render(w.modelName)+hintStyle.Render(")"))
 		if w.baseURL != "" {
