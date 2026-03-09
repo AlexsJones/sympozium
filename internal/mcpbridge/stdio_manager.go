@@ -14,17 +14,27 @@ import (
 	"time"
 )
 
+// stdioResponse is a single line read from the child stdout.
+type stdioResponse struct {
+	data []byte
+	err  error
+}
+
 // StdioManager manages the lifecycle of a stdio-based MCP server child process.
 type StdioManager struct {
 	cmdPath string
 	args    []string
 	env     []string
 
-	mu     sync.Mutex
-	cmd    *exec.Cmd
-	stdin  io.WriteCloser
-	stdout *bufio.Scanner
-	alive  bool
+	mu    sync.Mutex
+	cmd   *exec.Cmd
+	stdin io.WriteCloser
+	alive bool
+
+	// responseCh delivers lines read from stdout by a single dedicated goroutine.
+	// This avoids spawning a new goroutine per Send() call and eliminates
+	// thread-unsafe concurrent access to bufio.Scanner.
+	responseCh chan stdioResponse
 
 	stopCh chan struct{}
 	waitCh chan struct{} // closed when cmd.Wait() returns
@@ -90,18 +100,41 @@ func (m *StdioManager) startLocked() error {
 		return fmt.Errorf("start process: %w", err)
 	}
 
-	// Log stderr from child process for debugging
+	// FIX #3: Drain stderr with a large buffer to prevent the child
+	// from blocking when it writes a lot to stderr before reading stdin.
 	go func() {
 		scanner := bufio.NewScanner(stderrPipe)
+		scanner.Buffer(make([]byte, 0, 256*1024), 1024*1024) // 1MB max line
 		for scanner.Scan() {
 			log.Printf("[stdio-child stderr] %s", scanner.Text())
 		}
+		if err := scanner.Err(); err != nil {
+			log.Printf("stderr scanner error: %v", err)
+		}
+	}()
+
+	// FIX #2: Single dedicated goroutine reads stdout lines into a channel.
+	// No concurrent Scanner access — one goroutine owns the Scanner for its
+	// entire lifetime. Send() simply receives from the channel.
+	responseCh := make(chan stdioResponse, 1)
+	go func() {
+		scanner := bufio.NewScanner(stdoutPipe)
+		scanner.Buffer(make([]byte, 0, 1024*1024), 10*1024*1024) // 10MB max line
+		for scanner.Scan() {
+			line := make([]byte, len(scanner.Bytes()))
+			copy(line, scanner.Bytes())
+			responseCh <- stdioResponse{data: line}
+		}
+		scanErr := scanner.Err()
+		if scanErr == nil {
+			scanErr = fmt.Errorf("stdout closed")
+		}
+		responseCh <- stdioResponse{err: scanErr}
 	}()
 
 	m.cmd = cmd
 	m.stdin = stdinPipe
-	m.stdout = bufio.NewScanner(stdoutPipe)
-	m.stdout.Buffer(make([]byte, 0, 1024*1024), 10*1024*1024) // 10MB max line
+	m.responseCh = responseCh
 	m.alive = true
 
 	// waitCh is closed when cmd.Wait() returns — single waiter, no races.
@@ -162,7 +195,8 @@ func (m *StdioManager) monitor(cmd *exec.Cmd, waitCh chan struct{}) {
 	}
 }
 
-// Send writes a JSON-RPC request to stdin and reads a line-delimited JSON response from stdout.
+// Send writes a JSON-RPC request to stdin and reads a line-delimited JSON
+// response from the dedicated stdout reader goroutine via responseCh.
 func (m *StdioManager) Send(ctx context.Context, request []byte) ([]byte, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -171,50 +205,27 @@ func (m *StdioManager) Send(ctx context.Context, request []byte) ([]byte, error)
 		return nil, fmt.Errorf("stdio process is not alive")
 	}
 
-	// Write request followed by newline directly to pipe (no buffering)
-	msg := append(request, '\n')
-	log.Printf("stdio Send: writing %d bytes to stdin (direct)", len(msg))
+	// Write request + newline. Use a copy to avoid mutating the caller's slice.
+	msg := make([]byte, len(request)+1)
+	copy(msg, request)
+	msg[len(request)] = '\n'
+	log.Printf("stdio Send: writing %d bytes to stdin", len(msg))
 	if _, err := m.stdin.Write(msg); err != nil {
 		return nil, fmt.Errorf("write to stdin: %w", err)
 	}
 
-	// Read one line from stdout (line-delimited JSON).
-	// IMPORTANT: We always wait for the scanner goroutine to finish,
-	// even if the caller's context is cancelled. This prevents orphaned
-	// goroutines from consuming responses meant for future Send() calls,
-	// which would desync the request/response protocol.
-	done := make(chan struct{})
-	var scanErr error
-	var response []byte
-
-	go func() {
-		defer close(done)
-		if m.stdout.Scan() {
-			response = make([]byte, len(m.stdout.Bytes()))
-			copy(response, m.stdout.Bytes())
-		} else {
-			scanErr = m.stdout.Err()
-			if scanErr == nil {
-				scanErr = fmt.Errorf("stdout closed")
-			}
-		}
-	}()
-
-	// Always wait for the goroutine — never abandon it.
-	// Use a generous internal timeout to avoid blocking forever
-	// if the child process dies.
-	internalTimeout := 120 * time.Second
+	// Wait for the dedicated reader goroutine to deliver one line.
 	select {
-	case <-done:
-		if scanErr != nil {
-			return nil, fmt.Errorf("read from stdout: %w", scanErr)
+	case resp := <-m.responseCh:
+		if resp.err != nil {
+			return nil, fmt.Errorf("read from stdout: %w", resp.err)
 		}
-		log.Printf("stdio Send: received %d bytes response", len(response))
-		return response, nil
+		log.Printf("stdio Send: received %d bytes response", len(resp.data))
+		return resp.data, nil
 	case <-m.waitCh:
 		return nil, fmt.Errorf("stdio process exited while waiting for response")
-	case <-time.After(internalTimeout):
-		return nil, fmt.Errorf("stdio response timeout after %s", internalTimeout)
+	case <-time.After(120 * time.Second):
+		return nil, fmt.Errorf("stdio response timeout after 120s")
 	}
 }
 
