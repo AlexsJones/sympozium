@@ -69,6 +69,7 @@ func (m *StdioManager) startLocked() error {
 		}
 	}
 	cmd.Env = append(childEnv, m.env...)
+	log.Printf("stdio child env (%d vars): %v", len(cmd.Env), cmd.Env)
 
 	stdinPipe, err := cmd.StdinPipe()
 	if err != nil {
@@ -171,6 +172,7 @@ func (m *StdioManager) Send(ctx context.Context, request []byte) ([]byte, error)
 	}
 
 	// Write request followed by newline
+	log.Printf("stdio Send: writing %d bytes to stdin", len(request))
 	if _, err := m.stdin.Write(request); err != nil {
 		return nil, fmt.Errorf("write to stdin: %w", err)
 	}
