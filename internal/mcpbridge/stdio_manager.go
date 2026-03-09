@@ -178,7 +178,11 @@ func (m *StdioManager) Send(ctx context.Context, request []byte) ([]byte, error)
 		return nil, fmt.Errorf("write to stdin: %w", err)
 	}
 
-	// Read one line from stdout (line-delimited JSON)
+	// Read one line from stdout (line-delimited JSON).
+	// IMPORTANT: We always wait for the scanner goroutine to finish,
+	// even if the caller's context is cancelled. This prevents orphaned
+	// goroutines from consuming responses meant for future Send() calls,
+	// which would desync the request/response protocol.
 	done := make(chan struct{})
 	var scanErr error
 	var response []byte
@@ -196,14 +200,21 @@ func (m *StdioManager) Send(ctx context.Context, request []byte) ([]byte, error)
 		}
 	}()
 
+	// Always wait for the goroutine — never abandon it.
+	// Use a generous internal timeout to avoid blocking forever
+	// if the child process dies.
+	internalTimeout := 120 * time.Second
 	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
 	case <-done:
 		if scanErr != nil {
 			return nil, fmt.Errorf("read from stdout: %w", scanErr)
 		}
+		log.Printf("stdio Send: received %d bytes response", len(response))
 		return response, nil
+	case <-m.waitCh:
+		return nil, fmt.Errorf("stdio process exited while waiting for response")
+	case <-time.After(internalTimeout):
+		return nil, fmt.Errorf("stdio response timeout after %s", internalTimeout)
 	}
 }
 
