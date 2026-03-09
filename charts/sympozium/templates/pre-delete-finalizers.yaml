@@ -1,0 +1,107 @@
+{{- if .Values.rbac.create }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: sympozium-pre-delete
+  namespace: {{ include "sympozium.namespace" . }}
+  labels:
+    {{- include "sympozium.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": pre-delete
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded,hook-failed
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "sympozium.fullname" . }}-pre-delete
+  labels:
+    {{- include "sympozium.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": pre-delete
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded,hook-failed
+rules:
+  - apiGroups: ["sympozium.ai"]
+    resources:
+      - skillpacks
+      - personapacks
+      - sympoziuminstances
+      - agentruns
+      - sympoziumpolicies
+      - sympoziumschedules
+      - sympoziumconfigs
+    verbs: ["get", "list", "patch"]
+  - apiGroups: ["sympozium.ai"]
+    resources:
+      - skillpacks/finalizers
+      - personapacks/finalizers
+      - sympoziuminstances/finalizers
+      - agentruns/finalizers
+      - sympoziumpolicies/finalizers
+      - sympoziumschedules/finalizers
+      - sympoziumconfigs/finalizers
+    verbs: ["update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "sympozium.fullname" . }}-pre-delete
+  labels:
+    {{- include "sympozium.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": pre-delete
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded,hook-failed
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "sympozium.fullname" . }}-pre-delete
+subjects:
+  - kind: ServiceAccount
+    name: sympozium-pre-delete
+    namespace: {{ include "sympozium.namespace" . }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: sympozium-pre-delete-finalizers
+  namespace: {{ include "sympozium.namespace" . }}
+  labels:
+    {{- include "sympozium.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": pre-delete
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded,hook-failed
+spec:
+  backoffLimit: 1
+  ttlSecondsAfterFinished: 60
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: sympozium-pre-delete
+    spec:
+      serviceAccountName: sympozium-pre-delete
+      restartPolicy: Never
+      containers:
+        - name: strip-finalizers
+          image: bitnami/kubectl:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              RESOURCES="skillpacks.sympozium.ai personapacks.sympozium.ai sympoziuminstances.sympozium.ai agentruns.sympozium.ai sympoziumpolicies.sympozium.ai sympoziumschedules.sympozium.ai sympoziumconfigs.sympozium.ai"
+              for res in $RESOURCES; do
+                echo "Stripping finalizers from $res..."
+                items=$(kubectl get "$res" --all-namespaces -o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name}{"\n"}{end}' 2>/dev/null || true)
+                for item in $items; do
+                  [ -z "$item" ] && continue
+                  ns="${item%%/*}"
+                  name="${item#*/}"
+                  echo "  Patching $res $ns/$name"
+                  kubectl patch "$res" "$name" -n "$ns" --type=merge -p '{"metadata":{"finalizers":[]}}' 2>/dev/null || true
+                done
+              done
+              echo "Done stripping finalizers."
+{{- end }}

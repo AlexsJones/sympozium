@@ -1246,10 +1246,17 @@ func runInstall(ver, imageTag string) error {
 func runUninstall() error {
 	fmt.Println("  Removing Sympozium...")
 
-	// Delete default SkillPacks from sympozium-system first (before CRDs go away).
-	fmt.Println("  Removing default SkillPacks...")
-	_ = kubectl("delete", "skillpacks.sympozium.ai", "--ignore-not-found",
-		"-n", "sympozium-system", "-l", "sympozium.ai/builtin=true")
+	// Strip finalizers from all Sympozium CRD instances BEFORE deleting the
+	// controller, so resources don't get stuck in Terminating state.
+	fmt.Println("  Removing finalizers from Sympozium resources...")
+	resources := []string{"agentruns", "sympoziuminstances", "sympoziumpolicies", "skillpacks", "sympoziumschedules", "personapacks"}
+	for _, res := range resources {
+		stripFinalizers(res)
+	}
+	fmt.Println("  Deleting Sympozium custom resources...")
+	for _, res := range resources {
+		_ = kubectl("delete", res+".sympozium.ai", "--all", "--all-namespaces", "--ignore-not-found", "--timeout=60s")
+	}
 
 	// Delete in reverse order.
 	manifests := []string{
@@ -1265,18 +1272,6 @@ func runUninstall() error {
 	}
 	for _, m := range manifests {
 		_ = kubectl("delete", "--ignore-not-found", "-f", m)
-	}
-
-	// Strip finalizers from all Sympozium CRD instances so CRD deletion doesn't
-	// hang waiting for the (now-deleted) controller to reconcile them.
-	fmt.Println("  Removing finalizers from Sympozium resources...")
-	resources := []string{"agentruns", "sympoziuminstances", "sympoziumpolicies", "skillpacks", "sympoziumschedules", "personapacks"}
-	for _, res := range resources {
-		stripFinalizers(res)
-	}
-	fmt.Println("  Deleting Sympozium custom resources...")
-	for _, res := range resources {
-		_ = kubectl("delete", res+".sympozium.ai", "--all", "--all-namespaces", "--ignore-not-found", "--timeout=60s")
 	}
 
 	// CRDs last.
