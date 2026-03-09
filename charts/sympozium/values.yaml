@@ -127,6 +127,11 @@ rbac:
 networkPolicies:
   # -- Deploy default network policies (deny-all + allow-eventbus for agents)
   enabled: true
+  # -- Extra TCP egress ports to allow from agent pods.
+  # Use this for clusters where the Kubernetes API server listens on a
+  # non-standard port (e.g. k3s with https-listen-port: 6444).
+  # Example: [6444]
+  extraEgressPorts: []
 
 # -- Default SympoziumPolicies to install (permissive, restrictive, network-isolated)
 defaultPolicies:

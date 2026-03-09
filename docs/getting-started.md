@@ -606,6 +606,37 @@ activate it with your API key — the controller does the rest.
 
 ---
 
+## Troubleshooting
+
+### NetworkPolicy blocks API server on non-standard ports (k3s)
+
+Sympozium's default network policies allow egress on ports `443` and `6443` for
+Kubernetes API server access. On clusters where the API server listens on a
+non-standard port (e.g. k3s with `https-listen-port: 6444`), the `kubernetes`
+ClusterIP service maps `443 → 6444`. Some CNI implementations (notably
+kube-router in k3s) evaluate egress rules **after DNAT**, so the actual
+destination port seen by the policy is `6444` — which is not in the default
+allow list.
+
+**Symptoms:** `kubectl` commands from `skill-k8s-ops` sidecars fail with
+`The connection to the server <ip>:443 was refused`.
+
+**Fix:** Add the non-standard port to `networkPolicies.extraEgressPorts` in your
+Helm values:
+
+```yaml
+networkPolicies:
+  enabled: true
+  extraEgressPorts: [6444]
+```
+
+Then upgrade:
+
+```bash
+helm upgrade sympozium oci://ghcr.io/alexsjones/sympozium/charts/sympozium \
+  -n sympozium-system -f values.yaml
+```
+
 ## What's next
 
 - **Expose agents as HTTP APIs** — see [Web Endpoint Skill](skill-web-endpoint.md)

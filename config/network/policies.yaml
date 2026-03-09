@@ -61,6 +61,11 @@ spec:
       ports:
         - protocol: TCP
           port: 443
+    # Allow Kubernetes API server (post-DNAT port on some CNIs like kube-router)
+    - to: []
+      ports:
+        - protocol: TCP
+          port: 6443
     # Allow Ollama / local LLM provider (default port 11434)
     - to: []
       ports:
@@ -127,6 +132,11 @@ spec:
       ports:
         - protocol: TCP
           port: 443
+    # Allow Kubernetes API server (post-DNAT port on some CNIs like kube-router)
+    - to: []
+      ports:
+        - protocol: TCP
+          port: 6443
     # Allow Ollama / local LLM provider
     - to: []
       ports:
