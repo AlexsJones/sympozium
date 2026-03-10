@@ -51,6 +51,9 @@ func (b *Bridge) discoverTools(ctx context.Context) (*MCPToolManifest, error) {
 
 		b.clients[srv.Name] = client
 
+		// Apply allow/deny filtering before registering tools.
+		tools = filterTools(tools, srv.ToolsAllow, srv.ToolsDeny)
+
 		for _, tool := range tools {
 			prefixedName := srv.ToolsPrefix + "_" + tool.Name
 			b.toolIndex[prefixedName] = srv.Name
@@ -93,4 +96,37 @@ func WriteManifest(path string, manifest *MCPToolManifest) error {
 	}
 
 	return nil
+}
+
+// filterTools applies allow/deny lists to filter MCP tools.
+// If allow is non-empty, only tools in that set pass. Then deny removes any remaining.
+func filterTools(tools []MCPTool, allow, deny []string) []MCPTool {
+	if len(allow) == 0 && len(deny) == 0 {
+		return tools
+	}
+	allowSet := toSet(allow)
+	denySet := toSet(deny)
+	var filtered []MCPTool
+	for _, t := range tools {
+		if len(allowSet) > 0 && !allowSet[t.Name] {
+			continue
+		}
+		if denySet[t.Name] {
+			continue
+		}
+		filtered = append(filtered, t)
+	}
+	return filtered
+}
+
+// toSet converts a string slice to a set (map[string]bool).
+func toSet(items []string) map[string]bool {
+	if len(items) == 0 {
+		return nil
+	}
+	s := make(map[string]bool, len(items))
+	for _, item := range items {
+		s[item] = true
+	}
+	return s
 }

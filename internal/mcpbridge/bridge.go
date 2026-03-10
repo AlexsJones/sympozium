@@ -256,6 +256,15 @@ func (b *Bridge) handleRequest(ctx context.Context, path string) {
 	)
 	mcpToolCalls.Add(ctx, 1, attrs)
 
+	// Defense in depth: reject tool calls for tools not in the filtered index.
+	if _, known := b.toolIndex[req.Tool]; !known {
+		log.Printf("Tool %q not in filtered tool index, rejecting", req.Tool)
+		b.writeErrorResult(req.ID, path, fmt.Sprintf("tool %q is not available (filtered)", req.Tool))
+		span.SetStatus(codes.Error, "tool filtered")
+		mcpToolErrors.Add(ctx, 1, attrs)
+		return
+	}
+
 	client, ok := b.clients[serverName]
 	if !ok {
 		log.Printf("No client for server %q", serverName)

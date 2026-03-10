@@ -1983,6 +1983,8 @@ type mcpServerYAML struct {
 	Timeout     int               `yaml:"timeout"`
 	Auth        *mcpAuthYAML      `yaml:"auth,omitempty"`
 	Headers     map[string]string `yaml:"headers,omitempty"`
+	ToolsAllow  []string          `yaml:"toolsAllow,omitempty"`
+	ToolsDeny   []string          `yaml:"toolsDeny,omitempty"`
 }
 
 type mcpAuthYAML struct {
@@ -2013,6 +2015,8 @@ func buildMCPServersYAML(mcpServers []sympoziumv1alpha1.MCPServerRef) (string, e
 			ToolsPrefix: srv.ToolsPrefix,
 			Timeout:     timeout,
 			Headers:     srv.Headers,
+			ToolsAllow:  srv.ToolsAllow,
+			ToolsDeny:   srv.ToolsDeny,
 		}
 
 		if srv.AuthSecret != "" {
@@ -2648,6 +2652,14 @@ func (r *AgentRunReconciler) resolveMCPServerURLs(
 		// Inherit timeout from MCPServer spec if not set on the ref.
 		if srv.Timeout == 0 && mcpServer.Spec.Timeout > 0 {
 			srv.Timeout = mcpServer.Spec.Timeout
+		}
+
+		// Inherit toolsAllow/toolsDeny from MCPServer spec if not set on the ref.
+		if len(srv.ToolsAllow) == 0 && len(mcpServer.Spec.ToolsAllow) > 0 {
+			srv.ToolsAllow = mcpServer.Spec.ToolsAllow
+		}
+		if len(srv.ToolsDeny) == 0 && len(mcpServer.Spec.ToolsDeny) > 0 {
+			srv.ToolsDeny = mcpServer.Spec.ToolsDeny
 		}
 
 		r.Log.Info("Resolved MCPServer URL", "name", srv.Name, "url", srv.URL)

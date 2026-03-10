@@ -52,6 +52,76 @@ func TestBridgeDiscoverToolsWithPrefix(t *testing.T) {
 	}
 }
 
+func TestBridgeDiscoverToolsWithAllowFilter(t *testing.T) {
+	tools := []MCPTool{
+		{Name: "get_pods", Description: "Get pods", InputSchema: map[string]any{"type": "object"}},
+		{Name: "get_nodes", Description: "Get nodes", InputSchema: map[string]any{"type": "object"}},
+		{Name: "delete_pod", Description: "Delete pod", InputSchema: map[string]any{"type": "object"}},
+	}
+
+	srv := mockMCPServer(t, tools, nil)
+	defer srv.Close()
+
+	cfg := &ServersConfig{
+		Servers: []ServerConfig{
+			{
+				Name: "k8s", URL: srv.URL, ToolsPrefix: "k8s", Timeout: 10, Transport: "streamable-http",
+				ToolsAllow: []string{"get_pods", "get_nodes"},
+			},
+		},
+	}
+
+	bridge := NewBridge(cfg, t.TempDir(), filepath.Join(t.TempDir(), "manifest.json"), "test")
+	manifest, err := bridge.discoverTools(context.Background())
+	if err != nil {
+		t.Fatalf("discoverTools failed: %v", err)
+	}
+
+	if len(manifest.Tools) != 2 {
+		t.Fatalf("expected 2 tools (filtered), got %d", len(manifest.Tools))
+	}
+	if manifest.Tools[0].Name != "k8s_get_pods" {
+		t.Errorf("tool[0].Name = %q, want %q", manifest.Tools[0].Name, "k8s_get_pods")
+	}
+
+	// Verify filtered tool is NOT in the index
+	if _, ok := bridge.toolIndex["k8s_delete_pod"]; ok {
+		t.Error("filtered tool should not be in toolIndex")
+	}
+}
+
+func TestBridgeDiscoverToolsWithDenyFilter(t *testing.T) {
+	tools := []MCPTool{
+		{Name: "get_pods", Description: "Get pods", InputSchema: map[string]any{"type": "object"}},
+		{Name: "delete_pod", Description: "Delete pod", InputSchema: map[string]any{"type": "object"}},
+	}
+
+	srv := mockMCPServer(t, tools, nil)
+	defer srv.Close()
+
+	cfg := &ServersConfig{
+		Servers: []ServerConfig{
+			{
+				Name: "k8s", URL: srv.URL, ToolsPrefix: "k8s", Timeout: 10, Transport: "streamable-http",
+				ToolsDeny: []string{"delete_pod"},
+			},
+		},
+	}
+
+	bridge := NewBridge(cfg, t.TempDir(), filepath.Join(t.TempDir(), "manifest.json"), "test")
+	manifest, err := bridge.discoverTools(context.Background())
+	if err != nil {
+		t.Fatalf("discoverTools failed: %v", err)
+	}
+
+	if len(manifest.Tools) != 1 {
+		t.Fatalf("expected 1 tool (filtered), got %d", len(manifest.Tools))
+	}
+	if manifest.Tools[0].Name != "k8s_get_pods" {
+		t.Errorf("tool[0].Name = %q, want %q", manifest.Tools[0].Name, "k8s_get_pods")
+	}
+}
+
 func TestBridgeDiscoverToolsMultiServer(t *testing.T) {
 	tools1 := []MCPTool{{Name: "tool_a", Description: "Tool A", InputSchema: map[string]any{"type": "object"}}}
 	tools2 := []MCPTool{{Name: "tool_b", Description: "Tool B", InputSchema: map[string]any{"type": "object"}}}
@@ -217,6 +287,45 @@ func TestBridgeHandleRequest(t *testing.T) {
 	// Verify request file was cleaned up
 	if _, err := os.Stat(reqPath); !os.IsNotExist(err) {
 		t.Error("request file was not cleaned up")
+	}
+}
+
+func TestBridgeHandleRequestFilteredTool(t *testing.T) {
+	ipcDir := t.TempDir()
+	cfg := &ServersConfig{
+		Servers: []ServerConfig{
+			{Name: "k8s-net", URL: "http://localhost", ToolsPrefix: "k8s_net", Timeout: 10},
+		},
+	}
+	bridge := NewBridge(cfg, ipcDir, "", "test")
+	// Only register one tool in the index (simulating filtering)
+	bridge.toolIndex["k8s_net_get_pods"] = "k8s-net"
+
+	// Try to call a tool that was filtered out
+	req := MCPRequest{ID: "filtered-1", Tool: "k8s_net_delete_pod", Arguments: json.RawMessage(`{}`)}
+	reqData, _ := json.Marshal(req)
+	reqPath := filepath.Join(ipcDir, "mcp-request-filtered-1.json")
+	os.WriteFile(reqPath, reqData, 0o644)
+
+	bridge.handleRequest(context.Background(), reqPath)
+
+	resPath := filepath.Join(ipcDir, "mcp-result-filtered-1.json")
+	resData, err := os.ReadFile(resPath)
+	if err != nil {
+		t.Fatalf("result file not found: %v", err)
+	}
+
+	var result MCPResult
+	json.Unmarshal(resData, &result)
+
+	if result.Success {
+		t.Error("expected failure for filtered tool")
+	}
+	if result.Error == "" {
+		t.Error("expected error message")
+	}
+	if !contains(result.Error, "filtered") {
+		t.Errorf("error should mention filtering, got: %s", result.Error)
 	}
 }
 

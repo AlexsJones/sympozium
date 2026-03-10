@@ -18,6 +18,8 @@ type ServerConfig struct {
 	Timeout     int               `yaml:"timeout"` // seconds, default 30
 	Auth        *AuthConfig       `yaml:"auth,omitempty"`
 	Headers     map[string]string `yaml:"headers,omitempty"`
+	ToolsAllow  []string          `yaml:"toolsAllow,omitempty"`
+	ToolsDeny   []string          `yaml:"toolsDeny,omitempty"`
 }
 
 // AuthConfig defines authentication for an MCP server.

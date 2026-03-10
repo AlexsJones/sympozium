@@ -56,6 +56,14 @@ type MCPServerSpec struct {
 	// +kubebuilder:default=1
 	// +optional
 	Replicas *int32 `json:"replicas,omitempty"`
+
+	// ToolsAllow lists tool names (without prefix) to expose. If set, only these tools are registered.
+	// +optional
+	ToolsAllow []string `json:"toolsAllow,omitempty"`
+
+	// ToolsDeny lists tool names (without prefix) to hide. Applied after toolsAllow.
+	// +optional
+	ToolsDeny []string `json:"toolsDeny,omitempty"`
 }
 
 type MCPServerDeployment struct {

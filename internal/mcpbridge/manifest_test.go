@@ -87,6 +87,80 @@ func TestWriteManifestEmpty(t *testing.T) {
 	}
 }
 
+func TestFilterToolsAllowOnly(t *testing.T) {
+	tools := []MCPTool{
+		{Name: "get_pods"},
+		{Name: "get_nodes"},
+		{Name: "delete_pod"},
+		{Name: "list_namespaces"},
+	}
+
+	filtered := filterTools(tools, []string{"get_pods", "get_nodes"}, nil)
+	if len(filtered) != 2 {
+		t.Fatalf("expected 2 tools, got %d", len(filtered))
+	}
+	if filtered[0].Name != "get_pods" || filtered[1].Name != "get_nodes" {
+		t.Errorf("unexpected tools: %v", filtered)
+	}
+}
+
+func TestFilterToolsDenyOnly(t *testing.T) {
+	tools := []MCPTool{
+		{Name: "get_pods"},
+		{Name: "get_nodes"},
+		{Name: "delete_pod"},
+	}
+
+	filtered := filterTools(tools, nil, []string{"delete_pod"})
+	if len(filtered) != 2 {
+		t.Fatalf("expected 2 tools, got %d", len(filtered))
+	}
+	if filtered[0].Name != "get_pods" || filtered[1].Name != "get_nodes" {
+		t.Errorf("unexpected tools: %v", filtered)
+	}
+}
+
+func TestFilterToolsBothAllowAndDeny(t *testing.T) {
+	tools := []MCPTool{
+		{Name: "get_pods"},
+		{Name: "get_nodes"},
+		{Name: "delete_pod"},
+		{Name: "list_namespaces"},
+	}
+
+	// Allow 3, then deny 1 of those
+	filtered := filterTools(tools, []string{"get_pods", "get_nodes", "delete_pod"}, []string{"delete_pod"})
+	if len(filtered) != 2 {
+		t.Fatalf("expected 2 tools, got %d", len(filtered))
+	}
+	if filtered[0].Name != "get_pods" || filtered[1].Name != "get_nodes" {
+		t.Errorf("unexpected tools: %v", filtered)
+	}
+}
+
+func TestFilterToolsNeither(t *testing.T) {
+	tools := []MCPTool{
+		{Name: "get_pods"},
+		{Name: "get_nodes"},
+	}
+
+	filtered := filterTools(tools, nil, nil)
+	if len(filtered) != 2 {
+		t.Fatalf("expected 2 tools, got %d", len(filtered))
+	}
+}
+
+func TestFilterToolsEmptyResult(t *testing.T) {
+	tools := []MCPTool{
+		{Name: "get_pods"},
+	}
+
+	filtered := filterTools(tools, []string{"nonexistent"}, nil)
+	if len(filtered) != 0 {
+		t.Fatalf("expected 0 tools, got %d", len(filtered))
+	}
+}
+
 func TestWriteManifestCreatesDirectory(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "subdir", "mcp-tools.json")

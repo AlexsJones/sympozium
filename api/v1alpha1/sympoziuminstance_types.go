@@ -82,6 +82,14 @@ type MCPServerRef struct {
 	// Headers are additional HTTP headers to send with every request.
 	// +optional
 	Headers map[string]string `json:"headers,omitempty"`
+
+	// ToolsAllow lists tool names (without prefix) to expose. If set, only these tools are registered.
+	// +optional
+	ToolsAllow []string `json:"toolsAllow,omitempty"`
+
+	// ToolsDeny lists tool names (without prefix) to hide. Applied after toolsAllow.
+	// +optional
+	ToolsDeny []string `json:"toolsDeny,omitempty"`
 }
 
 // MemorySpec configures persistent memory for a SympoziumInstance.

@@ -170,6 +170,18 @@ spec:
                 default: 30
                 description: Timeout is the per-request timeout in seconds.
                 type: integer
+              toolsAllow:
+                description: ToolsAllow lists tool names (without prefix) to expose.
+                  If set, only these tools are registered.
+                items:
+                  type: string
+                type: array
+              toolsDeny:
+                description: ToolsDeny lists tool names (without prefix) to hide.
+                  Applied after toolsAllow.
+                items:
+                  type: string
+                type: array
               toolsPrefix:
                 description: ToolsPrefix is prepended to tool names to avoid collisions.
                 minLength: 1
