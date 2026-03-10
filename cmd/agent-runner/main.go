@@ -476,6 +476,8 @@ func callOpenAI(ctx context.Context, provider, apiKey, baseURL, model, systemPro
 	totalInputTokens := 0
 	totalOutputTokens := 0
 	totalToolCalls := 0
+	const maxEmptyRetries = 2
+	emptyRetries := 0
 
 	for i := 0; i < maxToolIterations; i++ {
 		params := openai.ChatCompletionNewParams{
@@ -580,6 +582,13 @@ func callOpenAI(ctx context.Context, provider, apiKey, baseURL, model, systemPro
 					}
 				}
 			}
+		}
+
+		// Retry on empty response from reasoning models (they sometimes waste all tokens on thinking).
+		if responseContent == "" && emptyRetries < maxEmptyRetries {
+			emptyRetries++
+			log.Printf("WARNING: Empty response from reasoning model, retrying (%d/%d)", emptyRetries, maxEmptyRetries)
+			continue
 		}
 
 		return responseContent, totalInputTokens, totalOutputTokens, totalToolCalls, nil
