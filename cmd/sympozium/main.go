@@ -1163,6 +1163,22 @@ func runInstall(ver, imageTag string) error {
 		return err
 	}
 
+	// Generate a random UI token for the web dashboard (if not already present).
+	// This MUST happen before deploying the apiserver so the pod can read it on startup.
+	fmt.Println("  Creating web UI token secret...")
+	if err := kubectlQuiet("get", "secret", "sympozium-ui-token", "-n", "sympozium-system"); err != nil {
+		// Secret doesn't exist — create one with a random token.
+		createSecret := exec.Command("kubectl", "create", "secret", "generic", "sympozium-ui-token",
+			"-n", "sympozium-system",
+			"--from-literal=token="+generateToken(32))
+		createSecret.Stderr = os.Stderr
+		if secErr := createSecret.Run(); secErr != nil {
+			fmt.Printf("  Warning: failed to create UI token secret: %v\n", secErr)
+		}
+	} else {
+		fmt.Println("  UI token secret already exists, skipping.")
+	}
+
 	// Apply manager (controller + apiserver).
 	fmt.Println("  Deploying control plane...")
 	if err := kubectl("apply", "-f", filepath.Join(tmpDir, "config/manager/")); err != nil {
@@ -1227,21 +1243,6 @@ func runInstall(ver, imageTag string) error {
 			// Non-fatal — persona packs are optional.
 			fmt.Printf("  Warning: failed to install default persona packs: %v\n", err)
 		}
-	}
-
-	// Generate a random UI token for the web dashboard (if not already present).
-	fmt.Println("  Creating web UI token secret...")
-	if err := kubectlQuiet("get", "secret", "sympozium-ui-token", "-n", "sympozium-system"); err != nil {
-		// Secret doesn't exist — create one with a random token.
-		createSecret := exec.Command("kubectl", "create", "secret", "generic", "sympozium-ui-token",
-			"-n", "sympozium-system",
-			"--from-literal=token="+generateToken(32))
-		createSecret.Stderr = os.Stderr
-		if secErr := createSecret.Run(); secErr != nil {
-			fmt.Printf("  Warning: failed to create UI token secret: %v\n", secErr)
-		}
-	} else {
-		fmt.Println("  UI token secret already exists, skipping.")
 	}
 
 	fmt.Println("\n  Sympozium installed successfully!")
