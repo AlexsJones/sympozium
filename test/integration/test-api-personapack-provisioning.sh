@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # API integration test: PersonaPack provisioning behavior.
 # Validates that enabling a PersonaPack via API stamps out Instances/Schedules.
+# Uses a self-contained temporary PersonaPack to avoid stale cluster state.
 
 set -euo pipefail
 
@@ -22,8 +23,7 @@ info() { echo -e "${YELLOW}● $*${NC}"; }
 
 PF_PID=""
 APISERVER_TOKEN="${APISERVER_TOKEN:-}"
-PACK_NAME=""
-ORIGINAL_ENABLED="false"
+PACK_NAME="inttest-provision-$(date +%s)"
 
 stop_port_forward() {
   if [[ -n "${PF_PID}" ]] && kill -0 "${PF_PID}" >/dev/null 2>&1; then
@@ -49,9 +49,8 @@ stop_port_forward() {
 
 cleanup() {
   info "Cleaning up PersonaPack API test resources..."
-  if [[ -n "${PACK_NAME}" ]]; then
-    api_request PATCH "/api/v1/personapacks/${PACK_NAME}" "{\"enabled\":${ORIGINAL_ENABLED}}" >/dev/null 2>&1 || true
-  fi
+  api_request DELETE "/api/v1/personapacks/${PACK_NAME}" >/dev/null 2>&1 || true
+  kubectl delete personapack "$PACK_NAME" -n "$NAMESPACE" --ignore-not-found >/dev/null 2>&1 || true
   stop_port_forward
 }
 trap cleanup EXIT
@@ -151,20 +150,45 @@ main() {
   start_port_forward_if_needed
   resolve_apiserver_token
 
-  api_request POST "/api/v1/personapacks/install-defaults" >/dev/null
-  packs_json="$(api_request GET "/api/v1/personapacks")"
+  # Create a dedicated temporary PersonaPack with two personas (both with schedules).
+  cat <<EOF | kubectl apply -f - >/dev/null
+apiVersion: sympozium.ai/v1alpha1
+kind: PersonaPack
+metadata:
+  name: ${PACK_NAME}
+  namespace: ${NAMESPACE}
+spec:
+  description: "Integration test provisioning pack"
+  category: "integration"
+  version: "1.0.0"
+  enabled: false
+  personas:
+    - name: planner
+      displayName: "Test Planner"
+      systemPrompt: "You are a planner for integration testing."
+      skills:
+        - code-review
+      schedule:
+        type: scheduled
+        cron: "*/10 * * * *"
+        task: "plan integration work"
+    - name: executor
+      displayName: "Test Executor"
+      systemPrompt: "You are an executor for integration testing."
+      skills:
+        - code-review
+      schedule:
+        type: sweep
+        interval: "15m"
+        task: "execute integration work"
+EOF
+  pass "Created temporary PersonaPack '${PACK_NAME}'"
 
-  PACK_NAME="$(printf "%s" "$packs_json" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d[0]["metadata"]["name"] if isinstance(d,list) and d else "")')"
-  if [[ -z "${PACK_NAME}" ]]; then
-    fail "No PersonaPacks found after install-defaults"
-    exit 1
-  fi
-
-  ORIGINAL_ENABLED="$(api_request GET "/api/v1/personapacks/${PACK_NAME}" | python3 -c 'import json,sys; d=json.load(sys.stdin); print("true" if d.get("spec",{}).get("enabled", False) else "false")')"
-
+  # Enable the pack via API.
   api_request PATCH "/api/v1/personapacks/${PACK_NAME}" "{\"enabled\":true}" >/dev/null
   pass "Enabled PersonaPack '${PACK_NAME}'"
 
+  # Wait for stamped instances and schedules to appear.
   elapsed=0
   while [[ "$elapsed" -lt "$TIMEOUT" ]]; do
     instances_json="$(api_request GET "/api/v1/instances")"
@@ -173,7 +197,7 @@ main() {
     inst_count="$(printf "%s" "$instances_json" | python3 -c 'import json,sys; p=sys.argv[1]; d=json.load(sys.stdin); print(sum(1 for i in d if i.get("metadata",{}).get("labels",{}).get("sympozium.ai/persona-pack")==p))' "$PACK_NAME")"
     sched_count="$(printf "%s" "$schedules_json" | python3 -c 'import json,sys; p=sys.argv[1]; d=json.load(sys.stdin); print(sum(1 for i in d if i.get("metadata",{}).get("labels",{}).get("sympozium.ai/persona-pack")==p))' "$PACK_NAME")"
 
-    if [[ "$inst_count" -gt 0 && "$sched_count" -gt 0 ]]; then
+    if [[ "$inst_count" -ge 2 && "$sched_count" -ge 2 ]]; then
       pass "PersonaPack stamped resources (instances=${inst_count}, schedules=${sched_count})"
       break
     fi
