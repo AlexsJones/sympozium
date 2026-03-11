@@ -84,10 +84,13 @@ func (r *SympoziumInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		}
 	}
 
+	// Capture status baseline before any status mutations so the merge patch
+	// includes every field we touch (channels, phase, active-agent count).
+	statusBase := instance.DeepCopy()
+
 	// Reconcile channel deployments
 	if err := r.reconcileChannels(ctx, &instance); err != nil {
 		log.Error(err, "failed to reconcile channels")
-		statusBase := instance.DeepCopy()
 		instance.Status.Phase = "Error"
 		_ = r.Status().Patch(ctx, &instance, client.MergeFrom(statusBase))
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, err
@@ -110,7 +113,6 @@ func (r *SympoziumInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	}
 
 	// Update status
-	statusBase := instance.DeepCopy()
 	if hasServing {
 		instance.Status.Phase = "Serving"
 	} else {
@@ -130,6 +132,25 @@ func (r *SympoziumInstanceReconciler) reconcileChannels(ctx context.Context, ins
 
 	for _, ch := range instance.Spec.Channels {
 		deployName := fmt.Sprintf("%s-channel-%s", instance.Name, ch.Type)
+
+		// Validate that the referenced secret exists before creating/updating the deployment.
+		if ch.ConfigRef.Secret != "" {
+			var secret corev1.Secret
+			if err := r.Get(ctx, types.NamespacedName{
+				Name:      ch.ConfigRef.Secret,
+				Namespace: instance.Namespace,
+			}, &secret); err != nil {
+				if errors.IsNotFound(err) {
+					channelStatuses = append(channelStatuses, sympoziumv1alpha1.ChannelStatus{
+						Type:    ch.Type,
+						Status:  "Error",
+						Message: fmt.Sprintf("secret %q not found", ch.ConfigRef.Secret),
+					})
+					continue
+				}
+				return err
+			}
+		}
 
 		// WhatsApp channels need a PVC for credential persistence (QR link survives restarts)
 		if ch.Type == "whatsapp" {
