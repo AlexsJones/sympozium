@@ -197,7 +197,7 @@ export function FeedPane({
     return (
       <button
         onClick={onToggle}
-        className="fixed right-0 top-1/2 -translate-y-1/2 z-40 flex items-center gap-1 rounded-l-lg border border-r-0 border-border/50 bg-card px-1.5 py-3 text-muted-foreground hover:text-indigo-400 hover:bg-indigo-500/5 transition-colors shadow-lg"
+        className="fixed right-0 top-1/2 -translate-y-1/2 z-40 flex items-center gap-1 rounded-l-lg border border-r-0 border-border/50 bg-card px-1.5 py-3 text-muted-foreground hover:text-blue-400 hover:bg-blue-500/5 transition-colors shadow-lg"
         title="Open feed"
       >
         <ChevronLeft className="h-4 w-4" />
@@ -211,7 +211,7 @@ export function FeedPane({
       {/* Header */}
       <div className="flex h-14 items-center justify-between border-b border-border/50 px-3">
         <div className="flex items-center gap-2">
-          <Radio className="h-4 w-4 text-indigo-400" />
+          <Radio className="h-4 w-4 text-blue-400" />
           <span className="text-sm font-semibold">Feed</span>
         </div>
         <Button
@@ -290,7 +290,7 @@ export function FeedPane({
               />
               <Button
                 size="sm"
-                className="h-8 w-8 p-0 bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white border-0"
+                className="h-8 w-8 p-0 bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white border-0"
                 onClick={handleSend}
                 disabled={!message.trim() || createRun.isPending}
               >
@@ -340,7 +340,7 @@ function FeedBubble({ item }: { item: FeedItem }) {
         className={cn(
           "flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs",
           isUser
-            ? "bg-indigo-500/20 text-indigo-400"
+            ? "bg-blue-500/20 text-blue-400"
             : item.type === "error"
             ? "bg-red-500/20 text-red-400"
             : item.type === "thinking"
@@ -360,7 +360,7 @@ function FeedBubble({ item }: { item: FeedItem }) {
         className={cn(
           "max-w-[80%] rounded-lg px-3 py-2 text-xs",
           isUser
-            ? "bg-indigo-500/15 text-indigo-100 border border-indigo-500/20"
+            ? "bg-blue-500/15 text-blue-100 border border-blue-500/20"
             : item.type === "error"
             ? "bg-red-500/10 text-red-300 border border-red-500/20"
             : item.type === "thinking"

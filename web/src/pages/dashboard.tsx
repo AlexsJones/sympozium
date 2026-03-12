@@ -301,7 +301,7 @@ export function DashboardPage() {
       value: instances.data?.length ?? "—",
       icon: Server,
       to: "/instances",
-      color: "text-indigo-400",
+      color: "text-blue-400",
     },
     {
       label: "Active Runs",
@@ -542,7 +542,7 @@ export function DashboardPage() {
                     y1={padY}
                     y2={chartH - padY}
                     stroke="currentColor"
-                    className="text-indigo-300/60"
+                    className="text-blue-300/60"
                     strokeDasharray="4 3"
                     strokeWidth={1}
                   />
@@ -564,7 +564,7 @@ export function DashboardPage() {
                   d={linePath(durationPoints)}
                   fill="none"
                   stroke="currentColor"
-                  className="text-indigo-400"
+                  className="text-blue-400"
                   strokeWidth={2.5}
                 />
 
@@ -595,7 +595,7 @@ export function DashboardPage() {
                       cx={xFor(i)}
                       cy={yForDuration(durationFor(b))}
                       r={hoverIdx === i ? 5 : 3.5}
-                      className="cursor-pointer fill-indigo-400"
+                      className="cursor-pointer fill-blue-400"
                       onMouseEnter={() => setHoverIdx(i)}
                     />
                     {b.failed > 0 && (
@@ -628,14 +628,14 @@ export function DashboardPage() {
                 ))}
 
                 {activeX !== null && activeYDuration !== null && (
-                  <circle cx={activeX} cy={activeYDuration} r={6} className="fill-indigo-300/30" />
+                  <circle cx={activeX} cy={activeYDuration} r={6} className="fill-blue-300/30" />
                 )}
               </svg>
 
               {activePoint && (
                 <div className="pointer-events-none absolute right-3 top-3 rounded-md border border-white/10 bg-black/70 px-3 py-2 text-xs backdrop-blur">
                   <div className="font-semibold text-foreground">{activePoint.label}</div>
-                  <div className="text-indigo-300">
+                  <div className="text-blue-300">
                     {durationMode === "p95" ? "P95 duration" : "Avg duration"}:{" "}
                     {(durationMode === "p95" ? activePoint.p95DurationSec : activePoint.avgDurationSec).toFixed(1)}s
                   </div>
@@ -649,7 +649,7 @@ export function DashboardPage() {
               )}
               <div className="mt-1 flex items-center gap-4 px-2 text-xs">
                 <span className="inline-flex items-center gap-2 text-muted-foreground">
-                  <span className="h-2 w-2 rounded-full bg-indigo-400" />
+                  <span className="h-2 w-2 rounded-full bg-blue-400" />
                   {durationMode === "p95" ? "P95 run duration" : "Avg run duration"}
                 </span>
                 <span className="inline-flex items-center gap-2 text-muted-foreground">
@@ -765,7 +765,7 @@ export function DashboardPage() {
                       <span className="text-emerald-400/80">
                         {new Date(evt.timestamp).toLocaleTimeString()}
                       </span>{" "}
-                      <span className="text-indigo-400">{evt.topic}</span>{" "}
+                      <span className="text-blue-400">{evt.topic}</span>{" "}
                       {typeof evt.data === "string"
                         ? truncate(evt.data, 80)
                         : truncate(JSON.stringify(evt.data), 80)}

@@ -306,7 +306,7 @@ function GatewayMetricsCard() {
   const activeX = hoverIdx !== null ? xFor(hoverIdx) : null;
 
   const stats = [
-    { label: "Total Requests", value: totalRequests.toLocaleString(), color: "text-indigo-400" },
+    { label: "Total Requests", value: totalRequests.toLocaleString(), color: "text-blue-400" },
     { label: "Success Rate", value: totalRequests > 0 ? `${successRate.toFixed(1)}%` : "—", color: "text-emerald-400" },
     { label: "Errors", value: errorCount.toLocaleString(), color: errorCount > 0 ? "text-red-400" : "text-muted-foreground" },
     { label: "Uptime", value: formatUptime(uptimeSec), color: "text-cyan-400" },
@@ -399,7 +399,7 @@ function GatewayMetricsCard() {
                   y1={padY}
                   y2={chartH - padY}
                   stroke="currentColor"
-                  className="text-indigo-300/60"
+                  className="text-blue-300/60"
                   strokeDasharray="4 3"
                   strokeWidth={1}
                 />
@@ -450,7 +450,7 @@ function GatewayMetricsCard() {
                 d={linePath(durationPoints)}
                 fill="none"
                 stroke="currentColor"
-                className="text-indigo-400"
+                className="text-blue-400"
                 strokeWidth={2}
               />
 
@@ -461,7 +461,7 @@ function GatewayMetricsCard() {
                   cx={xFor(i)}
                   cy={yForDuration(b.avgDurationSec)}
                   r={hoverIdx === i ? 4.5 : 2.5}
-                  className="fill-indigo-400"
+                  className="fill-blue-400"
                 />
               ))}
 
@@ -504,7 +504,7 @@ function GatewayMetricsCard() {
                   <text
                     x={activeX + (hoverIdx > buckets.length / 2 ? -130 : 20)}
                     y={padY + 48}
-                    className="fill-indigo-400 text-[10px]"
+                    className="fill-blue-400 text-[10px]"
                   >
                     avg {activePoint.avgDurationSec.toFixed(1)}s
                   </text>
@@ -522,7 +522,7 @@ function GatewayMetricsCard() {
               {/* Legend */}
               <rect x={chartW - padX - 120} y={padY - 2} width={8} height={8} rx={1} className="fill-emerald-400/70" />
               <text x={chartW - padX - 108} y={padY + 6} className="fill-muted-foreground text-[9px]">requests</text>
-              <rect x={chartW - padX - 60} y={padY - 2} width={8} height={8} rx={1} className="fill-indigo-400" />
+              <rect x={chartW - padX - 60} y={padY - 2} width={8} height={8} rx={1} className="fill-blue-400" />
               <text x={chartW - padX - 48} y={padY + 6} className="fill-muted-foreground text-[9px]">latency</text>
             </svg>
           </div>
@@ -540,7 +540,7 @@ function GatewayMetricsCard() {
             <span className="text-red-400">
               Errors: <span className="font-semibold">{errorCount}</span>
             </span>
-            <span className="text-indigo-400">
+            <span className="text-blue-400">
               Avg latency: <span className="font-semibold">{avgDurationSec.toFixed(1)}s</span>
             </span>
           </div>

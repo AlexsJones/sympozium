@@ -86,7 +86,7 @@ export function InstancesPage() {
         </div>
         <Button
           size="sm"
-          className="bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white border-0"
+          className="bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white border-0"
           onClick={() => setWizardOpen(true)}
         >
           <Plus className="mr-2 h-4 w-4" /> Create Instance
@@ -139,7 +139,7 @@ export function InstancesPage() {
                       <ExternalLink className="h-3 w-3 opacity-50" />
                     </Link>
                     {inst.metadata.labels?.["sympozium.ai/persona-pack"] && (
-                      <Badge variant="outline" className="text-[10px] px-1.5 py-0 text-indigo-400 border-indigo-500/30">
+                      <Badge variant="outline" className="text-[10px] px-1.5 py-0 text-blue-400 border-blue-500/30">
                         {inst.metadata.labels["sympozium.ai/persona-pack"]}
                       </Badge>
                     )}

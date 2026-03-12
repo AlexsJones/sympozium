@@ -12,7 +12,7 @@
     --card-foreground: 214 32% 91%;
     --popover: 217 33% 17%;
     --popover-foreground: 214 32% 91%;
-    --primary: 239 84% 67%;
+    --primary: 217 91% 60%;
     --primary-foreground: 0 0% 100%;
     --secondary: 215 25% 27%;
     --secondary-foreground: 214 32% 91%;
@@ -24,7 +24,7 @@
     --destructive-foreground: 0 0% 100%;
     --border: 215 19% 22%;
     --input: 215 19% 22%;
-    --ring: 239 84% 67%;
+    --ring: 217 91% 60%;
     --radius: 0.5rem;
   }
 }
@@ -81,7 +81,7 @@
 
 /* Glow effects matching website */
 .glow-primary {
-  box-shadow: 0 0 40px rgba(99, 102, 241, 0.3), 0 0 80px rgba(99, 102, 241, 0.1);
+  box-shadow: 0 0 40px rgba(59, 130, 246, 0.3), 0 0 80px rgba(59, 130, 246, 0.1);
 }
 
 /* Connection status indicator */
@@ -111,7 +111,7 @@
 /* Grid background pattern (matches website) */
 .grid-pattern {
   background-image:
-    linear-gradient(rgba(99, 102, 241, 0.03) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(99, 102, 241, 0.03) 1px, transparent 1px);
+    linear-gradient(rgba(59, 130, 246, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(59, 130, 246, 0.03) 1px, transparent 1px);
   background-size: 60px 60px;
 }

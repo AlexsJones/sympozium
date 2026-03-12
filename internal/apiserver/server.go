@@ -998,6 +998,7 @@ type PatchPersonaPackRequest struct {
 	APIKey            string                       `json:"apiKey,omitempty"`
 	Model             string                       `json:"model,omitempty"`
 	BaseURL           string                       `json:"baseURL,omitempty"`
+	Channels          []string                     `json:"channels,omitempty"`
 	ChannelConfigs    map[string]string            `json:"channelConfigs,omitempty"`
 	PolicyRef         string                       `json:"policyRef,omitempty"`
 	HeartbeatInterval string                       `json:"heartbeatInterval,omitempty"`
@@ -1087,6 +1088,12 @@ func (s *Server) patchPersonaPack(w http.ResponseWriter, r *http.Request) {
 	if req.Model != "" {
 		for i := range pp.Spec.Personas {
 			pp.Spec.Personas[i].Model = req.Model
+		}
+	}
+
+	if len(req.Channels) > 0 {
+		for i := range pp.Spec.Personas {
+			pp.Spec.Personas[i].Channels = req.Channels
 		}
 	}
 

@@ -84,6 +84,7 @@ export function PersonasPage() {
         apiKey: result.apiKey || undefined,
         model: result.model,
         baseURL: result.baseURL || undefined,
+        channels: result.channels.length > 0 ? result.channels : undefined,
         channelConfigs:
           Object.keys(result.channelConfigs).length > 0
             ? result.channelConfigs
@@ -220,7 +221,7 @@ export function PersonasPage() {
                       <Button
                         size="sm"
                         variant="ghost"
-                        className="h-7 gap-1 text-xs text-indigo-400 hover:text-indigo-300 hover:bg-indigo-500/10"
+                        className="h-7 gap-1 text-xs text-blue-400 hover:text-blue-300 hover:bg-blue-500/10"
                         onClick={() => openWizard(pack)}
                       >
                         <Sparkles className="h-3 w-3" />

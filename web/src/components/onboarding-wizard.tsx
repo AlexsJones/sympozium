@@ -156,9 +156,9 @@ function StepIndicator({ steps, current }: { steps: WizardStep[]; current: Wizar
             className={cn(
               "flex items-center gap-1 rounded-full px-2 py-1 text-[11px] font-medium transition-colors",
               i < idx
-                ? "bg-indigo-500/20 text-indigo-400"
+                ? "bg-blue-500/20 text-blue-400"
                 : i === idx
-                ? "bg-indigo-500 text-white"
+                ? "bg-blue-500 text-white"
                 : "bg-muted text-muted-foreground"
             )}
           >
@@ -230,7 +230,7 @@ function ModelSelector({
                   className={cn(
                     "flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-xs font-mono transition-colors text-left",
                     m === value
-                      ? "bg-indigo-500/15 text-indigo-400 border border-indigo-500/30"
+                      ? "bg-blue-500/15 text-blue-400 border border-blue-500/30"
                       : "text-foreground hover:bg-white/5 border border-transparent"
                   )}
                 >
@@ -389,9 +389,9 @@ export function OnboardingWizard({
 
   const titleIcon =
     mode === "instance" ? (
-      <Server className="h-5 w-5 text-indigo-400" />
+      <Server className="h-5 w-5 text-blue-400" />
     ) : (
-      <Sparkles className="h-5 w-5 text-indigo-400" />
+      <Sparkles className="h-5 w-5 text-blue-400" />
     );
   const titleText =
     mode === "instance"
@@ -414,7 +414,7 @@ export function OnboardingWizard({
             {mode === "persona" ? (
               <>
                 Enable{" "}
-                <span className="font-mono text-indigo-400">{targetName}</span>
+                <span className="font-mono text-blue-400">{targetName}</span>
               </>
             ) : (
               "Create Instance"
@@ -541,7 +541,7 @@ export function OnboardingWizard({
             {mode === "persona" && personaCount !== undefined && (
               <p className="text-xs text-muted-foreground">
                 Applied to all{" "}
-                <span className="text-indigo-400">{personaCount}</span>{" "}
+                <span className="text-blue-400">{personaCount}</span>{" "}
                 personas.
               </p>
             )}
@@ -577,7 +577,7 @@ export function OnboardingWizard({
                         className={cn(
                           "flex w-full items-center justify-between rounded-md border px-2.5 py-2 text-left text-xs transition-colors",
                           selected
-                            ? "border-indigo-500/40 bg-indigo-500/15 text-indigo-300"
+                            ? "border-blue-500/40 bg-blue-500/15 text-blue-300"
                             : "border-transparent hover:border-border/60 hover:bg-white/5"
                         )}
                       >
@@ -597,8 +597,8 @@ export function OnboardingWizard({
 
             {/* Web endpoint inline config */}
             {form.skills.includes("web-endpoint") && (
-              <div className="rounded-md border border-indigo-500/20 bg-indigo-500/5 p-3 space-y-2">
-                <p className="text-xs font-medium text-indigo-400">Web Endpoint Config</p>
+              <div className="rounded-md border border-blue-500/20 bg-blue-500/5 p-3 space-y-2">
+                <p className="text-xs font-medium text-blue-400">Web Endpoint Config</p>
                 <div className="space-y-1">
                   <Label className="text-xs">Rate Limit (req/min)</Label>
                   <Input
@@ -622,8 +622,8 @@ export function OnboardingWizard({
 
             {/* GitHub GitOps inline config */}
             {form.skills.includes("github-gitops") && (
-              <div className="rounded-md border border-indigo-500/20 bg-indigo-500/5 p-3 space-y-2">
-                <p className="text-xs font-medium text-indigo-400">GitHub GitOps Config</p>
+              <div className="rounded-md border border-blue-500/20 bg-blue-500/5 p-3 space-y-2">
+                <p className="text-xs font-medium text-blue-400">GitHub GitOps Config</p>
                 <div className="space-y-1">
                   <Label className="text-xs">Repository</Label>
                   <Input
@@ -685,7 +685,7 @@ export function OnboardingWizard({
                 className={cn(
                   "flex w-full items-center justify-between rounded-md border px-3 py-2 text-left text-sm transition-colors",
                   form.heartbeatInterval === opt.value
-                    ? "border-indigo-500/40 bg-indigo-500/15 text-indigo-300"
+                    ? "border-blue-500/40 bg-blue-500/15 text-blue-300"
                     : "border-border/50 hover:bg-white/5"
                 )}
               >
@@ -720,7 +720,7 @@ export function OnboardingWizard({
                 className={cn(
                   "flex w-full items-center justify-between rounded-md border px-3 py-2 text-left text-sm transition-colors",
                   form.channels.includes(ch.value)
-                    ? "border-indigo-500/40 bg-indigo-500/15 text-indigo-300"
+                    ? "border-blue-500/40 bg-blue-500/15 text-blue-300"
                     : "border-border/50 hover:bg-white/5"
                 )}
               >
@@ -739,17 +739,17 @@ export function OnboardingWizard({
         {/* ── Confirm step ──────────────────────────────────────────── */}
         {step === "confirm" && (
           <div className="space-y-3">
-            <div className="rounded-lg border border-indigo-500/20 bg-indigo-500/5 p-4 space-y-2 text-sm">
+            <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 p-4 space-y-2 text-sm">
               {mode === "instance" && (
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Name</span>
-                  <span className="font-mono text-indigo-400">{form.name}</span>
+                  <span className="font-mono text-blue-400">{form.name}</span>
                 </div>
               )}
               {mode === "persona" && targetName && (
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Pack</span>
-                  <span className="font-mono text-indigo-400">{targetName}</span>
+                  <span className="font-mono text-blue-400">{targetName}</span>
                 </div>
               )}
               <div className="flex justify-between">
@@ -890,7 +890,7 @@ export function OnboardingWizard({
           {step === "confirm" || step === "channelAction" ? (
             <Button
               size="sm"
-              className="gap-1 bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white border-0"
+              className="gap-1 bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white border-0"
               onClick={next}
               disabled={isPending}
             >
@@ -919,7 +919,7 @@ export function OnboardingWizard({
               size="sm"
               onClick={next}
               disabled={!canNext}
-              className="gap-1 bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white border-0"
+              className="gap-1 bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white border-0"
             >
               Next <ChevronRight className="h-4 w-4" />
             </Button>

@@ -53,13 +53,13 @@ export function LoginPage() {
   return (
     <div className="relative flex min-h-screen items-center justify-center bg-background overflow-hidden grid-pattern">
       {/* Background gradient orbs matching website */}
-      <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-indigo-500/10 rounded-full blur-[120px]" />
+      <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-blue-500/10 rounded-full blur-[120px]" />
       <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-purple-500/10 rounded-full blur-[120px]" />
       <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[400px] h-[400px] bg-orange-500/5 rounded-full blur-[150px]" />
 
       <Card className="relative z-10 w-full max-w-md border-border/50 bg-card/80 backdrop-blur-xl shadow-2xl shadow-black/20">
         <CardHeader className="text-center">
-          <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 text-white font-bold text-2xl shadow-lg shadow-indigo-500/25">
+          <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-xl bg-gradient-to-br from-blue-500 to-purple-600 text-white font-bold text-2xl shadow-lg shadow-blue-500/25">
             S
           </div>
           <CardTitle className="text-2xl font-bold text-white">
@@ -85,7 +85,7 @@ export function LoginPage() {
             {error && (
               <p className="text-sm text-destructive text-center">{error}</p>
             )}
-            <Button type="submit" className="w-full bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white border-0 shadow-lg shadow-indigo-500/20" disabled={!token.trim() || loading}>
+            <Button type="submit" className="w-full bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white border-0 shadow-lg shadow-blue-500/20" disabled={!token.trim() || loading}>
               {loading ? "Verifying…" : "Sign In"}
             </Button>
             <p className="text-center text-xs text-muted-foreground">
