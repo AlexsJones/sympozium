@@ -37,6 +37,7 @@ spec:
           port: 53
         - protocol: TCP
           port: 53
+    {{- if .Values.nats.enabled }}
     - to:
         - podSelector:
             matchLabels:
@@ -44,6 +45,18 @@ spec:
       ports:
         - protocol: TCP
           port: 4222
+    {{- else }}
+    # External NATS — allow egress to any destination on port 4222
+    - to: []
+      ports:
+        - protocol: TCP
+          port: 4222
+    {{- end }}
+    # Allow HTTPS egress to cloud LLM providers (OpenAI, Anthropic, Azure, etc.)
+    - to: []
+      ports:
+        - protocol: TCP
+          port: 443
     # Allow Kubernetes API server (post-DNAT port on some CNIs like kube-router)
     - to: []
       ports:
@@ -87,6 +100,75 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
+  name: sympozium-channel-deny-all
+  namespace: {{ include "sympozium.namespace" . }}
+  labels:
+    {{- include "sympozium.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      sympozium.ai/component: channel
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress: []
+  egress: []
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: sympozium-channel-allow-egress
+  namespace: {{ include "sympozium.namespace" . }}
+  labels:
+    {{- include "sympozium.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      sympozium.ai/component: channel
+  policyTypes:
+    - Egress
+  egress:
+    - to: []
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    {{- if .Values.nats.enabled }}
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: nats
+      ports:
+        - protocol: TCP
+          port: 4222
+    {{- else }}
+    # External NATS — allow egress to any destination on port 4222
+    - to: []
+      ports:
+        - protocol: TCP
+          port: 4222
+    {{- end }}
+    # Allow HTTPS egress to channel platform APIs (Telegram, Slack, Discord, etc.)
+    - to: []
+      ports:
+        - protocol: TCP
+          port: 443
+    # Allow HTTP for webhook callbacks
+    - to: []
+      ports:
+        - protocol: TCP
+          port: 80
+    {{- range .Values.networkPolicies.extraEgressPorts }}
+    - to: []
+      ports:
+        - protocol: TCP
+          port: {{ . }}
+    {{- end }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
   name: sympozium-web-proxy-allow-ingress
   namespace: {{ include "sympozium.namespace" . }}
   labels:
@@ -108,6 +190,7 @@ spec:
           port: 53
         - protocol: TCP
           port: 53
+    {{- if .Values.nats.enabled }}
     - to:
         - podSelector:
             matchLabels:
@@ -115,6 +198,13 @@ spec:
       ports:
         - protocol: TCP
           port: 4222
+    {{- else }}
+    # External NATS — allow egress to any destination on port 4222
+    - to: []
+      ports:
+        - protocol: TCP
+          port: 4222
+    {{- end }}
     - ports:
         - protocol: TCP
           port: 443

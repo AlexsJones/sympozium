@@ -143,6 +143,69 @@ spec:
         - protocol: TCP
           port: 11434
 ---
+# Deny-all baseline for channel pods (Telegram, Slack, Discord, etc.)
+# Channel pods need egress to deliver responses back to their platform APIs.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: sympozium-channel-deny-all
+  labels:
+    app.kubernetes.io/name: sympozium
+    app.kubernetes.io/component: network-policy
+spec:
+  podSelector:
+    matchLabels:
+      sympozium.ai/component: channel
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress: []   # Deny all inbound
+  egress: []    # Deny all outbound
+---
+# Allow channel pods to reach DNS, NATS event bus, and external APIs (for responses)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: sympozium-channel-allow-egress
+  labels:
+    app.kubernetes.io/name: sympozium
+    app.kubernetes.io/component: network-policy
+spec:
+  podSelector:
+    matchLabels:
+      sympozium.ai/component: channel
+  policyTypes:
+    - Egress
+  egress:
+    # Allow DNS
+    - to: []
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Allow NATS event bus (cross-namespace)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: sympozium-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: nats
+      ports:
+        - protocol: TCP
+          port: 4222
+    # Allow HTTPS egress to channel platform APIs (Telegram, Slack, Discord, etc.)
+    - to: []
+      ports:
+        - protocol: TCP
+          port: 443
+    # Allow HTTP egress for webhook callbacks (some platforms use HTTP)
+    - to: []
+      ports:
+        - protocol: TCP
+          port: 80
+---
 # Restrict agent pods with sandbox enabled — more restrictive
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
