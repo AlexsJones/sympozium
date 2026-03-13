@@ -19,6 +19,8 @@ import (
 	"github.com/openai/openai-go/v3/shared"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/propagation"
+	oteltrace "go.opentelemetry.io/otel/trace"
 )
 
 // maxToolIterations is the maximum number of tool-call round-trips before
@@ -94,6 +96,36 @@ func main() {
 	var tools []ToolDef
 	if toolsEnabled {
 		tools = defaultTools()
+		// Load MCP tools from manifest if the mcp-bridge sidecar is running
+		if mcpTools := loadMCPTools("/ipc/tools/mcp-tools.json"); len(mcpTools) > 0 {
+			tools = append(tools, mcpTools...)
+
+			// Group tools by server prefix
+			serverTools := make(map[string][]string)
+			for _, t := range mcpTools {
+				parts := strings.SplitN(t.Name, "_", 2)
+				prefix := parts[0]
+				serverTools[prefix] = append(serverTools[prefix], t.Name)
+			}
+
+			var sb strings.Builder
+			sb.WriteString("\n\n## Specialized MCP Tools\n\n")
+			sb.WriteString(fmt.Sprintf("You have access to %d specialized MCP tools. ", len(mcpTools)))
+			sb.WriteString("ALWAYS prefer MCP tools over execute_command when a relevant MCP tool exists.\n\n")
+			sb.WriteString("### Diagnostic Methodology\n")
+			sb.WriteString("1. **Start targeted**: Use the most specific MCP tool for the problem first\n")
+			sb.WriteString("2. **Don't shotgun**: Avoid calling many tools to 'gather info' — diagnose step by step\n")
+			sb.WriteString("3. **Read results carefully**: Each MCP tool returns structured diagnostic data. Analyze it before calling more tools.\n")
+			sb.WriteString("4. **gRPC != HTTP**: For gRPC issues, check port naming (grpc-*), appProtocol, H2 settings, DestinationRules — NOT path routing\n")
+			sb.WriteString("5. **Only fall back to execute_command** for tasks no MCP tool covers (e.g., reading app logs)\n\n")
+
+			sb.WriteString("### Available Tool Groups\n")
+			for prefix, tools := range serverTools {
+				sb.WriteString(fmt.Sprintf("- **%s** (%d tools): %s\n", prefix, len(tools), strings.Join(tools, ", ")))
+			}
+
+			systemPrompt += sb.String()
+		}
 		log.Printf("tools enabled: %d tool(s) registered", len(tools))
 	}
 
@@ -144,6 +176,18 @@ func main() {
 			log.Printf("failed to shutdown OTel providers: %v", err)
 		}
 	}()
+
+	// Extract TRACEPARENT from env so the runner trace joins the controller trace.
+	if tp := os.Getenv("TRACEPARENT"); tp != "" {
+		log.Printf("TRACEPARENT env var found: %s", tp)
+		prop := propagation.TraceContext{}
+		carrier := propagation.MapCarrier{"traceparent": tp}
+		ctx = prop.Extract(ctx, carrier)
+		sc := oteltrace.SpanContextFromContext(ctx)
+		log.Printf("after extraction: traceID=%s spanID=%s remote=%v valid=%v", sc.TraceID(), sc.SpanID(), sc.IsRemote(), sc.IsValid())
+	} else {
+		log.Println("TRACEPARENT env var not set")
+	}
 
 	ctx, runSpan := obs.startRunSpan(ctx,
 		attribute.String("instance", getEnv("INSTANCE_NAME", "")),
@@ -432,6 +476,8 @@ func callOpenAI(ctx context.Context, provider, apiKey, baseURL, model, systemPro
 	totalInputTokens := 0
 	totalOutputTokens := 0
 	totalToolCalls := 0
+	const maxEmptyRetries = 2
+	emptyRetries := 0
 
 	for i := 0; i < maxToolIterations; i++ {
 		params := openai.ChatCompletionNewParams{
@@ -478,7 +524,7 @@ func callOpenAI(ctx context.Context, provider, apiKey, baseURL, model, systemPro
 		chatSpan.End()
 
 		// If model made tool calls, execute them and loop.
-		if choice.FinishReason == "tool_calls" && len(choice.Message.ToolCalls) > 0 {
+		if len(choice.Message.ToolCalls) > 0 {
 			// Add the assistant message (with tool calls) to history.
 			messages = append(messages, choice.Message.ToParam())
 
@@ -495,7 +541,57 @@ func callOpenAI(ctx context.Context, provider, apiKey, baseURL, model, systemPro
 		}
 
 		// No tool calls — return the text response.
-		return choice.Message.Content, totalInputTokens, totalOutputTokens, totalToolCalls, nil
+		responseContent := choice.Message.Content
+
+		// Debug: log raw Content and RawJSON length for diagnosing reasoning-model issues.
+		rawJSON := choice.Message.RawJSON()
+		log.Printf("DEBUG: Message.Content=%q (len=%d), RawJSON len=%d", responseContent, len(responseContent), len(rawJSON))
+
+		// Whitespace-only content is effectively empty.
+		responseContent = strings.TrimSpace(responseContent)
+
+		// Reasoning models (gpt-oss, o1, etc.) may return an empty Content field
+		// with all output in a "reasoning" field that the SDK doesn't expose.
+		// Fall back to extracting reasoning from the raw JSON if Content is empty.
+		if responseContent == "" {
+			if rawJSON != "" {
+				var rawMsg map[string]interface{}
+				if err := json.Unmarshal([]byte(rawJSON), &rawMsg); err == nil {
+					if reasoning, ok := rawMsg["reasoning"].(string); ok && reasoning != "" {
+						log.Printf("WARNING: Message.Content empty but reasoning field found (%d chars) - using reasoning as response", len(reasoning))
+						responseContent = reasoning
+					} else if reasoningContent, ok := rawMsg["reasoning_content"].(string); ok && reasoningContent != "" {
+						log.Printf("WARNING: Message.Content empty but reasoning_content field found (%d chars) - using as response", len(reasoningContent))
+						responseContent = reasoningContent
+					}
+				}
+			}
+
+			// Additional fallback: check SDK ExtraFields for reasoning.
+			if responseContent == "" {
+				if ef := choice.Message.JSON.ExtraFields; ef != nil {
+					for _, key := range []string{"reasoning", "reasoning_content"} {
+						if field, ok := ef[key]; ok {
+							var val string
+							if err := json.Unmarshal([]byte(field.Raw()), &val); err == nil && strings.TrimSpace(val) != "" {
+								log.Printf("WARNING: Using ExtraFields[%q] (%d chars) as response", key, len(val))
+								responseContent = val
+								break
+							}
+						}
+					}
+				}
+			}
+		}
+
+		// Retry on empty response from reasoning models (they sometimes waste all tokens on thinking).
+		if responseContent == "" && emptyRetries < maxEmptyRetries {
+			emptyRetries++
+			log.Printf("WARNING: Empty response from reasoning model, retrying (%d/%d)", emptyRetries, maxEmptyRetries)
+			continue
+		}
+
+		return responseContent, totalInputTokens, totalOutputTokens, totalToolCalls, nil
 	}
 
 	return "", totalInputTokens, totalOutputTokens, totalToolCalls,

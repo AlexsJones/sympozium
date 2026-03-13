@@ -81,6 +81,15 @@ Webhook image.
 {{- end }}
 
 {{/*
+MCP bridge image.
+*/}}
+{{- define "sympozium.mcpBridgeImage" -}}
+{{- $repo := .Values.mcpBridge.image.repository | default (printf "%s/mcp-bridge" .Values.image.registry) }}
+{{- $tag := .Values.mcpBridge.image.tag | default (include "sympozium.imageTag" .) }}
+{{- printf "%s:%s" $repo $tag }}
+{{- end }}
+
+{{/*
 Web proxy image.
 */}}
 {{- define "sympozium.webProxyImage" -}}

@@ -23,7 +23,7 @@ CONTROLLER_GEN ?= $(LOCALBIN)/controller-gen
 BIN_DIR = bin
 
 # All binaries
-BINARIES = controller apiserver ipc-bridge webhook agent-runner sympozium web-proxy
+BINARIES = controller apiserver ipc-bridge mcp-bridge webhook agent-runner sympozium web-proxy
 
 # All channel binaries
 CHANNELS = telegram whatsapp discord slack

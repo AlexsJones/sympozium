@@ -629,3 +629,88 @@ func TestCallAnthropic_ToolErrorIsError(t *testing.T) {
 		}
 	}
 }
+
+func TestCallOpenAI_ReasoningFallback(t *testing.T) {
+	// Simulate Ollama-style response where content is empty/whitespace but
+	// reasoning field is populated (reasoning models like gpt-oss:120B).
+	tests := []struct {
+		name    string
+		message map[string]any
+		want    string
+	}{
+		{
+			name: "empty content with reasoning field",
+			message: map[string]any{
+				"role":      "assistant",
+				"content":   "",
+				"reasoning": "The user asked me to say hello. Hello!",
+			},
+			want: "The user asked me to say hello. Hello!",
+		},
+		{
+			name: "whitespace content with reasoning field",
+			message: map[string]any{
+				"role":      "assistant",
+				"content":   "  \n  ",
+				"reasoning": "Whitespace content should trigger fallback.",
+			},
+			want: "Whitespace content should trigger fallback.",
+		},
+		{
+			name: "empty content with reasoning_content field",
+			message: map[string]any{
+				"role":              "assistant",
+				"content":           "",
+				"reasoning_content": "Response via reasoning_content.",
+			},
+			want: "Response via reasoning_content.",
+		},
+		{
+			name: "normal content ignores reasoning",
+			message: map[string]any{
+				"role":      "assistant",
+				"content":   "Hello!",
+				"reasoning": "Some internal reasoning.",
+			},
+			want: "Hello!",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(map[string]any{
+					"id":      "chatcmpl-reasoning",
+					"object":  "chat.completion",
+					"created": 1234567890,
+					"model":   "gpt-oss:120b",
+					"choices": []map[string]any{
+						{
+							"index":         0,
+							"message":       tt.message,
+							"finish_reason": "stop",
+						},
+					},
+					"usage": map[string]int{
+						"prompt_tokens":     10,
+						"completion_tokens": 329,
+						"total_tokens":      339,
+					},
+				})
+			})
+
+			srv := httptest.NewServer(handler)
+			defer srv.Close()
+
+			ctx := t.Context()
+			text, _, _, _, err := callOpenAI(ctx, "openai", "test-key", srv.URL, "gpt-oss:120b", "You are helpful.", "Say hello", nil)
+			if err != nil {
+				t.Fatalf("callOpenAI error: %v", err)
+			}
+			if text != tt.want {
+				t.Errorf("text = %q, want %q", text, tt.want)
+			}
+		})
+	}
+}

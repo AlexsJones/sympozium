@@ -181,8 +181,9 @@ func (cr *ChannelRouter) handleInbound(ctx context.Context, event *eventbus.Even
 				BaseURL:       inst.Spec.Agents.Default.BaseURL,
 				AuthSecretRef: authSecret,
 			},
-			Skills:  inst.Spec.Skills,
-			Timeout: &metav1.Duration{Duration: 10 * time.Minute},
+			Skills:       inst.Spec.Skills,
+			SystemPrompt: cr.resolveSystemPrompt(inst),
+			Timeout:      &metav1.Duration{Duration: 10 * time.Minute},
 		},
 	}
 
@@ -325,4 +326,12 @@ func truncateForLog(s string, n int) string {
 		return s
 	}
 	return s[:n] + "..."
+}
+
+// resolveSystemPrompt returns the system prompt for an instance.
+func (cr *ChannelRouter) resolveSystemPrompt(inst *sympoziumv1alpha1.SympoziumInstance) string {
+	if inst.Spec.Memory != nil && inst.Spec.Memory.SystemPrompt != "" {
+		return inst.Spec.Memory.SystemPrompt
+	}
+	return ""
 }

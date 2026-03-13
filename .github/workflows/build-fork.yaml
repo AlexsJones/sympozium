@@ -1,0 +1,122 @@
+name: Build and Push Images (Fork)
+
+on:
+  push:
+    branches: [main, feat/mcp-bridge-sidecar]
+  pull_request:
+    branches: [main]
+
+env:
+  REGISTRY: ghcr.io/henrikrexed/sympozium
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  fmt:
+    name: Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Check formatting
+        run: |
+          unformatted=$(gofmt -l $(find . -name '*.go' -not -path './vendor/*'))
+          if [ -n "$unformatted" ]; then
+            echo "::error::The following files are not formatted:"
+            echo "$unformatted"
+            echo "Run 'gofmt -s -w .' to fix."
+            exit 1
+          fi
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Test
+        run: go test -race -short ./...
+
+  codegen:
+    name: Codegen & Helm sync
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Check generated code
+        run: |
+          make generate
+          if ! git diff --quiet; then
+            echo "::error::Generated code is out of date. Run 'make generate' and commit."
+            git diff --stat
+            exit 1
+          fi
+      - name: Check Helm chart CRDs in sync
+        run: make helm-sync-check
+
+  build-and-push:
+    name: Build ${{ matrix.image }}
+    runs-on: ubuntu-latest
+    needs: [fmt, test, codegen]
+    if: github.event_name == 'push'
+    strategy:
+      matrix:
+        image:
+          - agent-runner
+          - controller
+          - apiserver
+          - ipc-bridge
+          - mcp-bridge
+          - webhook
+          - channel-telegram
+          - channel-whatsapp
+          - channel-discord
+          - channel-slack
+          - skill-k8s-ops
+          - skill-sre-observability
+          - skill-github-gitops
+          - skill-llmfit
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ matrix.image }}
+          tags: |
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/feat/mcp-bridge-sidecar' }}
+            type=sha,prefix=
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: images/${{ matrix.image }}/Dockerfile
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

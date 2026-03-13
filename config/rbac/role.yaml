@@ -168,6 +168,7 @@ rules:
   - sympozium.ai
   resources:
   - agentruns
+  - mcpservers
   - personapacks
   - skillpacks
   - sympoziumconfigs
@@ -198,6 +199,7 @@ rules:
   - sympozium.ai
   resources:
   - agentruns/status
+  - mcpservers/status
   - personapacks/status
   - skillpacks/status
   - sympoziumconfigs/status

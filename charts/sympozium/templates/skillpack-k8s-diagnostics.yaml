@@ -1,0 +1,148 @@
+{{- if .Values.skillPacks.k8sDiagnostics.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: skillpack-k8s-diagnostics
+  namespace: {{ include "sympozium.namespace" . }}
+  labels:
+    {{- include "sympozium.labels" . | nindent 4 }}
+    sympozium.ai/skillpack: "true"
+data:
+  README.md: |
+    # K8s Diagnostics SkillPack
+
+    This skill provides diagnostic methodology for Kubernetes networking and
+    OpenTelemetry collector issues using specialized MCP tools.
+
+  k8s-networking-diagnostics.md: |
+    # Kubernetes Networking Diagnostics
+
+    ## When to Use This Skill
+    Use this diagnostic methodology when investigating:
+    - Service-to-service connectivity failures
+    - gRPC routing issues
+    - Istio/service mesh problems
+    - Network policy blocking traffic
+    - DNS resolution failures
+    - Gateway API / HTTPRoute misconfigurations
+
+    ## Diagnostic Methodology
+
+    ### Step 1: Identify the Communication Pattern
+    First, determine what protocol and routing is involved:
+    - **HTTP**: Path-based routing, standard service discovery
+    - **gRPC**: Port-based routing, requires `appProtocol: grpc` on Service ports,
+      HTTP/2 upstream. Istio VirtualService needs explicit `port` match, NOT path match.
+    - **TCP**: Raw TCP, no L7 routing
+
+    ### Step 2: Service Discovery Check
+    Use `k8s_net_get_service` to verify:
+    - Service exists and has correct selectors
+    - Port names follow Istio convention (`grpc-*`, `http-*`, `tcp-*`)
+    - `appProtocol` field is set correctly for gRPC services
+    - Endpoints are populated (pods are selected)
+
+    ### Step 3: Network Policy Check
+    Use `k8s_net_list_networkpolicies` to verify:
+    - No deny-all policies blocking the traffic
+    - Ingress/egress rules allow the source->destination pair
+    - Port numbers match
+
+    ### Step 4: Service Mesh Check (if Istio/Linkerd)
+    Use `k8s_net_check_sidecar_injection` to verify proxies are running.
+    Then check mesh-specific config:
+
+    For **gRPC issues** specifically:
+    1. `k8s_net_list_istio_resources kind=DestinationRule` -- check `trafficPolicy.connectionPool.http.h2UpgradePolicy`
+    2. `k8s_net_list_istio_resources kind=VirtualService` -- gRPC routes must match on PORT not PATH
+    3. `k8s_net_check_istio_mtls` -- mTLS mode mismatches break gRPC
+    4. `k8s_net_get_proxy_logs` on BOTH source and destination pods -- look for:
+       - `upstream_reset_before_response_started` -> usually gRPC/H2 config issue
+       - `503 UH` -> upstream unhealthy (app not listening on expected port)
+       - `503 UC` -> upstream connection failure
+       - `RBAC: access denied` -> AuthorizationPolicy blocking
+
+    For **HTTP issues**:
+    1. `k8s_net_probe_http` to test end-to-end
+    2. `k8s_net_probe_connectivity` to test L4
+    3. `k8s_net_probe_dns` to test resolution
+
+    ### Step 5: Gateway API Check (if applicable)
+    Use `k8s_net_list_gateway_resources` to check:
+    - Gateway exists and is programmed (status conditions)
+    - HTTPRoute/GRPCRoute attached to correct Gateway
+    - Backend refs point to correct services
+    - For gRPC: must use GRPCRoute, NOT HTTPRoute with path matching
+
+    ### Step 6: Application-Level Check
+    If networking looks fine, the issue may be application-level:
+    - Check application logs: `execute_command kubectl logs <pod> -n <ns>`
+    - Check if the app actually listens on the expected port
+    - For gRPC: verify the app uses gRPC health checking (not HTTP /health)
+
+    ## Common gRPC Issues and Solutions
+
+    | Symptom | Likely Cause | Fix |
+    |---------|-------------|-----|
+    | `upstream_reset_before_response_started` | H2 not enabled | Set `appProtocol: grpc` on Service port |
+    | Connection refused | Wrong port | Check Service targetPort matches container port |
+    | 503 UH | App not ready | Check readiness probe, app startup logs |
+    | RBAC denied | AuthorizationPolicy | Check policy allows source principal |
+    | DNS not resolving | Wrong service name | Use `<svc>.<ns>.svc.cluster.local` |
+    | Intermittent failures | Load balancing | Check DestinationRule outlier detection |
+
+  otel-collector-diagnostics.md: |
+    # OpenTelemetry Collector Diagnostics
+
+    ## When to Use This Skill
+    Use this diagnostic methodology when investigating:
+    - Collector pods not starting or crashing
+    - Traces/metrics/logs not flowing through the pipeline
+    - High memory usage or OOM kills
+    - Configuration errors
+    - Exporter failures (backend rejecting data)
+
+    ## Diagnostic Methodology
+
+    ### Step 1: Collector Health Check
+    Use `otel_triage_scan` first -- it provides a quick overview of all collectors.
+    Then use `otel_list_collectors` to get detailed status.
+
+    ### Step 2: Configuration Analysis
+    Use `otel_get_config` to retrieve the running config.
+    Use `otel_check_config` to validate it against common anti-patterns:
+    - Missing batch processor (high cardinality risk)
+    - Missing memory_limiter (OOM risk)
+    - Hardcoded tokens in config (security risk)
+    - Invalid regex in filter processor
+    - Cumulative-to-delta conflicts
+    - Missing retry on exporters
+
+    ### Step 3: Log Analysis
+    Use `otel_parse_collector_logs` to find errors in collector logs.
+    Common patterns:
+    - `exporting failed` -> backend connection issue
+    - `dropping data` -> memory pressure, need memory_limiter tuning
+    - `context deadline exceeded` -> exporter timeout too short
+    - `connection refused` -> wrong endpoint URL
+
+    ### Step 4: Pipeline Flow Verification
+    Verify the full pipeline: receivers -> processors -> exporters
+    - Check that receivers are listening on expected ports
+    - Check processor ordering (memory_limiter should be FIRST)
+    - Check exporter endpoints and auth
+
+    ## OTTL Generation
+    Use `otel_generate_ottl` when you need to create or modify OTTL expressions
+    for transform processors. Describe what you want in plain English.
+
+    ## Common Issues
+
+    | Symptom | Tool to Use | What to Look For |
+    |---------|------------|------------------|
+    | No data flowing | `otel_triage_scan` | Pipeline misconfiguration |
+    | OOM kills | `otel_get_config` | Missing memory_limiter |
+    | High latency | `otel_check_config` | Missing batch processor |
+    | Auth failures | `otel_parse_collector_logs` | 401/403 in exporter logs |
+    | Partial data loss | `otel_parse_collector_logs` | Dropping spans messages |
+{{- end }}

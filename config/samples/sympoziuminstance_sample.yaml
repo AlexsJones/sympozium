@@ -35,6 +35,17 @@ spec:
       secretName: alice-github-token
     - provider: openai
       secretName: alice-openai-key
+  mcpServers:
+    - name: k8s-networking
+      url: https://mcp.example.com/k8s-net
+      toolsPrefix: k8s_net
+      timeout: 30
+      authSecret: mcp-k8s-net-token
+      authKey: token
+    - name: observability-tools
+      url: https://mcp.example.com/otel
+      toolsPrefix: otel
+      timeout: 60
   observability:
     enabled: true
     otlpEndpoint: otel-collector.observability.svc:4317
