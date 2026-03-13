@@ -58,6 +58,12 @@ cleanup() {
   # Best effort cleanup via API
   api_delete "/api/v1/schedules/${SCHEDULE_NAME}" >/dev/null 2>&1 || true
   api_delete "/api/v1/instances/${INSTANCE_NAME}" >/dev/null 2>&1 || true
+  # kubectl fallback: agentruns, schedule, instance, any auto-created secret, configmaps
+  kubectl delete agentrun -n "$NAMESPACE" -l "sympozium.ai/instance=${INSTANCE_NAME}" --ignore-not-found >/dev/null 2>&1 || true
+  kubectl delete sympoziumschedule "$SCHEDULE_NAME" -n "$NAMESPACE" --ignore-not-found >/dev/null 2>&1 || true
+  kubectl delete sympoziuminstance "$INSTANCE_NAME" -n "$NAMESPACE" --ignore-not-found >/dev/null 2>&1 || true
+  kubectl delete secret "${INSTANCE_NAME}-openai-key" -n "$NAMESPACE" --ignore-not-found >/dev/null 2>&1 || true
+  kubectl delete configmap -n "$NAMESPACE" -l "sympozium.ai/instance=${INSTANCE_NAME}" --ignore-not-found >/dev/null 2>&1 || true
 
   stop_port_forward
 }
@@ -302,6 +308,13 @@ EOF
   pass "Schedule create/list/get OK"
 
   api_delete "/api/v1/schedules/${SCHEDULE_NAME}" >/dev/null
+  # K8s deletion is async — poll briefly
+  elapsed=0
+  while [[ "$elapsed" -lt 15 ]]; do
+    api_get "/api/v1/schedules/${SCHEDULE_NAME}" >/dev/null 2>&1 || break
+    sleep 2
+    elapsed=$((elapsed + 2))
+  done
   if api_get "/api/v1/schedules/${SCHEDULE_NAME}" >/dev/null 2>&1; then
     fail "Schedule '${SCHEDULE_NAME}' still exists after delete"
     exit 1
@@ -310,6 +323,12 @@ EOF
 
   # 7) Instance delete
   api_delete "/api/v1/instances/${INSTANCE_NAME}" >/dev/null
+  elapsed=0
+  while [[ "$elapsed" -lt 15 ]]; do
+    api_get "/api/v1/instances/${INSTANCE_NAME}" >/dev/null 2>&1 || break
+    sleep 2
+    elapsed=$((elapsed + 2))
+  done
   if api_get "/api/v1/instances/${INSTANCE_NAME}" >/dev/null 2>&1; then
     fail "Instance '${INSTANCE_NAME}' still exists after delete"
     exit 1

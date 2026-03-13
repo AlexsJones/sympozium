@@ -77,9 +77,13 @@ for r in items:
     fi
   fi
   api_request DELETE "/api/v1/instances/${INSTANCE_NAME}" >/dev/null 2>&1 || true
-  # Clean up any leftover Deployments/Services via kubectl
+  # kubectl fallback: instance, secret, agentruns, deployments, services, configmaps
+  kubectl delete sympoziuminstance "$INSTANCE_NAME" -n "$NAMESPACE" --ignore-not-found >/dev/null 2>&1 || true
+  kubectl delete secret "${INSTANCE_NAME}-openai-key" -n "$NAMESPACE" --ignore-not-found >/dev/null 2>&1 || true
+  kubectl delete agentrun -n "$NAMESPACE" -l "sympozium.ai/instance=${INSTANCE_NAME}" --ignore-not-found >/dev/null 2>&1 || true
   kubectl delete deploy -n "$NAMESPACE" -l "sympozium.ai/instance=${INSTANCE_NAME}" --ignore-not-found >/dev/null 2>&1 || true
   kubectl delete svc -n "$NAMESPACE" -l "sympozium.ai/instance=${INSTANCE_NAME}" --ignore-not-found >/dev/null 2>&1 || true
+  kubectl delete configmap -n "$NAMESPACE" -l "sympozium.ai/instance=${INSTANCE_NAME}" --ignore-not-found >/dev/null 2>&1 || true
   stop_port_forward
 }
 trap cleanup EXIT
@@ -165,13 +169,19 @@ main() {
   require_cmd python3
 
   info "Running serving-mode API test in namespace '${NAMESPACE}'"
+
+  if [[ -z "${OPENAI_API_KEY:-}" ]]; then
+    fail "OPENAI_API_KEY environment variable is required but not set"
+    exit 1
+  fi
+
   start_port_forward_if_needed
   resolve_apiserver_token
 
   # --- Create instance with web-endpoint skill ---
   info "Creating instance with web-endpoint skill"
   api_request POST "/api/v1/instances" \
-    "{\"name\":\"${INSTANCE_NAME}\",\"provider\":\"openai\",\"model\":\"gpt-4o-mini\",\"apiKey\":\"inttest-dummy-key\",\"skills\":[{\"skillPackRef\":\"web-endpoint\"}]}" >/dev/null
+    "{\"name\":\"${INSTANCE_NAME}\",\"provider\":\"openai\",\"model\":\"gpt-4o-mini\",\"apiKey\":\"${OPENAI_API_KEY}\",\"skills\":[{\"skillPackRef\":\"web-endpoint\"}]}" >/dev/null
   pass "Instance with web-endpoint created"
 
   # --- Wait for a Serving-phase AgentRun ---

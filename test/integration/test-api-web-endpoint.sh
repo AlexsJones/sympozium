@@ -53,6 +53,10 @@ stop_port_forward() {
 cleanup() {
   info "Cleaning up web-endpoint test resources..."
   api_request DELETE "/api/v1/instances/${INSTANCE_NAME}" >/dev/null 2>&1 || true
+  # kubectl fallback: instance, auto-created secret, configmaps
+  kubectl delete sympoziuminstance "$INSTANCE_NAME" -n "$NAMESPACE" --ignore-not-found >/dev/null 2>&1 || true
+  kubectl delete secret "${INSTANCE_NAME}-openai-key" -n "$NAMESPACE" --ignore-not-found >/dev/null 2>&1 || true
+  kubectl delete configmap -n "$NAMESPACE" -l "sympozium.ai/instance=${INSTANCE_NAME}" --ignore-not-found >/dev/null 2>&1 || true
   stop_port_forward
 }
 trap cleanup EXIT
@@ -138,13 +142,19 @@ main() {
   require_cmd python3
 
   info "Running web-endpoint API test in namespace '${NAMESPACE}'"
+
+  if [[ -z "${OPENAI_API_KEY:-}" ]]; then
+    fail "OPENAI_API_KEY environment variable is required but not set"
+    exit 1
+  fi
+
   start_port_forward_if_needed
   resolve_apiserver_token
 
   # --- Create a plain instance (no web-endpoint) ---
   info "Creating test instance"
   api_request POST "/api/v1/instances" \
-    "{\"name\":\"${INSTANCE_NAME}\",\"provider\":\"openai\",\"model\":\"gpt-4o-mini\",\"apiKey\":\"inttest-dummy-key\"}" >/dev/null
+    "{\"name\":\"${INSTANCE_NAME}\",\"provider\":\"openai\",\"model\":\"gpt-4o-mini\",\"apiKey\":\"${OPENAI_API_KEY}\"}" >/dev/null
   pass "Instance created"
 
   # --- Check web-endpoint status (should be disabled) ---

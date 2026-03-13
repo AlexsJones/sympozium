@@ -71,9 +71,15 @@ cleanup() {
   api_request DELETE "/api/v1/instances/${ADHOC_INSTANCE_NAME}" >/dev/null 2>&1 || true
   api_request DELETE "/api/v1/personapacks/${PACK_NAME}" >/dev/null 2>&1 || true
 
+  # kubectl fallback: agentruns, schedules, instances, pack, secrets, configmaps
+  kubectl delete agentrun -n "$NAMESPACE" -l "sympozium.ai/instance=${PACK_INSTANCE_NAME}" --ignore-not-found >/dev/null 2>&1 || true
+  kubectl delete agentrun -n "$NAMESPACE" -l "sympozium.ai/instance=${ADHOC_INSTANCE_NAME}" --ignore-not-found >/dev/null 2>&1 || true
+  kubectl delete sympoziumschedule "${PACK_INSTANCE_NAME}-schedule" -n "$NAMESPACE" --ignore-not-found >/dev/null 2>&1 || true
+  kubectl delete sympoziuminstance "$PACK_INSTANCE_NAME" "$ADHOC_INSTANCE_NAME" -n "$NAMESPACE" --ignore-not-found >/dev/null 2>&1 || true
   kubectl delete personapack "$PACK_NAME" -n "$NAMESPACE" --ignore-not-found >/dev/null 2>&1 || true
-  kubectl delete secret "$PACK_EXPECTED_SECRET" -n "$NAMESPACE" --ignore-not-found >/dev/null 2>&1 || true
-  kubectl delete secret "$ADHOC_EXPECTED_SECRET" -n "$NAMESPACE" --ignore-not-found >/dev/null 2>&1 || true
+  kubectl delete secret "$PACK_EXPECTED_SECRET" "$ADHOC_EXPECTED_SECRET" -n "$NAMESPACE" --ignore-not-found >/dev/null 2>&1 || true
+  kubectl delete configmap -n "$NAMESPACE" -l "sympozium.ai/instance=${PACK_INSTANCE_NAME}" --ignore-not-found >/dev/null 2>&1 || true
+  kubectl delete configmap -n "$NAMESPACE" -l "sympozium.ai/instance=${ADHOC_INSTANCE_NAME}" --ignore-not-found >/dev/null 2>&1 || true
 
   stop_port_forward
 }
@@ -236,6 +242,11 @@ main() {
 
   info "Running PersonaPack/ad-hoc correctness API test in namespace '${NAMESPACE}'"
 
+  if [[ -z "${OPENAI_API_KEY:-}" ]]; then
+    fail "OPENAI_API_KEY environment variable is required but not set"
+    exit 1
+  fi
+
   start_port_forward_if_needed
   resolve_apiserver_token
 
@@ -268,7 +279,7 @@ EOF
 
   # Pre-create auth secret and patch PersonaPack to use it explicitly.
   kubectl create secret generic "$PACK_EXPECTED_SECRET" \
-    --from-literal=OPENAI_API_KEY="inttest-dummy-key" \
+    --from-literal=OPENAI_API_KEY="${OPENAI_API_KEY}" \
     -n "$NAMESPACE" \
     --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 
@@ -298,7 +309,7 @@ EOF
   pass "PersonaPack run inherited provider/model/auth/skills"
 
   # (2) Ad-hoc instance parity.
-  api_request POST "/api/v1/instances" "{\"name\":\"${ADHOC_INSTANCE_NAME}\",\"provider\":\"openai\",\"model\":\"${MODEL_NAME}\",\"apiKey\":\"inttest-dummy-key\",\"skills\":[{\"skillPackRef\":\"code-review\"},{\"skillPackRef\":\"k8s-ops\"}]}" >/dev/null
+  api_request POST "/api/v1/instances" "{\"name\":\"${ADHOC_INSTANCE_NAME}\",\"provider\":\"openai\",\"model\":\"${MODEL_NAME}\",\"apiKey\":\"${OPENAI_API_KEY}\",\"skills\":[{\"skillPackRef\":\"code-review\"},{\"skillPackRef\":\"k8s-ops\"}]}" >/dev/null
 
   adhoc_inst_json="$(api_request GET "/api/v1/instances/${ADHOC_INSTANCE_NAME}")"
   assert_instance_fields "$adhoc_inst_json" "$ADHOC_EXPECTED_SECRET" "$MODEL_NAME" "openai" "$EXPECTED_SKILLS_CSV" "Ad-hoc instance"

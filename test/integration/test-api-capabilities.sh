@@ -56,6 +56,10 @@ stop_port_forward() {
 cleanup() {
   info "Cleaning up capability API test resources..."
   api_request DELETE "/api/v1/instances/${CLAUDE_INSTANCE_NAME}" >/dev/null 2>&1 || true
+  # kubectl fallback: instance, auto-created anthropic secret, configmaps
+  kubectl delete sympoziuminstance "$CLAUDE_INSTANCE_NAME" -n "$NAMESPACE" --ignore-not-found >/dev/null 2>&1 || true
+  kubectl delete secret "${CLAUDE_INSTANCE_NAME}-anthropic-key" -n "$NAMESPACE" --ignore-not-found >/dev/null 2>&1 || true
+  kubectl delete configmap -n "$NAMESPACE" -l "sympozium.ai/instance=${CLAUDE_INSTANCE_NAME}" --ignore-not-found >/dev/null 2>&1 || true
 
   if [[ "$HAD_GITHUB_SECRET" == "true" && -n "$ORIGINAL_GITHUB_TOKEN_B64" ]]; then
     kubectl patch secret "$GITHUB_SECRET_NAME" -n "$APISERVER_NAMESPACE" --type=merge -p "{\"data\":{\"GH_TOKEN\":\"${ORIGINAL_GITHUB_TOKEN_B64}\"}}" >/dev/null 2>&1 || true

@@ -70,9 +70,12 @@ cleanup() {
   [[ -n "$RUN_ANTHROPIC" ]] && api_request DELETE "/api/v1/runs/${RUN_ANTHROPIC}" >/dev/null 2>&1 || true
   api_request DELETE "/api/v1/instances/${INSTANCE_NAME}" >/dev/null 2>&1 || true
   api_request DELETE "/api/v1/personapacks/${PACK_NAME}" >/dev/null 2>&1 || true
+  # kubectl fallback: agentruns, instance, pack, secrets, configmaps
+  kubectl delete agentrun -n "$NAMESPACE" -l "sympozium.ai/instance=${INSTANCE_NAME}" --ignore-not-found >/dev/null 2>&1 || true
+  kubectl delete sympoziuminstance "$INSTANCE_NAME" -n "$NAMESPACE" --ignore-not-found >/dev/null 2>&1 || true
   kubectl delete personapack "$PACK_NAME" -n "$NAMESPACE" --ignore-not-found >/dev/null 2>&1 || true
-  kubectl delete secret "$OPENAI_SECRET" -n "$NAMESPACE" --ignore-not-found >/dev/null 2>&1 || true
-  kubectl delete secret "$ANTHROPIC_SECRET" -n "$NAMESPACE" --ignore-not-found >/dev/null 2>&1 || true
+  kubectl delete secret "$OPENAI_SECRET" "$ANTHROPIC_SECRET" -n "$NAMESPACE" --ignore-not-found >/dev/null 2>&1 || true
+  kubectl delete configmap -n "$NAMESPACE" -l "sympozium.ai/instance=${INSTANCE_NAME}" --ignore-not-found >/dev/null 2>&1 || true
   stop_port_forward
 }
 trap cleanup EXIT
@@ -243,6 +246,12 @@ main() {
   require_cmd python3
 
   info "Running PersonaPack provider-switch propagation test in namespace '${NAMESPACE}'"
+
+  if [[ -z "${OPENAI_API_KEY:-}" ]]; then
+    fail "OPENAI_API_KEY environment variable is required but not set"
+    exit 1
+  fi
+
   start_port_forward_if_needed
   resolve_apiserver_token
 
@@ -267,8 +276,8 @@ EOF
   pass "Temporary PersonaPack created"
 
   info "Creating provider auth secrets"
-  kubectl create secret generic "$OPENAI_SECRET" --from-literal=OPENAI_API_KEY=inttest-openai -n "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
-  kubectl create secret generic "$ANTHROPIC_SECRET" --from-literal=ANTHROPIC_API_KEY=inttest-anthropic -n "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
+  kubectl create secret generic "$OPENAI_SECRET" --from-literal=OPENAI_API_KEY="${OPENAI_API_KEY}" -n "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
+  kubectl create secret generic "$ANTHROPIC_SECRET" --from-literal=ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-${OPENAI_API_KEY}}" -n "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
   pass "Provider auth secrets ready"
 
   # Enable with OpenAI.

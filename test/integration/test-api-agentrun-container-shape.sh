@@ -56,6 +56,13 @@ cleanup() {
   [[ -n "$SKILL_RUN" ]] && api_request DELETE "/api/v1/runs/${SKILL_RUN}" >/dev/null 2>&1 || true
   api_request DELETE "/api/v1/instances/${PLAIN_INSTANCE}" >/dev/null 2>&1 || true
   api_request DELETE "/api/v1/instances/${SKILL_INSTANCE}" >/dev/null 2>&1 || true
+  # kubectl fallback: secrets, agentruns, configmaps, instances
+  kubectl delete secret "${PLAIN_INSTANCE}-openai-key" "${SKILL_INSTANCE}-openai-key" -n "$NAMESPACE" --ignore-not-found >/dev/null 2>&1 || true
+  [[ -n "$PLAIN_RUN" ]] && kubectl delete agentrun "$PLAIN_RUN" -n "$NAMESPACE" --ignore-not-found >/dev/null 2>&1 || true
+  [[ -n "$SKILL_RUN" ]] && kubectl delete agentrun "$SKILL_RUN" -n "$NAMESPACE" --ignore-not-found >/dev/null 2>&1 || true
+  kubectl delete sympoziuminstance "$PLAIN_INSTANCE" "$SKILL_INSTANCE" -n "$NAMESPACE" --ignore-not-found >/dev/null 2>&1 || true
+  kubectl delete configmap -n "$NAMESPACE" -l "sympozium.ai/instance=${PLAIN_INSTANCE}" --ignore-not-found >/dev/null 2>&1 || true
+  kubectl delete configmap -n "$NAMESPACE" -l "sympozium.ai/instance=${SKILL_INSTANCE}" --ignore-not-found >/dev/null 2>&1 || true
   stop_port_forward
 }
 trap cleanup EXIT
@@ -173,11 +180,17 @@ main() {
   require_cmd python3
 
   info "Running AgentRun container-shape test in namespace '${NAMESPACE}'"
+
+  if [[ -z "${OPENAI_API_KEY:-}" ]]; then
+    fail "OPENAI_API_KEY environment variable is required but not set"
+    exit 1
+  fi
+
   start_port_forward_if_needed
   resolve_apiserver_token
 
-  api_request POST "/api/v1/instances" "{\"name\":\"${PLAIN_INSTANCE}\",\"provider\":\"openai\",\"model\":\"gpt-4o-mini\",\"apiKey\":\"inttest-dummy-key\"}" >/dev/null
-  api_request POST "/api/v1/instances" "{\"name\":\"${SKILL_INSTANCE}\",\"provider\":\"openai\",\"model\":\"gpt-4o-mini\",\"apiKey\":\"inttest-dummy-key\",\"skills\":[{\"skillPackRef\":\"k8s-ops\"}]}" >/dev/null
+  api_request POST "/api/v1/instances" "{\"name\":\"${PLAIN_INSTANCE}\",\"provider\":\"openai\",\"model\":\"gpt-4o-mini\",\"apiKey\":\"${OPENAI_API_KEY}\"}" >/dev/null
+  api_request POST "/api/v1/instances" "{\"name\":\"${SKILL_INSTANCE}\",\"provider\":\"openai\",\"model\":\"gpt-4o-mini\",\"apiKey\":\"${OPENAI_API_KEY}\",\"skills\":[{\"skillPackRef\":\"k8s-ops\"}]}" >/dev/null
 
   plain_run_json="$(api_request POST "/api/v1/runs" "{\"instanceRef\":\"${PLAIN_INSTANCE}\",\"task\":\"pod shape plain\"}")"
   PLAIN_RUN="$(printf "%s" "$plain_run_json" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("metadata",{}).get("name",""))')"
