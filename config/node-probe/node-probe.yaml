@@ -1,0 +1,138 @@
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: sympozium-node-probe
+  namespace: sympozium-system
+  labels:
+    app.kubernetes.io/name: sympozium
+    app.kubernetes.io/component: node-probe
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: sympozium-node-probe
+  labels:
+    app.kubernetes.io/name: sympozium
+    app.kubernetes.io/component: node-probe
+rules:
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: sympozium-node-probe
+  labels:
+    app.kubernetes.io/name: sympozium
+    app.kubernetes.io/component: node-probe
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: sympozium-node-probe
+subjects:
+  - kind: ServiceAccount
+    name: sympozium-node-probe
+    namespace: sympozium-system
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sympozium-node-probe-config
+  namespace: sympozium-system
+  labels:
+    app.kubernetes.io/name: sympozium
+    app.kubernetes.io/component: node-probe
+data:
+  config.yaml: |
+    probeInterval: 30s
+    targets:
+      - name: ollama
+        port: 11434
+        healthPath: /api/tags
+        modelsPath: /api/tags
+      - name: vllm
+        port: 8000
+        healthPath: /health
+        modelsPath: /v1/models
+      - name: llama-cpp
+        port: 8080
+        healthPath: /health
+        modelsPath: /v1/models
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: sympozium-node-probe
+  namespace: sympozium-system
+  labels:
+    app.kubernetes.io/name: sympozium
+    app.kubernetes.io/component: node-probe
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: node-probe
+      app.kubernetes.io/name: sympozium
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: sympozium
+        app.kubernetes.io/component: node-probe
+    spec:
+      serviceAccountName: sympozium-node-probe
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      tolerations:
+        - operator: Exists
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: node-probe
+          image: ghcr.io/alexsjones/sympozium/node-probe:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: CONFIG_PATH
+              value: /etc/node-probe/config.yaml
+          ports:
+            - name: health
+              containerPort: 9473
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 50m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: config
+              mountPath: /etc/node-probe
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: sympozium-node-probe-config
