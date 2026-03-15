@@ -194,6 +194,9 @@ func (r *SympoziumScheduleReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	if instance.Spec.Agents.Default.Thinking != "" {
 		agentRun.Spec.Model.Thinking = instance.Spec.Agents.Default.Thinking
 	}
+	if len(instance.Spec.Agents.Default.NodeSelector) > 0 {
+		agentRun.Spec.Model.NodeSelector = instance.Spec.Agents.Default.NodeSelector
+	}
 
 	// Resolve auth secret from the instance.
 	agentRun.Spec.Model.AuthSecretRef = resolveAuthSecret(instance)

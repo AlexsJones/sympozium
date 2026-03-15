@@ -167,6 +167,7 @@ func (p *Proxy) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 				Model:         inst.Spec.Agents.Default.Model,
 				BaseURL:       inst.Spec.Agents.Default.BaseURL,
 				AuthSecretRef: authSecret,
+				NodeSelector:  inst.Spec.Agents.Default.NodeSelector,
 			},
 			Skills:  childSkills,
 			Timeout: &metav1.Duration{Duration: 10 * time.Minute},

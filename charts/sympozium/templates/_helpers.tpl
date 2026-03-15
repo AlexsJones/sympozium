@@ -90,6 +90,15 @@ Web proxy image.
 {{- end }}
 
 {{/*
+Node probe image.
+*/}}
+{{- define "sympozium.nodeProbeImage" -}}
+{{- $repo := .Values.nodeProbe.image.repository | default (printf "%s/node-probe" .Values.image.registry) }}
+{{- $tag := .Values.nodeProbe.image.tag | default (include "sympozium.imageTag" .) }}
+{{- printf "%s:%s" $repo $tag }}
+{{- end }}
+
+{{/*
 NATS URL — internal or external.
 */}}
 {{- define "sympozium.natsUrl" -}}

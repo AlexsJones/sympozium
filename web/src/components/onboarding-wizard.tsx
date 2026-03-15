@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useModelList } from "@/hooks/use-model-list";
+import { useProviderNodes } from "@/hooks/use-provider-nodes";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -33,6 +34,7 @@ import {
   Search,
   Wrench,
   Clock,
+  Cpu,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -90,6 +92,8 @@ export interface WizardResult {
   githubToken?: string;
   /** Team instructions propagated into each instance's memory */
   githubTeamInstructions?: string;
+  /** Node selector for pinning agent pods to specific nodes */
+  nodeSelector?: Record<string, string>;
 }
 
 interface OnboardingWizardProps {
@@ -179,15 +183,17 @@ function StepIndicator({ steps, current }: { steps: WizardStep[]; current: Wizar
 function ModelSelector({
   provider,
   apiKey,
+  baseURL,
   value,
   onChange,
 }: {
   provider: string;
   apiKey: string;
+  baseURL?: string;
   value: string;
   onChange: (v: string) => void;
 }) {
-  const { models, isLoading, isLive } = useModelList(provider, apiKey);
+  const { models, isLoading, isLive } = useModelList(provider, apiKey, baseURL);
   const [search, setSearch] = useState("");
 
   const filtered = models.filter((m) =>
@@ -296,8 +302,15 @@ export function OnboardingWizard({
     githubRepo: defaults?.githubRepo || "",
     githubToken: defaults?.githubToken || "",
     githubTeamInstructions: defaults?.githubTeamInstructions || "",
+    nodeSelector: defaults?.nodeSelector,
   });
+  const [inferenceMode, setInferenceMode] = useState<"workload" | "node">("workload");
   const [channelActionIdx, setChannelActionIdx] = useState(0);
+
+  const isLocalProvider = form.provider === "ollama" || form.provider === "custom";
+  const { data: providerNodes, isLoading: nodesLoading } = useProviderNodes(
+    isLocalProvider && inferenceMode === "node"
+  );
 
   const stepIdx = steps.indexOf(step);
 
@@ -375,9 +388,11 @@ export function OnboardingWizard({
       githubRepo: d.githubRepo || "",
       githubToken: d.githubToken || "",
       githubTeamInstructions: d.githubTeamInstructions || "",
+      nodeSelector: d.nodeSelector,
     });
     setStep(steps[0]);
     setChannelActionIdx(0);
+    setInferenceMode("workload");
   }
 
   const defaultsKey = JSON.stringify(defaults || {});
@@ -472,9 +487,44 @@ export function OnboardingWizard({
                 </SelectContent>
               </Select>
             </div>
-            {(form.provider === "ollama" ||
-              form.provider === "custom" ||
-              form.provider === "azure-openai") && (
+            {/* Inference mode toggle for local providers */}
+            {isLocalProvider && (
+              <div className="space-y-2">
+                <Label>Inference Source</Label>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setInferenceMode("workload");
+                      setForm({ ...form, nodeSelector: undefined });
+                    }}
+                    className={cn(
+                      "flex-1 flex items-center justify-center gap-1.5 rounded-md border px-3 py-2 text-xs transition-colors",
+                      inferenceMode === "workload"
+                        ? "border-blue-500/40 bg-blue-500/15 text-blue-300"
+                        : "border-border/50 hover:bg-white/5"
+                    )}
+                  >
+                    <Server className="h-3.5 w-3.5" /> In-cluster service
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setInferenceMode("node")}
+                    className={cn(
+                      "flex-1 flex items-center justify-center gap-1.5 rounded-md border px-3 py-2 text-xs transition-colors",
+                      inferenceMode === "node"
+                        ? "border-blue-500/40 bg-blue-500/15 text-blue-300"
+                        : "border-border/50 hover:bg-white/5"
+                    )}
+                  >
+                    <Cpu className="h-3.5 w-3.5" /> Installed on node
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* In-cluster service: manual Base URL input */}
+            {(form.provider === "azure-openai" || (isLocalProvider && inferenceMode === "workload")) && (
               <div className="space-y-2">
                 <Label>Base URL</Label>
                 <Input
@@ -482,10 +532,87 @@ export function OnboardingWizard({
                   onChange={(e) => setForm({ ...form, baseURL: e.target.value })}
                   placeholder={
                     form.provider === "ollama"
-                      ? "http://localhost:11434/v1"
+                      ? "http://ollama.default.svc:11434/v1"
                       : "https://your-endpoint.openai.azure.com/v1"
                   }
                 />
+              </div>
+            )}
+
+            {/* Node-based: discover and select a node */}
+            {isLocalProvider && inferenceMode === "node" && (
+              <div className="space-y-2">
+                <Label>Select Node</Label>
+                {nodesLoading ? (
+                  <div className="flex items-center gap-2 py-4 text-xs text-muted-foreground justify-center">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    Discovering nodes...
+                  </div>
+                ) : !providerNodes || providerNodes.filter((n) =>
+                    form.provider === "custom" || n.providers.some((p) => p.name === form.provider)
+                  ).length === 0 ? (
+                  <div className="rounded-md border border-border/50 bg-muted/20 px-3 py-3 text-xs text-muted-foreground">
+                    {providerNodes && providerNodes.length > 0
+                      ? `No nodes with ${form.provider} detected. Found other providers on ${providerNodes.length} node${providerNodes.length === 1 ? "" : "s"}.`
+                      : "No nodes with inference providers detected. Is the node-probe DaemonSet enabled?"}
+                  </div>
+                ) : (
+                  <ScrollArea className="h-40 rounded-md border border-border/50">
+                    <div className="p-1 space-y-0.5">
+                      {providerNodes
+                        .filter((node) =>
+                          form.provider === "custom" || node.providers.some((p) => p.name === form.provider)
+                        )
+                        .map((node) => {
+                        const isSelected = form.nodeSelector?.["kubernetes.io/hostname"] === node.nodeName;
+                        const nodeProviders = node.providers
+                          .filter((p) => !form.provider || form.provider === "custom" || p.name === form.provider)
+                          .map((p) => p.name);
+                        const nodeModels = node.providers
+                          .filter((p) => !form.provider || form.provider === "custom" || p.name === form.provider)
+                          .flatMap((p) => p.models);
+                        const providerInfo = node.providers.find((p) => p.name === form.provider) || node.providers[0];
+
+                        return (
+                          <button
+                            key={node.nodeName}
+                            type="button"
+                            onClick={() => {
+                              if (providerInfo) {
+                                // Use the node-probe reverse proxy when available,
+                                // so the cluster can reach host-installed providers.
+                                const base = providerInfo.proxyPort
+                                  ? `http://${node.nodeIP}:${providerInfo.proxyPort}/proxy/${providerInfo.name}/v1`
+                                  : `http://${node.nodeIP}:${providerInfo.port}/v1`;
+                                setForm({
+                                  ...form,
+                                  baseURL: base,
+                                  nodeSelector: { "kubernetes.io/hostname": node.nodeName },
+                                });
+                              }
+                            }}
+                            className={cn(
+                              "flex w-full items-start gap-2 rounded-md px-2.5 py-2 text-left text-xs transition-colors",
+                              isSelected
+                                ? "bg-blue-500/15 text-blue-400 border border-blue-500/30"
+                                : "text-foreground hover:bg-white/5 border border-transparent"
+                            )}
+                          >
+                            <Cpu className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                            <div className="min-w-0">
+                              <div className="font-mono truncate">{node.nodeName}</div>
+                              <div className="text-[10px] text-muted-foreground">
+                                {node.nodeIP} &middot; {nodeProviders.join(", ")}
+                                {nodeModels.length > 0 && ` &middot; ${nodeModels.length} model${nodeModels.length === 1 ? "" : "s"}`}
+                              </div>
+                            </div>
+                            {isSelected && <Check className="h-3 w-3 shrink-0 mt-0.5 ml-auto" />}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </ScrollArea>
+                )}
               </div>
             )}
           </div>
@@ -535,6 +662,7 @@ export function OnboardingWizard({
             <ModelSelector
               provider={form.provider}
               apiKey={form.apiKey}
+              baseURL={form.baseURL}
               value={form.model}
               onChange={(v) => setForm({ ...form, model: v })}
             />
@@ -775,6 +903,14 @@ export function OnboardingWizard({
                   <span className="text-muted-foreground">Base URL</span>
                   <span className="font-mono text-xs truncate max-w-[200px]">
                     {form.baseURL}
+                  </span>
+                </div>
+              )}
+              {form.nodeSelector?.["kubernetes.io/hostname"] && (
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Node</span>
+                  <span className="font-mono text-xs">
+                    {form.nodeSelector["kubernetes.io/hostname"]}
                   </span>
                 </div>
               )}

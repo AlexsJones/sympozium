@@ -71,6 +71,13 @@ spec:
                       model:
                         description: Model is the LLM model to use.
                         type: string
+                      nodeSelector:
+                        additionalProperties:
+                          type: string
+                        description: |-
+                          NodeSelector constrains agent pods to nodes with matching labels.
+                          Used for node-pinned inference (e.g., Ollama installed on specific GPU nodes).
+                        type: object
                       sandbox:
                         description: Sandbox configuration.
                         properties:

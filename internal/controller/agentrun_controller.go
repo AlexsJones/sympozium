@@ -752,6 +752,7 @@ func (r *AgentRunReconciler) reconcilePendingServer(ctx context.Context, log log
 				Spec: corev1.PodSpec{
 					RestartPolicy:      corev1.RestartPolicyAlways,
 					ServiceAccountName: "sympozium-agent",
+					NodeSelector:       agentRun.Spec.Model.NodeSelector,
 					Containers: []corev1.Container{
 						{
 							Name:            "web-proxy",
@@ -1214,6 +1215,7 @@ func (r *AgentRunReconciler) buildJob(
 					HostNetwork:        hostNetwork,
 					HostPID:            hostPID,
 					DNSPolicy:          dnsPolicy,
+					NodeSelector:       agentRun.Spec.Model.NodeSelector,
 					SecurityContext: &corev1.PodSecurityContext{
 						RunAsNonRoot:   &runAsNonRoot,
 						RunAsUser:      &runAsUser,

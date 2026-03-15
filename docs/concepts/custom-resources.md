@@ -22,6 +22,7 @@ The core resource representing an agent identity. Each instance has:
 - Channel connections (Telegram, Slack, etc.)
 - Memory settings (enabled/disabled, max size)
 - A policy reference
+- Optional node selector for pinning agent pods to specific nodes (e.g. GPU nodes running Ollama)
 
 ```yaml
 apiVersion: sympozium.ai/v1alpha1

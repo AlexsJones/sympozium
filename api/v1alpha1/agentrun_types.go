@@ -95,6 +95,11 @@ type ModelSpec struct {
 
 	// AuthSecretRef references the secret containing the API key.
 	AuthSecretRef string `json:"authSecretRef"`
+
+	// NodeSelector constrains agent pods to nodes with matching labels.
+	// Inherited from AgentConfig at AgentRun creation time.
+	// +optional
+	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
 }
 
 // AgentRunSandboxSpec defines sandbox settings for an individual agent run.

@@ -101,6 +101,13 @@ spec:
                   model:
                     description: Model is the model identifier.
                     type: string
+                  nodeSelector:
+                    additionalProperties:
+                      type: string
+                    description: |-
+                      NodeSelector constrains agent pods to nodes with matching labels.
+                      Inherited from AgentConfig at AgentRun creation time.
+                    type: object
                   provider:
                     description: Provider is the AI provider (openai, anthropic, azure-openai,
                       github-copilot, ollama, etc.).

@@ -83,6 +83,14 @@ func resolveProvider(inst *sympoziumv1alpha1.SympoziumInstance) string {
 			}
 		}
 	}
+	// Fallback: infer from baseURL for keyless local providers.
+	if base := inst.Spec.Agents.Default.BaseURL; base != "" {
+		if strings.Contains(base, "ollama") || strings.Contains(base, ":11434") {
+			return "ollama"
+		}
+		// Generic OpenAI-compatible local provider.
+		return "custom"
+	}
 	return "openai"
 }
 
@@ -180,6 +188,7 @@ func (cr *ChannelRouter) handleInbound(ctx context.Context, event *eventbus.Even
 				Model:         inst.Spec.Agents.Default.Model,
 				BaseURL:       inst.Spec.Agents.Default.BaseURL,
 				AuthSecretRef: authSecret,
+				NodeSelector:  inst.Spec.Agents.Default.NodeSelector,
 			},
 			Skills:  inst.Spec.Skills,
 			Timeout: &metav1.Duration{Duration: 10 * time.Minute},

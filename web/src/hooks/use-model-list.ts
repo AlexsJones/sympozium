@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { api } from "@/lib/api";
 
 // ── Static fallback model lists ──────────────────────────────────────────────
 
@@ -55,22 +56,32 @@ async function fetchAnthropicModels(apiKey: string): Promise<string[]> {
   return (data.data as { id: string }[]).map((m) => m.id).sort();
 }
 
+async function fetchProviderModelsViaProxy(baseURL: string): Promise<string[]> {
+  const res = await api.providers.models(baseURL);
+  return res.models;
+}
+
 // ── Hook ─────────────────────────────────────────────────────────────────────
 
 /**
  * Fetches the model list for a given provider + API key.
+ * For local providers (ollama, custom) with a baseURL, proxies through the backend.
  * Falls back to a curated static list if the API call fails or no key is given.
  */
-export function useModelList(provider: string, apiKey: string) {
+export function useModelList(provider: string, apiKey: string, baseURL?: string) {
+  const isLocalProvider = provider === "ollama" || provider === "custom";
+  const canFetchLocal = isLocalProvider && !!baseURL;
+  const canFetchCloud = !!apiKey && (provider === "openai" || provider === "anthropic");
+
   const query = useQuery<string[]>({
-    queryKey: ["provider-models", provider, apiKey],
+    queryKey: ["provider-models", provider, apiKey, baseURL],
     queryFn: async () => {
+      if (canFetchLocal) return fetchProviderModelsViaProxy(baseURL!);
       if (provider === "openai" && apiKey) return fetchOpenAIModels(apiKey);
       if (provider === "anthropic" && apiKey) return fetchAnthropicModels(apiKey);
-      // No live fetch for other providers
       throw new Error("no-fetch");
     },
-    enabled: !!apiKey && (provider === "openai" || provider === "anthropic"),
+    enabled: canFetchLocal || canFetchCloud,
     staleTime: 5 * 60 * 1000, // cache 5 min
     retry: false,
   });

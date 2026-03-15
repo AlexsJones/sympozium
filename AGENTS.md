@@ -24,6 +24,7 @@ cmd/
   controller/           # Controller manager (all reconcilers + routers)
   ipc-bridge/           # IPC bridge sidecar (fsnotify → NATS)
   web-proxy/            # Web proxy (OpenAI-compat API + MCP gateway)
+  node-probe/           # Node probe DaemonSet (discovers inference providers on nodes)
   sympozium/             # CLI + TUI (Bubble Tea)
   webhook/              # Admission webhook server
 channels/

@@ -238,6 +238,46 @@ webProxy:
       cpu: 100m
       memory: 128Mi
 
+# -- Node Probe DaemonSet (discovers inference providers on nodes)
+nodeProbe:
+  # -- Deploy the node-probe DaemonSet for discovering node-installed inference providers
+  enabled: true
+  image:
+    repository: ""  # defaults to {{ .Values.image.registry }}/node-probe
+    tag: ""
+  resources:
+    limits:
+      cpu: 100m
+      memory: 64Mi
+    requests:
+      cpu: 50m
+      memory: 32Mi
+  # -- Probe configuration
+  config:
+    probeInterval: 30s
+    targets:
+      - name: ollama
+        host: host.docker.internal
+        port: 11434
+        healthPath: /api/tags
+        modelsPath: /api/tags
+      - name: vllm
+        host: host.docker.internal
+        port: 8000
+        healthPath: /health
+        modelsPath: /v1/models
+      - name: llama-cpp
+        host: host.docker.internal
+        port: 8080
+        healthPath: /health
+        modelsPath: /v1/models
+  # -- Node selector to limit which nodes run the probe (default: all nodes)
+  nodeSelector: {}
+  # -- Tolerate all taints so probe runs on GPU and other tainted nodes
+  tolerations:
+    - operator: Exists
+  affinity: {}
+
 # -- ServiceMonitor for Prometheus (requires prometheus-operator)
 serviceMonitor:
   enabled: false

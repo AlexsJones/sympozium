@@ -67,11 +67,18 @@ graph TB
             CM -- "extracts & patches<br/>memory markers" --> MCM
         end
 
+        subgraph NP["Node Probe  ·  DaemonSet (opt-in)"]
+            NPD["Node Probe<br/><small>probes localhost for<br/>inference providers</small>"]
+            NPD -- "annotates node<br/>sympozium.ai/inference-*" --> ETCD
+        end
+
         subgraph DATA["Data Layer"]
             ETCD[("etcd<br/><small>CRDs, state</small>")]
             PG[("PostgreSQL<br/><small>sessions, history</small>")]
             SK[("SkillPack ConfigMaps<br/><small>mounted at /skills</small>")]
         end
+
+        API -- "reads node annotations<br/>for provider discovery" --> ETCD
 
         TG & SL & DC & WA -- "messages" --> NATS
         NATS -- "tasks" --> IPC
@@ -92,6 +99,7 @@ graph TB
     style MEM fill:#1c2333,stroke:#7c3aed,color:#fff
     style SEC fill:#1c2333,stroke:#238636,color:#fff
     style DATA fill:#161b22,stroke:#30363d,color:#c9d1d9
+    style NP fill:#1c2333,stroke:#f5a623,color:#fff
     style NATS fill:#e94560,stroke:#fff,color:#fff
     style USER fill:#238636,stroke:#fff,color:#fff
     style HTTPUSER fill:#f5a623,stroke:#fff,color:#000
@@ -105,7 +113,8 @@ graph TB
 3. **The agent container** calls the configured LLM provider (OpenAI, Anthropic, Azure, Ollama, or any OpenAI-compatible endpoint), with skills mounted as files, persistent memory injected from a ConfigMap, and tool sidecars providing runtime capabilities like `kubectl`.
 4. **Results flow back** through the IPC bridge → NATS → channel pod → user. The controller extracts structured results and memory updates from pod logs.
 5. **Web endpoints** expose agents as HTTP APIs. When an instance has the `web-endpoint` skill, the controller creates a long-lived Deployment (serving mode) with a web-proxy sidecar. The proxy accepts OpenAI-compatible (`/v1/chat/completions`) and MCP (`/sse`, `/message`) requests, creating per-request AgentRun Jobs. An Envoy Gateway with per-instance HTTPRoutes provides external access with TLS.
-6. **Everything is a Kubernetes resource** — instances, runs, policies, skills, and schedules are all CRDs. Lifecycle is managed by controllers. Access is gated by admission webhooks. Network isolation is enforced by NetworkPolicy. The TUI and web dashboard give you full visibility into the entire system.
+6. **Node-based inference discovery** — for local inference providers (Ollama, vLLM, llama-cpp) installed directly on host nodes, an optional node-probe DaemonSet probes localhost ports and annotates each node with discovered providers and models (`sympozium.ai/inference-*`). The API server reads these annotations, and the web wizard lets users select a node to pin their agent pods to via `nodeSelector`.
+7. **Everything is a Kubernetes resource** — instances, runs, policies, skills, and schedules are all CRDs. Lifecycle is managed by controllers. Access is gated by admission webhooks. Network isolation is enforced by NetworkPolicy. The TUI and web dashboard give you full visibility into the entire system.
 
 ---
 
@@ -142,6 +151,7 @@ graph TB
 | **Skills-as-ConfigMap** | ConfigMap volume | SkillPacks generate ConfigMaps mounted into agent pods — portable, versionable, namespace-scoped |
 | **Skill sidecars with auto-RBAC** | Role / ClusterRole | SkillPacks can declare sidecar containers with RBAC rules — the controller injects the container and provisions ephemeral, least-privilege RBAC per run |
 | **PersonaPacks** | Operator Bundle | Pre-configured agent bundles — the controller stamps out SympoziumInstances, Schedules, and memory ConfigMaps. Activating a pack is a single TUI action |
+| **Node probe DaemonSet** | DaemonSet | Discovers host-installed inference providers (Ollama, vLLM) by probing localhost ports — annotates nodes so the control plane can offer model selection and node pinning without manual configuration |
 
 ---
 
@@ -157,6 +167,7 @@ sympozium/
 │   ├── ipc-bridge/         # IPC bridge sidecar (fsnotify → NATS)
 │   ├── web-proxy/          # Web proxy (OpenAI-compat API + MCP gateway)
 │   ├── webhook/            # Admission webhook (policy enforcement)
+│   ├── node-probe/         # Node probe DaemonSet (inference provider discovery)
 │   └── sympozium/          # CLI + interactive TUI
 ├── web/                    # Web dashboard (React + TypeScript + Vite)
 ├── internal/               # Internal packages

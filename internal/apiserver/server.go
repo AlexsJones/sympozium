@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net"
 	"net/http"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -134,6 +136,10 @@ func (s *Server) buildMux(frontendFS fs.FS, token string) http.Handler {
 	mux.HandleFunc("PATCH /api/v1/gateway", s.patchGatewayConfig)
 	mux.HandleFunc("DELETE /api/v1/gateway", s.deleteGatewayConfig)
 	mux.HandleFunc("GET /api/v1/gateway/metrics", s.getGatewayMetrics)
+
+	// Provider discovery endpoints (model listing, node discovery)
+	mux.HandleFunc("GET /api/v1/providers/nodes", s.listProviderNodes)
+	mux.HandleFunc("GET /api/v1/providers/models", s.proxyProviderModels)
 
 	// Cluster info
 	mux.HandleFunc("GET /api/v1/cluster", s.getClusterInfo)
@@ -451,6 +457,7 @@ type CreateInstanceRequest struct {
 	Skills            []sympoziumv1alpha1.SkillRef    `json:"skills,omitempty"`
 	Channels          []sympoziumv1alpha1.ChannelSpec `json:"channels,omitempty"`
 	HeartbeatInterval string                          `json:"heartbeatInterval,omitempty"`
+	NodeSelector      map[string]string               `json:"nodeSelector,omitempty"`
 }
 
 func (s *Server) createInstance(w http.ResponseWriter, r *http.Request) {
@@ -496,6 +503,9 @@ func (s *Server) createInstance(w http.ResponseWriter, r *http.Request) {
 
 	if req.BaseURL != "" {
 		inst.Spec.Agents.Default.BaseURL = req.BaseURL
+	}
+	if len(req.NodeSelector) > 0 {
+		inst.Spec.Agents.Default.NodeSelector = req.NodeSelector
 	}
 
 	if req.Provider != "" && req.APIKey != "" && req.SecretName == "" {
@@ -721,7 +731,18 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 			provider = inst.Spec.AuthRefs[0].Provider
 		}
 	}
-	if authSecret == "" {
+
+	// Infer provider from baseURL for keyless local providers (e.g., Ollama via node-probe).
+	if len(inst.Spec.AuthRefs) == 0 && inst.Spec.Agents.Default.BaseURL != "" {
+		if strings.Contains(inst.Spec.Agents.Default.BaseURL, "ollama") || strings.Contains(inst.Spec.Agents.Default.BaseURL, ":11434") {
+			provider = "ollama"
+		} else {
+			provider = "custom"
+		}
+	}
+
+	// Cloud providers require an API key; local providers with a baseURL do not.
+	if authSecret == "" && inst.Spec.Agents.Default.BaseURL == "" {
 		http.Error(w, fmt.Sprintf("instance %q has no API key configured (authRefs is empty)", req.InstanceRef), http.StatusBadRequest)
 		return
 	}
@@ -750,6 +771,7 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 				Model:         model,
 				BaseURL:       inst.Spec.Agents.Default.BaseURL,
 				AuthSecretRef: authSecret,
+				NodeSelector:  inst.Spec.Agents.Default.NodeSelector,
 			},
 			Skills: inst.Spec.Skills,
 		},
@@ -2044,6 +2066,253 @@ func (s *Server) getClusterInfo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, resp)
+}
+
+// ── Provider discovery endpoints ─────────────────────────────────────────────
+
+// ProviderNode describes a node with inference providers discovered by the node-probe DaemonSet.
+type ProviderNode struct {
+	NodeName  string            `json:"nodeName"`
+	NodeIP    string            `json:"nodeIP"`
+	Providers []NodeProvider    `json:"providers"`
+	Labels    map[string]string `json:"labels,omitempty"`
+}
+
+// NodeProvider describes a single inference provider found on a node.
+type NodeProvider struct {
+	Name      string   `json:"name"`
+	Port      int      `json:"port"`
+	ProxyPort int      `json:"proxyPort,omitempty"`
+	Models    []string `json:"models"`
+	LastProbe string   `json:"lastProbe,omitempty"`
+}
+
+// ProviderModelsResponse is the response from the model proxy endpoint.
+type ProviderModelsResponse struct {
+	Models []string `json:"models"`
+	Source string   `json:"source"`
+}
+
+// listProviderNodes returns nodes annotated by the node-probe DaemonSet with inference providers.
+func (s *Server) listProviderNodes(w http.ResponseWriter, r *http.Request) {
+	var nodeList corev1.NodeList
+	if err := s.client.List(r.Context(), &nodeList); err != nil {
+		http.Error(w, "failed to list nodes: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	providerFilter := r.URL.Query().Get("provider")
+
+	var result []ProviderNode
+	for _, node := range nodeList.Items {
+		annotations := node.Annotations
+		if annotations == nil {
+			continue
+		}
+
+		// Only include nodes marked healthy by the probe.
+		if annotations["sympozium.ai/inference-healthy"] != "true" {
+			continue
+		}
+
+		lastProbe := annotations["sympozium.ai/inference-last-probe"]
+
+		// Parse inference annotations to find providers.
+		var providers []NodeProvider
+		for key, val := range annotations {
+			if !strings.HasPrefix(key, "sympozium.ai/inference-") {
+				continue
+			}
+			suffix := strings.TrimPrefix(key, "sympozium.ai/inference-")
+
+			// Skip meta annotations, models annotations, and proxy-port.
+			if suffix == "healthy" || suffix == "last-probe" || suffix == "proxy-port" || strings.HasPrefix(suffix, "models-") {
+				continue
+			}
+
+			providerName := suffix
+			if providerFilter != "" && providerName != providerFilter {
+				continue
+			}
+
+			port := 0
+			fmt.Sscanf(val, "%d", &port)
+			if port == 0 {
+				continue
+			}
+
+			var models []string
+			if modelsStr, ok := annotations["sympozium.ai/inference-models-"+providerName]; ok && modelsStr != "" {
+				models = strings.Split(modelsStr, ",")
+			}
+
+			proxyPort := 0
+			if pp, ok := annotations["sympozium.ai/inference-proxy-port"]; ok {
+				fmt.Sscanf(pp, "%d", &proxyPort)
+			}
+
+			providers = append(providers, NodeProvider{
+				Name:      providerName,
+				Port:      port,
+				ProxyPort: proxyPort,
+				Models:    models,
+				LastProbe: lastProbe,
+			})
+		}
+
+		if len(providers) == 0 {
+			continue
+		}
+
+		// Find InternalIP.
+		nodeIP := ""
+		for _, addr := range node.Status.Addresses {
+			if addr.Type == corev1.NodeInternalIP {
+				nodeIP = addr.Address
+				break
+			}
+		}
+
+		result = append(result, ProviderNode{
+			NodeName:  node.Name,
+			NodeIP:    nodeIP,
+			Providers: providers,
+			Labels:    node.Labels,
+		})
+	}
+
+	if result == nil {
+		result = []ProviderNode{}
+	}
+	writeJSON(w, result)
+}
+
+// proxyProviderModels proxies a model listing request to an in-cluster or node-based inference provider.
+func (s *Server) proxyProviderModels(w http.ResponseWriter, r *http.Request) {
+	baseURL := r.URL.Query().Get("baseURL")
+	if baseURL == "" {
+		http.Error(w, "baseURL query parameter is required", http.StatusBadRequest)
+		return
+	}
+
+	// SSRF protection: validate the URL.
+	parsed, err := url.Parse(baseURL)
+	if err != nil {
+		http.Error(w, "invalid baseURL", http.StatusBadRequest)
+		return
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		http.Error(w, "baseURL must use http or https scheme", http.StatusBadRequest)
+		return
+	}
+
+	// Resolve hostname and check for disallowed IPs.
+	hostname := parsed.Hostname()
+	ips, err := net.LookupHost(hostname)
+	if err != nil {
+		http.Error(w, "cannot resolve baseURL hostname", http.StatusBadRequest)
+		return
+	}
+	for _, ipStr := range ips {
+		ip := net.ParseIP(ipStr)
+		if ip == nil {
+			continue
+		}
+		// Block link-local (metadata endpoints).
+		if ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
+			http.Error(w, "baseURL resolves to a disallowed address", http.StatusForbidden)
+			return
+		}
+	}
+
+	provider := r.URL.Query().Get("provider")
+
+	// Determine the models endpoint URL.
+	modelsURL := ""
+	if provider == "ollama" || strings.Contains(baseURL, ":11434") {
+		// Ollama uses /api/tags.
+		modelsURL = strings.TrimRight(baseURL, "/")
+		// If baseURL ends with /v1, strip it for the Ollama native API.
+		modelsURL = strings.TrimSuffix(modelsURL, "/v1")
+		modelsURL += "/api/tags"
+	} else {
+		// OpenAI-compatible: /v1/models.
+		modelsURL = strings.TrimRight(baseURL, "/")
+		if !strings.HasSuffix(modelsURL, "/v1") {
+			modelsURL += "/v1"
+		}
+		modelsURL += "/models"
+	}
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Get(modelsURL)
+	if err != nil {
+		http.Error(w, "failed to reach provider: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		http.Error(w, fmt.Sprintf("provider returned HTTP %d", resp.StatusCode), http.StatusBadGateway)
+		return
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		http.Error(w, "failed to read provider response", http.StatusBadGateway)
+		return
+	}
+
+	// Parse models from response.
+	models := parseProviderModels(body)
+
+	writeJSON(w, ProviderModelsResponse{
+		Models: models,
+		Source: "live",
+	})
+}
+
+// parseProviderModels extracts model names from a JSON response.
+// Supports Ollama format and OpenAI-compatible format.
+func parseProviderModels(body []byte) []string {
+	// Try Ollama format: {"models":[{"name":"llama3:latest"}]}
+	var ollamaResp struct {
+		Models []struct {
+			Name string `json:"name"`
+		} `json:"models"`
+	}
+	if err := json.Unmarshal(body, &ollamaResp); err == nil && len(ollamaResp.Models) > 0 {
+		names := make([]string, 0, len(ollamaResp.Models))
+		for _, m := range ollamaResp.Models {
+			name := m.Name
+			// Strip ":latest" tag for cleaner display.
+			if idx := strings.Index(name, ":"); idx > 0 {
+				if name[idx+1:] == "latest" {
+					name = name[:idx]
+				}
+			}
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		return names
+	}
+
+	// Try OpenAI-compatible format: {"data":[{"id":"model-name"}]}
+	var openaiResp struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &openaiResp); err == nil && len(openaiResp.Data) > 0 {
+		names := make([]string, 0, len(openaiResp.Data))
+		for _, m := range openaiResp.Data {
+			names = append(names, m.ID)
+		}
+		sort.Strings(names)
+		return names
+	}
+
+	return []string{}
 }
 
 func writeJSON(w http.ResponseWriter, v interface{}) {

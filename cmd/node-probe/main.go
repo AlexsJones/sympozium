@@ -10,9 +10,12 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -42,6 +45,7 @@ type ProbeConfig struct {
 // ProbeTarget describes a single inference provider to probe.
 type ProbeTarget struct {
 	Name       string `yaml:"name"`
+	Host       string `yaml:"host"`
 	Port       int    `yaml:"port"`
 	HealthPath string `yaml:"healthPath"`
 	ModelsPath string `yaml:"modelsPath"`
@@ -56,6 +60,40 @@ type ProbeResult struct {
 }
 
 var log = ctrl.Log.WithName("node-probe")
+
+// targetRegistry tracks alive probe targets so the reverse proxy knows where to route.
+type targetRegistry struct {
+	mu      sync.RWMutex
+	targets map[string]ProbeTarget // name → target (only alive ones)
+}
+
+func newTargetRegistry() *targetRegistry {
+	return &targetRegistry{targets: make(map[string]ProbeTarget)}
+}
+
+func (r *targetRegistry) update(results []ProbeResult, allTargets []ProbeTarget) {
+	byName := make(map[string]ProbeTarget, len(allTargets))
+	for _, t := range allTargets {
+		byName[t.Name] = t
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.targets = make(map[string]ProbeTarget)
+	for _, res := range results {
+		if res.Alive {
+			if t, ok := byName[res.Name]; ok {
+				r.targets[res.Name] = t
+			}
+		}
+	}
+}
+
+func (r *targetRegistry) get(name string) (ProbeTarget, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	t, ok := r.targets[name]
+	return t, ok
+}
 
 func main() {
 	ctrl.SetLogger(zap.New())
@@ -107,13 +145,16 @@ func main() {
 		cancel()
 	}()
 
-	// Start health endpoint.
-	go serveHealth()
+	// Create target registry for the reverse proxy.
+	registry := newTargetRegistry()
+
+	// Start health + proxy server.
+	go serveHealthAndProxy(registry)
 
 	log.Info("starting node-probe", "node", nodeName, "interval", interval, "targets", len(cfg.Targets))
 
 	// Run the first probe immediately.
-	runProbeLoop(ctx, clientset, nodeName, cfg.Targets, interval)
+	runProbeLoop(ctx, clientset, nodeName, cfg.Targets, interval, registry)
 }
 
 func loadConfig(path string) (*ProbeConfig, error) {
@@ -131,12 +172,13 @@ func loadConfig(path string) (*ProbeConfig, error) {
 	return &cfg, nil
 }
 
-func runProbeLoop(ctx context.Context, clientset kubernetes.Interface, nodeName string, targets []ProbeTarget, interval time.Duration) {
+func runProbeLoop(ctx context.Context, clientset kubernetes.Interface, nodeName string, targets []ProbeTarget, interval time.Duration, registry *targetRegistry) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
 	// Run immediately on start.
 	results := probeAll(targets)
+	registry.update(results, targets)
 	if err := patchNodeAnnotations(ctx, clientset, nodeName, results); err != nil {
 		log.Error(err, "failed to patch node annotations")
 	}
@@ -147,6 +189,7 @@ func runProbeLoop(ctx context.Context, clientset kubernetes.Interface, nodeName 
 			return
 		case <-ticker.C:
 			results := probeAll(targets)
+			registry.update(results, targets)
 			if err := patchNodeAnnotations(ctx, clientset, nodeName, results); err != nil {
 				log.Error(err, "failed to patch node annotations")
 			}
@@ -190,7 +233,11 @@ func probeTarget(client *http.Client, target ProbeTarget) ProbeResult {
 		probePath = "/"
 	}
 
-	url := fmt.Sprintf("http://localhost:%d%s", target.Port, probePath)
+	host := target.Host
+	if host == "" {
+		host = "localhost"
+	}
+	url := fmt.Sprintf("http://%s:%d%s", host, target.Port, probePath)
 	resp, err := client.Get(url)
 	if err != nil {
 		return result
@@ -282,9 +329,11 @@ func buildAnnotations(results []ProbeResult) map[string]interface{} {
 	if anyHealthy {
 		annotations[annotationHealthy] = "true"
 		annotations[annotationLastPr] = time.Now().UTC().Format(time.RFC3339)
+		annotations[annotationPrefix+"proxy-port"] = fmt.Sprintf("%d", defaultHealthPort)
 	} else {
 		annotations[annotationHealthy] = nil
 		annotations[annotationLastPr] = nil
+		annotations[annotationPrefix+"proxy-port"] = nil
 	}
 
 	return annotations
@@ -327,6 +376,7 @@ func cleanupAnnotations(ctx context.Context, clientset kubernetes.Interface, nod
 	}
 	annotations[annotationHealthy] = nil
 	annotations[annotationLastPr] = nil
+	annotations[annotationPrefix+"proxy-port"] = nil
 
 	patch := map[string]interface{}{
 		"metadata": map[string]interface{}{
@@ -354,14 +404,63 @@ func cleanupAnnotations(ctx context.Context, clientset kubernetes.Interface, nod
 	}
 }
 
-func serveHealth() {
+// buildProxyHandler returns an http.HandlerFunc that reverse-proxies requests
+// from /proxy/{provider}/... to the target's host:port/... for alive providers.
+func buildProxyHandler(registry *targetRegistry) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Strip "/proxy/" prefix, then split provider name from the rest.
+		trimmed := strings.TrimPrefix(r.URL.Path, "/proxy/")
+		parts := strings.SplitN(trimmed, "/", 2)
+		if len(parts) == 0 || parts[0] == "" {
+			http.Error(w, "missing provider name in path", http.StatusBadRequest)
+			return
+		}
+
+		providerName := parts[0]
+		target, ok := registry.get(providerName)
+		if !ok {
+			http.Error(w, fmt.Sprintf("provider %q not found or not alive", providerName), http.StatusBadGateway)
+			return
+		}
+
+		host := target.Host
+		if host == "" {
+			host = "localhost"
+		}
+		upstream, err := url.Parse(fmt.Sprintf("http://%s:%d", host, target.Port))
+		if err != nil {
+			http.Error(w, "invalid upstream URL", http.StatusInternalServerError)
+			return
+		}
+
+		proxy := &httputil.ReverseProxy{
+			Director: func(req *http.Request) {
+				req.URL.Scheme = upstream.Scheme
+				req.URL.Host = upstream.Host
+				// Forward only the path after /proxy/{provider}.
+				remainingPath := "/"
+				if len(parts) > 1 {
+					remainingPath = "/" + parts[1]
+				}
+				req.URL.Path = remainingPath
+				req.URL.RawQuery = r.URL.RawQuery
+				req.Host = upstream.Host
+			},
+		}
+		proxy.ServeHTTP(w, r)
+	}
+}
+
+func serveHealthAndProxy(registry *targetRegistry) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("ok"))
 	})
+	mux.HandleFunc("/proxy/", buildProxyHandler(registry))
+
 	addr := fmt.Sprintf(":%d", defaultHealthPort)
-	log.Info("starting health server", "addr", addr)
+	log.Info("starting health + proxy server", "addr", addr)
 	if err := http.ListenAndServe(addr, mux); err != nil {
 		log.Error(err, "health server failed")
 	}
