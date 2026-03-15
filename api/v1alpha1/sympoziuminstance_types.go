@@ -175,6 +175,11 @@ type AgentConfig struct {
 	// Subagents configuration.
 	// +optional
 	Subagents *SubagentsSpec `json:"subagents,omitempty"`
+
+	// NodeSelector constrains agent pods to nodes with matching labels.
+	// Used for node-pinned inference (e.g., Ollama installed on specific GPU nodes).
+	// +optional
+	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
 }
 
 // SandboxSpec defines sandbox configuration.

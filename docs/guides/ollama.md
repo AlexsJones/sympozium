@@ -5,6 +5,11 @@ provider. Ollama exposes an OpenAI-compatible API, so Sympozium treats it as an
 OpenAI-compatible endpoint with the provider set to `ollama`. This lets you run
 agents entirely on local hardware with no cloud API keys required.
 
+Sympozium supports two inference topologies:
+
+- **Node-based** — Ollama installed directly on host nodes, discovered automatically by the node-probe DaemonSet
+- **Workload-based** — Ollama deployed as a Kubernetes Deployment/Service, reached via in-cluster DNS
+
 ---
 
 ## Prerequisites
@@ -206,6 +211,95 @@ policies.
 > **Sandbox note:** Pods with `sympozium.ai/sandbox: "true"` use the
 > `sympozium-sandbox-restricted` policy that only allows DNS and localhost IPC.
 > Sandboxed agents cannot reach Ollama directly.
+
+---
+
+## Automatic discovery with node-probe DaemonSet
+
+If Ollama is installed directly on your cluster nodes (e.g. via systemd), the
+**node-probe DaemonSet** can discover it automatically. The probe runs on every
+node, checks localhost ports for inference providers, and annotates nodes with
+what it finds.
+
+### Enable the node-probe
+
+Add the following to your Helm values:
+
+```yaml
+nodeProbe:
+  enabled: true
+```
+
+Or install with:
+
+```bash
+helm upgrade sympozium ./charts/sympozium --set nodeProbe.enabled=true
+```
+
+The DaemonSet probes these providers by default:
+
+| Provider | Port | Health endpoint |
+|----------|------|-----------------|
+| Ollama | 11434 | `/api/tags` |
+| vLLM | 8000 | `/health` |
+| llama-cpp | 8080 | `/health` |
+
+Custom targets can be added via `nodeProbe.config.targets` in values.yaml.
+
+### How it works
+
+1. The DaemonSet runs a lightweight probe on each node (with `hostNetwork: true`)
+2. Every 30 seconds, it probes configured localhost ports
+3. On success, it annotates the node:
+   - `sympozium.ai/inference-ollama=11434` — port
+   - `sympozium.ai/inference-models-ollama=llama3,mistral` — discovered models
+   - `sympozium.ai/inference-healthy=true` — at least one provider is up
+4. The API server reads these annotations via `GET /api/v1/providers/nodes`
+5. The web wizard shows discovered nodes and lets you select one
+
+### Node pinning
+
+When you select a node in the wizard, Sympozium sets two things on the instance:
+
+- `baseURL` — `http://<nodeIP>:<port>/v1` (auto-populated from the node's InternalIP)
+- `nodeSelector` — `{"kubernetes.io/hostname": "<nodeName>"}` (pins agent pods to that node)
+
+You can also set this manually in a CRD:
+
+```yaml
+apiVersion: sympozium.ai/v1alpha1
+kind: SympoziumInstance
+metadata:
+  name: ollama-agent
+spec:
+  agents:
+    default:
+      model: llama3
+      baseURL: "http://10.0.1.5:11434/v1"
+      nodeSelector:
+        kubernetes.io/hostname: gpu-node-1
+  authRefs:
+    - provider: ollama
+      secret: ollama-key
+```
+
+### Manual node annotation
+
+If you prefer not to deploy the DaemonSet, you can annotate nodes manually:
+
+```bash
+kubectl annotate node gpu-node-1 \
+  sympozium.ai/inference-ollama=11434 \
+  sympozium.ai/inference-models-ollama=llama3,mistral \
+  sympozium.ai/inference-healthy=true
+```
+
+The API server and web wizard will discover these annotations identically.
+
+### Cleanup
+
+The DaemonSet removes its annotations on graceful shutdown (SIGTERM). If you
+disable the node-probe, annotations are cleaned up automatically.
 
 ---
 

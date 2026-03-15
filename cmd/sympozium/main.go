@@ -1197,6 +1197,24 @@ func runInstall(ver, imageTag string) error {
 		return err
 	}
 
+	// Deploy node-probe DaemonSet (inference provider discovery).
+	nodeProbeDir := filepath.Join(tmpDir, "config/node-probe/")
+	if _, err := os.Stat(nodeProbeDir); err == nil {
+		fmt.Println("  Deploying node-probe DaemonSet...")
+		if err := kubectl("apply", "-f", nodeProbeDir); err != nil {
+			fmt.Printf("  Warning: failed to deploy node-probe: %v\n", err)
+		}
+	} else {
+		nodeProbeURL := fmt.Sprintf(
+			"https://raw.githubusercontent.com/%s/%s/config/node-probe/node-probe.yaml",
+			ghRepo, ver,
+		)
+		fmt.Println("  Node-probe manifests missing in bundle; applying fallback...")
+		if err := kubectl("apply", "-f", nodeProbeURL); err != nil {
+			fmt.Printf("  Warning: failed to deploy node-probe fallback: %v\n", err)
+		}
+	}
+
 	// Deploy built-in OpenTelemetry collector for observability.
 	observabilityDir := filepath.Join(tmpDir, "config/observability/")
 	if _, err := os.Stat(observabilityDir); err == nil {
@@ -1269,6 +1287,7 @@ func runUninstall() error {
 
 	// Delete in reverse order.
 	manifests := []string{
+		"https://raw.githubusercontent.com/" + ghRepo + "/main/config/node-probe/node-probe.yaml",
 		"https://raw.githubusercontent.com/" + ghRepo + "/main/config/observability/otel-collector.yaml",
 		"https://raw.githubusercontent.com/" + ghRepo + "/main/config/cert/certificate.yaml",
 		"https://raw.githubusercontent.com/" + ghRepo + "/main/config/network/policies.yaml",

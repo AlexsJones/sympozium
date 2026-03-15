@@ -23,13 +23,13 @@ CONTROLLER_GEN ?= $(LOCALBIN)/controller-gen
 BIN_DIR = bin
 
 # All binaries
-BINARIES = controller apiserver ipc-bridge webhook agent-runner sympozium web-proxy
+BINARIES = controller apiserver ipc-bridge webhook agent-runner sympozium web-proxy node-probe
 
 # All channel binaries
 CHANNELS = telegram whatsapp discord slack
 
 # All images
-IMAGES = controller apiserver ipc-bridge webhook agent-runner web-proxy \
+IMAGES = controller apiserver ipc-bridge webhook agent-runner web-proxy node-probe \
          channel-telegram channel-whatsapp channel-discord channel-slack \
 		 skill-k8s-ops skill-sre-observability skill-github-gitops skill-llmfit
 
@@ -293,13 +293,10 @@ kind-load-%: ## Load a specific image into Kind (e.g., make kind-load-controller
 
 kind-reload: docker-build kind-load ## Build all images and load into Kind
 	kubectl rollout restart deployment sympozium-controller-manager -n sympozium-system
+	-kubectl rollout restart daemonset sympozium-node-probe -n sympozium-system 2>/dev/null
 
 set-images: ## Stamp REGISTRY/TAG into K8s manifests
-	cd config/manager && kustomize edit set image \
-		controller=$(REGISTRY)/controller:$(TAG) \
-		apiserver=$(REGISTRY)/apiserver:$(TAG)
-	cd config/webhook && kustomize edit set image \
-		webhook=$(REGISTRY)/webhook:$(TAG)
+	find config/ -name '*.yaml' -exec sed -i 's|image: ghcr.io/alexsjones/sympozium/\([^:]*\):[^ ]*|image: $(REGISTRY)/\1:$(TAG)|g' {} +
 	@echo "Images set to $(REGISTRY)/*:$(TAG)"
 
 ##@ Deployment
@@ -319,6 +316,7 @@ uninstall: ## Uninstall Sympozium control plane, CRDs, and cleanup finalizers
 	@set -eu; \
 	echo "==> Deleting Sympozium control plane manifests"; \
 	for m in \
+		config/node-probe/node-probe.yaml \
 		config/observability/otel-collector.yaml \
 		config/cert/certificate.yaml \
 		config/network/policies.yaml \

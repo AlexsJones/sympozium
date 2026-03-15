@@ -838,3 +838,36 @@ func TestBuildContainers_IPCBridgeSecurityContext(t *testing.T) {
 		t.Error("ipc-bridge should drop ALL capabilities")
 	}
 }
+
+// ── NodeSelector tests ──────────────────────────────────────────────────────
+
+func TestBuildJob_NodeSelector(t *testing.T) {
+	r := &AgentRunReconciler{}
+	run := newTestRun()
+	run.Spec.Model.NodeSelector = map[string]string{
+		"kubernetes.io/hostname": "gpu-node-1",
+	}
+
+	job := r.buildJob(run, false, nil, nil)
+	ns := job.Spec.Template.Spec.NodeSelector
+
+	if ns == nil {
+		t.Fatal("NodeSelector should not be nil")
+	}
+	if ns["kubernetes.io/hostname"] != "gpu-node-1" {
+		t.Errorf("NodeSelector[kubernetes.io/hostname] = %q, want gpu-node-1", ns["kubernetes.io/hostname"])
+	}
+}
+
+func TestBuildJob_NoNodeSelector(t *testing.T) {
+	r := &AgentRunReconciler{}
+	run := newTestRun()
+	// No NodeSelector set.
+
+	job := r.buildJob(run, false, nil, nil)
+	ns := job.Spec.Template.Spec.NodeSelector
+
+	if ns != nil {
+		t.Errorf("NodeSelector should be nil when not set, got %v", ns)
+	}
+}

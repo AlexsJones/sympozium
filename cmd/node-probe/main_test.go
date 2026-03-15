@@ -209,3 +209,78 @@ func TestParseModels_OpenAIFormat(t *testing.T) {
 		t.Errorf("models[0] = %q, want model-a", models[0])
 	}
 }
+
+func TestReverseProxy_RoutesToAliveProvider(t *testing.T) {
+	// Start a fake upstream server.
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"path": r.URL.Path,
+		})
+	}))
+	defer upstream.Close()
+
+	// Parse upstream port.
+	var upstreamPort int
+	for i := len(upstream.URL) - 1; i >= 0; i-- {
+		if upstream.URL[i] == ':' {
+			p, _ := json.Number(upstream.URL[i+1:]).Int64()
+			upstreamPort = int(p)
+			break
+		}
+	}
+
+	// Set up registry with the upstream as an alive target.
+	registry := newTargetRegistry()
+	targets := []ProbeTarget{{Name: "ollama", Host: "127.0.0.1", Port: upstreamPort}}
+	results := []ProbeResult{{Name: "ollama", Port: upstreamPort, Alive: true}}
+	registry.update(results, targets)
+
+	// Build the mux (same as serveHealthAndProxy but testable).
+	mux := http.NewServeMux()
+	mux.HandleFunc("/proxy/", buildProxyHandler(registry))
+
+	// Request through the proxy.
+	req := httptest.NewRequest(http.MethodGet, "/proxy/ollama/api/tags", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+	}
+
+	var body map[string]string
+	json.NewDecoder(rec.Body).Decode(&body)
+	if body["path"] != "/api/tags" {
+		t.Errorf("upstream saw path %q, want /api/tags", body["path"])
+	}
+}
+
+func TestReverseProxy_RejectsUnknownProvider(t *testing.T) {
+	registry := newTargetRegistry()
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/proxy/", buildProxyHandler(registry))
+
+	req := httptest.NewRequest(http.MethodGet, "/proxy/nonexistent/v1/models", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadGateway {
+		t.Errorf("status = %d, want 502", rec.Code)
+	}
+}
+
+func TestBuildAnnotations_IncludesProxyPort(t *testing.T) {
+	results := []ProbeResult{
+		{Name: "ollama", Port: 11434, Alive: true, Models: []string{"llama3"}},
+	}
+	annotations := buildAnnotations(results)
+
+	proxyPort, ok := annotations[annotationPrefix+"proxy-port"]
+	if !ok {
+		t.Fatal("missing proxy-port annotation")
+	}
+	if proxyPort != "9473" {
+		t.Errorf("proxy-port = %v, want 9473", proxyPort)
+	}
+}

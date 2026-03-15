@@ -13,6 +13,7 @@ data:
     targets:
     {{- range .Values.nodeProbe.config.targets }}
       - name: {{ .name }}
+        host: {{ .host | default "localhost" }}
         port: {{ .port }}
         healthPath: {{ .healthPath | default "/" }}
         modelsPath: {{ .modelsPath | default "" }}

@@ -63,6 +63,7 @@ Sympozium takes the agentic control model and rebuilds it on Kubernetes primitiv
 - **OpenTelemetry** — built-in observability with traces and metrics
 - **Web endpoints** — expose agents as OpenAI-compatible APIs and MCP servers
 - **Scheduled tasks** — cron-based recurring agent runs
+- **Local inference discovery** — node-probe DaemonSet discovers Ollama/vLLM/llama-cpp on host nodes with automatic model listing and node pinning
 
 ---
 
@@ -78,6 +79,7 @@ Sympozium takes the agentic control model and rebuilds it on Kubernetes primitiv
 | [Security](concepts/security.md) | Defence-in-depth at every layer |
 | [Writing Skills](guides/writing-skills.md) | Build your own SkillPacks |
 | [Writing Tools](guides/writing-tools.md) | Add new tools to the agent runner |
+| [Ollama & Local Inference](guides/ollama.md) | Node-based and in-cluster Ollama setup with auto-discovery |
 
 ---
 

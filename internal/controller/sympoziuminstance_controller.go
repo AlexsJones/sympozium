@@ -504,6 +504,9 @@ func (r *SympoziumInstanceReconciler) ensureWebEndpointAgentRun(ctx context.Cont
 	if instance.Spec.Agents.Default.BaseURL != "" {
 		agentRun.Spec.Model.BaseURL = instance.Spec.Agents.Default.BaseURL
 	}
+	if len(instance.Spec.Agents.Default.NodeSelector) > 0 {
+		agentRun.Spec.Model.NodeSelector = instance.Spec.Agents.Default.NodeSelector
+	}
 
 	if err := controllerutil.SetControllerReference(instance, agentRun, r.Scheme); err != nil {
 		return fmt.Errorf("set owner reference: %w", err)

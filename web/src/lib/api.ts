@@ -41,6 +41,7 @@ export interface AgentConfig {
   model: string;
   baseURL?: string;
   thinking?: string;
+  nodeSelector?: Record<string, string>;
 }
 
 export interface AgentsSpec {
@@ -91,6 +92,7 @@ export interface ModelSpec {
   baseURL?: string;
   thinking?: string;
   authSecretRef?: string;
+  nodeSelector?: Record<string, string>;
 }
 
 export interface ToolPolicySpec {
@@ -449,6 +451,28 @@ export interface ClusterInfoResponse {
   version?: string;
 }
 
+// ── Provider Discovery ───────────────────────────────────────────────────────
+
+export interface NodeProvider {
+  name: string;
+  port: number;
+  proxyPort?: number;
+  models: string[];
+  lastProbe?: string;
+}
+
+export interface ProviderNode {
+  nodeName: string;
+  nodeIP: string;
+  providers: NodeProvider[];
+  labels?: Record<string, string>;
+}
+
+export interface ProviderModelsResponse {
+  models: string[];
+  source: string;
+}
+
 // ── API client ───────────────────────────────────────────────────────────────
 
 /** Typed error so callers can inspect the HTTP status code. */
@@ -569,6 +593,7 @@ export const api = {
       skills?: SkillRef[];
       channels?: ChannelSpec[];
       heartbeatInterval?: string;
+      nodeSelector?: Record<string, string>;
     }) =>
       apiFetch<SympoziumInstance>("/api/v1/instances", {
         method: "POST",
@@ -696,6 +721,14 @@ export const api = {
     metrics: (range?: string) =>
       apiFetch<GatewayMetricsResponse>(
         `/api/v1/gateway/metrics${range ? `?range=${range}` : ""}`,
+      ),
+  },
+
+  providers: {
+    nodes: () => apiFetch<ProviderNode[]>("/api/v1/providers/nodes"),
+    models: (baseURL: string) =>
+      apiFetch<ProviderModelsResponse>(
+        `/api/v1/providers/models?baseURL=${encodeURIComponent(baseURL)}`,
       ),
   },
 
