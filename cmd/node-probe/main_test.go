@@ -255,6 +255,49 @@ func TestReverseProxy_RoutesToAliveProvider(t *testing.T) {
 	}
 }
 
+func TestProbeTarget_LMStudioFormat(t *testing.T) {
+	// Fake LM Studio server returning OpenAI-compatible /v1/models.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"data": []map[string]interface{}{
+				{"id": "llama-3.2-1b"},
+				{"id": "deepseek-coder-v2"},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	var port int
+	for i := len(srv.URL) - 1; i >= 0; i-- {
+		if srv.URL[i] == ':' {
+			p, _ := json.Number(srv.URL[i+1:]).Int64()
+			port = int(p)
+			break
+		}
+	}
+
+	client := &http.Client{Timeout: 3e9}
+	result := probeTarget(client, ProbeTarget{
+		Name:       "lm-studio",
+		Port:       port,
+		HealthPath: "/v1/models",
+		ModelsPath: "/v1/models",
+	})
+
+	if !result.Alive {
+		t.Fatal("expected probe to be alive")
+	}
+	if len(result.Models) != 2 {
+		t.Fatalf("models count = %d, want 2", len(result.Models))
+	}
+	if result.Models[0] != "llama-3.2-1b" {
+		t.Errorf("models[0] = %q, want llama-3.2-1b", result.Models[0])
+	}
+	if result.Models[1] != "deepseek-coder-v2" {
+		t.Errorf("models[1] = %q, want deepseek-coder-v2", result.Models[1])
+	}
+}
+
 func TestReverseProxy_RejectsUnknownProvider(t *testing.T) {
 	registry := newTargetRegistry()
 

@@ -494,8 +494,9 @@ func runOnboard() error {
 	fmt.Println("    2) Anthropic")
 	fmt.Println("    3) Azure OpenAI")
 	fmt.Println("    4) Ollama          (local, no API key needed)")
-	fmt.Println("    5) Other / OpenAI-compatible")
-	providerChoice := prompt(reader, "  Choice [1-5]", "1")
+	fmt.Println("    5) LM Studio       (local, no API key needed)")
+	fmt.Println("    6) Other / OpenAI-compatible")
+	providerChoice := prompt(reader, "  Choice [1-6]", "1")
 
 	var providerName, secretEnvKey, modelName, baseURL string
 	switch providerChoice {
@@ -515,6 +516,12 @@ func runOnboard() error {
 		modelName = prompt(reader, "  Model name", "llama3")
 		fmt.Println("  💡 No API key needed for Ollama.")
 	case "5":
+		providerName = "lm-studio"
+		secretEnvKey = ""
+		baseURL = prompt(reader, "  LM Studio URL", "http://localhost:1234/v1")
+		modelName = prompt(reader, "  Model name", "")
+		fmt.Println("  💡 No API key needed for LM Studio.")
+	case "6":
 		providerName = prompt(reader, "  Provider name", "custom")
 		secretEnvKey = prompt(reader, "  API key env var name (empty if none)", "API_KEY")
 		baseURL = prompt(reader, "  API base URL", "")
@@ -8054,6 +8061,12 @@ func (m tuiModel) advanceWizard(val string) (tea.Model, tea.Cmd) {
 			m.input.Placeholder = "Ollama URL (default: http://ollama.default.svc:11434/v1)"
 			return m, nil
 		case "5":
+			w.providerName = "lm-studio"
+			w.secretEnvKey = ""
+			w.step = wizStepBaseURL
+			m.input.Placeholder = "LM Studio URL (default: http://localhost:1234/v1)"
+			return m, nil
+		case "6":
 			w.providerName = "custom"
 			w.secretEnvKey = "API_KEY"
 			w.step = wizStepBaseURL
@@ -8071,6 +8084,9 @@ func (m tuiModel) advanceWizard(val string) (tea.Model, tea.Cmd) {
 	case wizStepBaseURL:
 		if val == "" && w.providerName == "ollama" {
 			val = "http://ollama.default.svc:11434/v1"
+		}
+		if val == "" && w.providerName == "lm-studio" {
+			val = "http://localhost:1234/v1"
 		}
 		w.baseURL = val
 		if w.secretEnvKey == "" {
@@ -8324,6 +8340,12 @@ func (m tuiModel) advanceWizard(val string) (tea.Model, tea.Cmd) {
 			m.input.Placeholder = "Ollama URL (default: http://ollama.default.svc:11434/v1)"
 			return m, nil
 		case "5":
+			w.providerName = "lm-studio"
+			w.secretEnvKey = ""
+			w.step = wizStepPersonaBaseURL
+			m.input.Placeholder = "LM Studio URL (default: http://localhost:1234/v1)"
+			return m, nil
+		case "6":
 			w.providerName = "custom"
 			w.secretEnvKey = "API_KEY"
 			w.step = wizStepPersonaBaseURL
@@ -8340,6 +8362,9 @@ func (m tuiModel) advanceWizard(val string) (tea.Model, tea.Cmd) {
 	case wizStepPersonaBaseURL:
 		if val == "" && w.providerName == "ollama" {
 			val = "http://ollama.default.svc:11434/v1"
+		}
+		if val == "" && w.providerName == "lm-studio" {
+			val = "http://localhost:1234/v1"
 		}
 		w.baseURL = val
 		if w.secretEnvKey == "" {
@@ -8666,7 +8691,8 @@ func (m tuiModel) renderWizardPanel(h int) string {
 		lines = append(lines, menuNumStyle.Render("  2)")+menuStyle.Render(" Anthropic"))
 		lines = append(lines, menuNumStyle.Render("  3)")+menuStyle.Render(" Azure OpenAI"))
 		lines = append(lines, menuNumStyle.Render("  4)")+menuStyle.Render(" Ollama          (local, no API key needed)"))
-		lines = append(lines, menuNumStyle.Render("  5)")+menuStyle.Render(" Other / OpenAI-compatible"))
+		lines = append(lines, menuNumStyle.Render("  5)")+menuStyle.Render(" LM Studio       (local, no API key needed)"))
+		lines = append(lines, menuNumStyle.Render("  6)")+menuStyle.Render(" Other / OpenAI-compatible"))
 
 	case wizStepBaseURL:
 		lines = append(lines, stepStyle.Render("  📋 Step 3/9 — AI Provider (continued)"))
@@ -8996,7 +9022,8 @@ func (m tuiModel) renderPersonaWizardPanel(h int,
 		lines = append(lines, menuNumStyle.Render("  [2]")+menuStyle.Render(" Anthropic")+hintStyle.Render(" — Claude Sonnet/Opus"))
 		lines = append(lines, menuNumStyle.Render("  [3]")+menuStyle.Render(" Azure OpenAI")+hintStyle.Render(" — Enterprise Azure"))
 		lines = append(lines, menuNumStyle.Render("  [4]")+menuStyle.Render(" Ollama")+hintStyle.Render(" — Local models"))
-		lines = append(lines, menuNumStyle.Render("  [5]")+menuStyle.Render(" Custom")+hintStyle.Render(" — Any OpenAI-compatible API"))
+		lines = append(lines, menuNumStyle.Render("  [5]")+menuStyle.Render(" LM Studio")+hintStyle.Render(" — Local models"))
+		lines = append(lines, menuNumStyle.Render("  [6]")+menuStyle.Render(" Custom")+hintStyle.Render(" — Any OpenAI-compatible API"))
 		lines = append(lines, "")
 
 	case wizStepPersonaBaseURL:

@@ -77,7 +77,7 @@ func resolveProvider(inst *sympoziumv1alpha1.SympoziumInstance) string {
 	}
 	// Fallback: guess from secret name (e.g. "<inst>-openai-key").
 	for _, ref := range inst.Spec.AuthRefs {
-		for _, p := range []string{"anthropic", "azure-openai", "ollama", "openai"} {
+		for _, p := range []string{"anthropic", "azure-openai", "lm-studio", "ollama", "openai"} {
 			if strings.Contains(ref.Secret, p) {
 				return p
 			}
@@ -87,6 +87,9 @@ func resolveProvider(inst *sympoziumv1alpha1.SympoziumInstance) string {
 	if base := inst.Spec.Agents.Default.BaseURL; base != "" {
 		if strings.Contains(base, "ollama") || strings.Contains(base, ":11434") {
 			return "ollama"
+		}
+		if strings.Contains(base, "lm-studio") || strings.Contains(base, ":1234") {
+			return "lm-studio"
 		}
 		// Generic OpenAI-compatible local provider.
 		return "custom"

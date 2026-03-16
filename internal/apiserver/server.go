@@ -736,6 +736,8 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 	if len(inst.Spec.AuthRefs) == 0 && inst.Spec.Agents.Default.BaseURL != "" {
 		if strings.Contains(inst.Spec.Agents.Default.BaseURL, "ollama") || strings.Contains(inst.Spec.Agents.Default.BaseURL, ":11434") {
 			provider = "ollama"
+		} else if strings.Contains(inst.Spec.Agents.Default.BaseURL, "lm-studio") || strings.Contains(inst.Spec.Agents.Default.BaseURL, ":1234") {
+			provider = "lm-studio"
 		} else {
 			provider = "custom"
 		}

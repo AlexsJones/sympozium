@@ -173,7 +173,7 @@ func main() {
 	case "anthropic":
 		responseText, inputTokens, outputTokens, toolCalls, err = callAnthropic(ctx, apiKey, baseURL, modelName, systemPrompt, task, tools)
 	default:
-		// OpenAI, Azure OpenAI, Ollama, and any OpenAI-compatible provider
+		// OpenAI, Azure OpenAI, Ollama, LM Studio, and any OpenAI-compatible provider
 		responseText, inputTokens, outputTokens, toolCalls, err = callOpenAI(ctx, provider, apiKey, baseURL, modelName, systemPrompt, task, tools)
 	}
 
@@ -409,6 +409,8 @@ func callOpenAI(ctx context.Context, provider, apiKey, baseURL, model, systemPro
 			opts = append(opts, openaioption.WithBaseURL(baseURL))
 		} else if provider == "ollama" {
 			opts = append(opts, openaioption.WithBaseURL("http://ollama.default.svc:11434/v1"))
+		} else if provider == "lm-studio" {
+			opts = append(opts, openaioption.WithBaseURL("http://localhost:1234/v1"))
 		}
 	}
 

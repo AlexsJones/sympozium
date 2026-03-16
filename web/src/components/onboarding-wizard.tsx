@@ -45,6 +45,7 @@ export const PROVIDERS = [
   { value: "anthropic", label: "Anthropic", defaultModel: "claude-sonnet-4-20250514" },
   { value: "azure-openai", label: "Azure OpenAI", defaultModel: "gpt-4o" },
   { value: "ollama", label: "Ollama", defaultModel: "llama3" },
+  { value: "lm-studio", label: "LM Studio", defaultModel: "" },
   { value: "custom", label: "Custom", defaultModel: "" },
 ];
 
@@ -307,7 +308,7 @@ export function OnboardingWizard({
   const [inferenceMode, setInferenceMode] = useState<"workload" | "node">("workload");
   const [channelActionIdx, setChannelActionIdx] = useState(0);
 
-  const isLocalProvider = form.provider === "ollama" || form.provider === "custom";
+  const isLocalProvider = form.provider === "ollama" || form.provider === "lm-studio" || form.provider === "custom";
   const { data: providerNodes, isLoading: nodesLoading } = useProviderNodes(
     isLocalProvider && inferenceMode === "node"
   );
@@ -321,7 +322,7 @@ export function OnboardingWizard({
       case "provider":
         return !!form.provider;
       case "apikey":
-        if (form.provider === "ollama") return true;
+        if (form.provider === "ollama" || form.provider === "lm-studio") return true;
         return !!form.secretName || !!form.apiKey;
       case "model":
         return !!form.model;
@@ -533,6 +534,8 @@ export function OnboardingWizard({
                   placeholder={
                     form.provider === "ollama"
                       ? "http://ollama.default.svc:11434/v1"
+                      : form.provider === "lm-studio"
+                      ? "http://localhost:1234/v1"
                       : "https://your-endpoint.openai.azure.com/v1"
                   }
                 />

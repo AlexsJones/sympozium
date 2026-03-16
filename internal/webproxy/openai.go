@@ -404,7 +404,7 @@ func resolveProvider(inst *sympoziumv1alpha1.SympoziumInstance) string {
 		}
 	}
 	for _, ref := range inst.Spec.AuthRefs {
-		for _, p := range []string{"anthropic", "azure-openai", "ollama", "openai"} {
+		for _, p := range []string{"anthropic", "azure-openai", "lm-studio", "ollama", "openai"} {
 			if strings.Contains(ref.Secret, p) {
 				return p
 			}

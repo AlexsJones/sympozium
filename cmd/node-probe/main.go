@@ -1,5 +1,5 @@
 // Package main is the entry point for the Sympozium node-probe DaemonSet.
-// It probes localhost ports for local inference providers (Ollama, vLLM, llama-cpp)
+// It probes localhost ports for local inference providers (Ollama, vLLM, llama-cpp, LM Studio)
 // and annotates the Kubernetes node with discovered providers and models.
 package main
 
