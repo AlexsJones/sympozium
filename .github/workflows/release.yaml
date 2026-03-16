@@ -78,6 +78,7 @@ jobs:
             config/network/ \
             config/nats/ \
             config/cert/ \
+            config/node-probe/ \
             config/observability/ \
             config/skills/ \
             config/policies/ \

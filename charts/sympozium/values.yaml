@@ -257,17 +257,17 @@ nodeProbe:
     probeInterval: 30s
     targets:
       - name: ollama
-        host: host.docker.internal
+        host: localhost
         port: 11434
         healthPath: /api/tags
         modelsPath: /api/tags
       - name: vllm
-        host: host.docker.internal
+        host: localhost
         port: 8000
         healthPath: /health
         modelsPath: /v1/models
       - name: llama-cpp
-        host: host.docker.internal
+        host: localhost
         port: 8080
         healthPath: /health
         modelsPath: /v1/models
