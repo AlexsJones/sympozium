@@ -1419,61 +1419,15 @@ func (s *Server) getObservabilityMetrics(w http.ResponseWriter, r *http.Request)
 		RunStatus:          map[string]float64{},
 	}
 
-	// Try the OTel collector first.
+	// Check collector connectivity.
 	raw, err := s.readCollectorMetrics(r.Context())
 	if err == nil {
 		resp.CollectorReachable = true
-		samples := parsePrometheusSamples(raw)
-
-		inputByModel := map[string]float64{}
-		outputByModel := map[string]float64{}
-		toolsByName := map[string]float64{}
-		metricNames := map[string]struct{}{}
-
-		for _, sample := range samples {
-			metricNames[sample.Name] = struct{}{}
-			switch sample.Name {
-			case "sympozium_agent_runs_total":
-				resp.AgentRunsTotal += sample.Value
-				if status := sample.Labels["status"]; status != "" {
-					resp.RunStatus[status] += sample.Value
-				}
-			case "gen_ai_usage_input_tokens_total":
-				resp.InputTokensTotal += sample.Value
-				if model := sample.Labels["model"]; model != "" {
-					inputByModel[model] += sample.Value
-				}
-			case "gen_ai_usage_output_tokens_total":
-				resp.OutputTokensTotal += sample.Value
-				if model := sample.Labels["model"]; model != "" {
-					outputByModel[model] += sample.Value
-				}
-			case "sympozium_tool_invocations_total":
-				resp.ToolInvocations += sample.Value
-				if toolName := sample.Labels["tool_name"]; toolName != "" {
-					toolsByName[toolName] += sample.Value
-				}
-			}
-		}
-
-		resp.InputByModel = mapToMetricBreakdown(inputByModel)
-		resp.OutputByModel = mapToMetricBreakdown(outputByModel)
-		resp.ToolsByName = mapToMetricBreakdown(toolsByName)
-
-		names := make([]string, 0, len(metricNames))
-		for n := range metricNames {
-			names = append(names, n)
-		}
-		sort.Strings(names)
-		resp.RawMetricNames = names
-
-		writeJSON(w, resp)
-		return
+	} else {
+		resp.CollectorError = err.Error()
 	}
 
-	// Collector unreachable — fall back to AgentRun CRD aggregation.
-	resp.CollectorError = err.Error()
-
+	// Always aggregate from AgentRun CRDs — this is the source of truth.
 	var runs sympoziumv1alpha1.AgentRunList
 	if err := s.client.List(r.Context(), &runs, client.InNamespace(namespace)); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -1482,7 +1436,7 @@ func (s *Server) getObservabilityMetrics(w http.ResponseWriter, r *http.Request)
 
 	inputByModel := map[string]float64{}
 	outputByModel := map[string]float64{}
-	toolsByName := map[string]float64{"tool_calls": 0}
+	toolsByName := map[string]float64{}
 
 	for i := range runs.Items {
 		run := runs.Items[i]
@@ -1506,14 +1460,32 @@ func (s *Server) getObservabilityMetrics(w http.ResponseWriter, r *http.Request)
 			resp.ToolInvocations += tools
 			inputByModel[model] += in
 			outputByModel[model] += out
-			toolsByName["tool_calls"] += tools
+			if tools > 0 {
+				toolsByName["tool_calls"] += tools
+			}
 		}
 	}
 
 	resp.InputByModel = mapToMetricBreakdown(inputByModel)
 	resp.OutputByModel = mapToMetricBreakdown(outputByModel)
 	resp.ToolsByName = mapToMetricBreakdown(toolsByName)
-	resp.RawMetricNames = []string{"sympozium.agent.runs", "gen_ai.usage.input_tokens", "gen_ai.usage.output_tokens", "sympozium.tool.invocations"}
+
+	// Include raw metric names from the collector if available.
+	if resp.CollectorReachable {
+		samples := parsePrometheusSamples(raw)
+		metricNames := map[string]struct{}{}
+		for _, sample := range samples {
+			metricNames[sample.Name] = struct{}{}
+		}
+		names := make([]string, 0, len(metricNames))
+		for n := range metricNames {
+			names = append(names, n)
+		}
+		sort.Strings(names)
+		resp.RawMetricNames = names
+	} else {
+		resp.RawMetricNames = []string{"sympozium.agent.runs", "gen_ai.usage.input_tokens", "gen_ai.usage.output_tokens", "sympozium.tool.invocations"}
+	}
 
 	writeJSON(w, resp)
 }
