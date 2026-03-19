@@ -639,6 +639,7 @@ export function OnboardingWizard({
 
         {/* ── Auth step ─────────────────────────────────────────────── */}
         {step === "apikey" && (
+          <ScrollArea className="max-h-[60vh]">
           <div className="space-y-4">
             {(form.provider === "openai" || form.provider === "anthropic") && (
               <div className="space-y-2">
@@ -727,6 +728,7 @@ export function OnboardingWizard({
               </p>
             </div>
           </div>
+          </ScrollArea>
         )}
 
         {/* ── Model step ────────────────────────────────────────────── */}
