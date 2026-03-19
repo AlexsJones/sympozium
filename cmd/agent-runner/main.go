@@ -225,6 +225,8 @@ func main() {
 	switch provider {
 	case "anthropic":
 		responseText, inputTokens, outputTokens, toolCalls, err = callAnthropic(ctx, apiKey, baseURL, modelName, systemPrompt, task, tools)
+	case "bedrock":
+		responseText, inputTokens, outputTokens, toolCalls, err = callBedrock(ctx, modelName, systemPrompt, task, tools)
 	default:
 		// OpenAI, Azure OpenAI, Ollama, LM Studio, and any OpenAI-compatible provider
 		responseText, inputTokens, outputTokens, toolCalls, err = callOpenAI(ctx, provider, apiKey, baseURL, modelName, systemPrompt, task, tools)

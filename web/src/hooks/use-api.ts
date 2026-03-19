@@ -216,6 +216,10 @@ export function useActivatePersonaPack() {
       provider?: string;
       secretName?: string;
       apiKey?: string;
+      awsRegion?: string;
+      awsAccessKeyId?: string;
+      awsSecretAccessKey?: string;
+      awsSessionToken?: string;
       model?: string;
       baseURL?: string;
       channels?: string[];

@@ -43,6 +43,10 @@ export function InstancesPage() {
         baseURL: result.baseURL || undefined,
         secretName: result.secretName || undefined,
         apiKey: result.apiKey || undefined,
+        awsRegion: result.awsRegion || undefined,
+        awsAccessKeyId: result.awsAccessKeyId || undefined,
+        awsSecretAccessKey: result.awsSecretAccessKey || undefined,
+        awsSessionToken: result.awsSessionToken || undefined,
         skills: result.skills.map((skillPackRef) => {
           if (skillPackRef === "web-endpoint") {
             const params: Record<string, string> = {};

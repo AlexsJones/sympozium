@@ -46,6 +46,7 @@ export const PROVIDERS = [
   { value: "azure-openai", label: "Azure OpenAI", defaultModel: "gpt-4o" },
   { value: "ollama", label: "Ollama", defaultModel: "llama3" },
   { value: "lm-studio", label: "LM Studio", defaultModel: "" },
+  { value: "bedrock", label: "AWS Bedrock", defaultModel: "anthropic.claude-sonnet-4-20250514-v1:0" },
   { value: "custom", label: "Custom", defaultModel: "" },
 ];
 
@@ -77,6 +78,10 @@ export interface WizardResult {
   provider: string;
   apiKey: string;
   secretName: string;
+  awsRegion: string;
+  awsAccessKeyId: string;
+  awsSecretAccessKey: string;
+  awsSessionToken: string;
   model: string;
   baseURL: string;
   skills: string[];
@@ -187,14 +192,16 @@ function ModelSelector({
   baseURL,
   value,
   onChange,
+  bedrockCredentials,
 }: {
   provider: string;
   apiKey: string;
   baseURL?: string;
   value: string;
   onChange: (v: string) => void;
+  bedrockCredentials?: import("@/hooks/use-model-list").BedrockCredentials;
 }) {
-  const { models, isLoading, isLive } = useModelList(provider, apiKey, baseURL);
+  const { models, isLoading, isLive } = useModelList(provider, apiKey, baseURL, bedrockCredentials);
   const [search, setSearch] = useState("");
 
   const filtered = models.filter((m) =>
@@ -304,6 +311,10 @@ export function OnboardingWizard({
     githubToken: defaults?.githubToken || "",
     githubTeamInstructions: defaults?.githubTeamInstructions || "",
     nodeSelector: defaults?.nodeSelector,
+    awsRegion: defaults?.awsRegion || "",
+    awsAccessKeyId: defaults?.awsAccessKeyId || "",
+    awsSecretAccessKey: defaults?.awsSecretAccessKey || "",
+    awsSessionToken: defaults?.awsSessionToken || "",
   });
   const [inferenceMode, setInferenceMode] = useState<"workload" | "node">("workload");
   const [channelActionIdx, setChannelActionIdx] = useState(0);
@@ -323,6 +334,7 @@ export function OnboardingWizard({
         return !!form.provider;
       case "apikey":
         if (form.provider === "ollama" || form.provider === "lm-studio") return true;
+        if (form.provider === "bedrock") return !!form.secretName || !!form.awsRegion;
         return !!form.secretName || !!form.apiKey;
       case "model":
         return !!form.model;
@@ -390,6 +402,10 @@ export function OnboardingWizard({
       githubToken: d.githubToken || "",
       githubTeamInstructions: d.githubTeamInstructions || "",
       nodeSelector: d.nodeSelector,
+      awsRegion: d.awsRegion || "",
+      awsAccessKeyId: d.awsAccessKeyId || "",
+      awsSecretAccessKey: d.awsSecretAccessKey || "",
+      awsSessionToken: d.awsSessionToken || "",
     });
     setStep(steps[0]);
     setChannelActionIdx(0);
@@ -642,8 +658,62 @@ export function OnboardingWizard({
                 </p>
               </div>
             )}
+            {form.provider === "bedrock" && (
+              <>
+                <div className="space-y-2">
+                  <Label>AWS Region</Label>
+                  <Input
+                    value={form.awsRegion}
+                    onChange={(e) =>
+                      setForm({ ...form, awsRegion: e.target.value })
+                    }
+                    placeholder="us-east-1"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>AWS Access Key ID</Label>
+                  <Input
+                    value={form.awsAccessKeyId}
+                    onChange={(e) =>
+                      setForm({ ...form, awsAccessKeyId: e.target.value })
+                    }
+                    placeholder="AKIA…"
+                    autoComplete="off"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>AWS Secret Access Key</Label>
+                  <Input
+                    type="password"
+                    value={form.awsSecretAccessKey}
+                    onChange={(e) =>
+                      setForm({ ...form, awsSecretAccessKey: e.target.value })
+                    }
+                    placeholder="wJalr…"
+                    autoComplete="off"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>AWS Session Token <span className="text-muted-foreground font-normal">(optional)</span></Label>
+                  <Input
+                    type="password"
+                    value={form.awsSessionToken}
+                    onChange={(e) =>
+                      setForm({ ...form, awsSessionToken: e.target.value })
+                    }
+                    placeholder="For temporary credentials"
+                    autoComplete="off"
+                  />
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  A Kubernetes Secret with your AWS credentials will be created
+                  automatically. For EKS with IRSA, provide only the region and
+                  use a pre-existing secret.
+                </p>
+              </>
+            )}
             <div className="space-y-2">
-              <Label>K8s Secret Name <span className="text-muted-foreground font-normal">(optional if API Key provided)</span></Label>
+              <Label>K8s Secret Name <span className="text-muted-foreground font-normal">(optional if credentials provided)</span></Label>
               <Input
                 value={form.secretName}
                 onChange={(e) =>
@@ -653,7 +723,7 @@ export function OnboardingWizard({
               />
               <p className="text-xs text-muted-foreground">
                 Use an existing Kubernetes Secret, or leave blank to
-                auto-create one from the API Key above.
+                auto-create one from the credentials above.
               </p>
             </div>
           </div>
@@ -668,6 +738,16 @@ export function OnboardingWizard({
               baseURL={form.baseURL}
               value={form.model}
               onChange={(v) => setForm({ ...form, model: v })}
+              bedrockCredentials={
+                form.provider === "bedrock" && form.awsAccessKeyId
+                  ? {
+                      region: form.awsRegion || "us-east-1",
+                      accessKeyId: form.awsAccessKeyId,
+                      secretAccessKey: form.awsSecretAccessKey,
+                      sessionToken: form.awsSessionToken || undefined,
+                    }
+                  : undefined
+              }
             />
             {mode === "persona" && personaCount !== undefined && (
               <p className="text-xs text-muted-foreground">

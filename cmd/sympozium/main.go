@@ -610,8 +610,9 @@ func runOnboard() error {
 	fmt.Println("    3) Azure OpenAI")
 	fmt.Println("    4) Ollama          (local, no API key needed)")
 	fmt.Println("    5) LM Studio       (local, optional API key)")
-	fmt.Println("    6) Other / OpenAI-compatible")
-	providerChoice := prompt(reader, "  Choice [1-6]", "1")
+	fmt.Println("    6) AWS Bedrock     (Claude, Nova, etc.)")
+	fmt.Println("    7) Other / OpenAI-compatible")
+	providerChoice := prompt(reader, "  Choice [1-7]", "1")
 
 	var providerName, secretEnvKey, modelName, baseURL string
 	switch providerChoice {
@@ -637,6 +638,38 @@ func runOnboard() error {
 		modelName = prompt(reader, "  Model name", "")
 		fmt.Println("  💡 No API key needed for LM Studio.")
 	case "6":
+		providerName = "bedrock"
+		secretEnvKey = "" // Bedrock uses multiple AWS credential keys, handled below.
+		awsRegion := prompt(reader, "  AWS Region", "us-east-1")
+		awsAccessKeyID := promptSecret(reader, "  AWS Access Key ID (Enter to skip for IRSA)")
+		var awsSecretAccessKey, awsSessionToken string
+		if awsAccessKeyID != "" {
+			awsSecretAccessKey = promptSecret(reader, "  AWS Secret Access Key")
+			awsSessionToken = promptSecret(reader, "  AWS Session Token (optional, Enter to skip)")
+		}
+		modelName = prompt(reader, "  Model ID", "anthropic.claude-sonnet-4-20250514-v1:0")
+		// Build the secret data map for Bedrock.
+		bedrockSecretData := map[string]string{"AWS_REGION": awsRegion}
+		if awsAccessKeyID != "" {
+			bedrockSecretData["AWS_ACCESS_KEY_ID"] = awsAccessKeyID
+			bedrockSecretData["AWS_SECRET_ACCESS_KEY"] = awsSecretAccessKey
+			if awsSessionToken != "" {
+				bedrockSecretData["AWS_SESSION_TOKEN"] = awsSessionToken
+			}
+		}
+		// Create the Bedrock secret immediately (uses multiple keys, not
+		// the single secretEnvKey/apiKey pattern used by other providers).
+		bedrockSecretName := fmt.Sprintf("%s-%s-key", instanceName, providerName)
+		fmt.Printf("  Creating secret %s...\n", bedrockSecretName)
+		_ = kubectl("delete", "secret", bedrockSecretName, "-n", namespace, "--ignore-not-found")
+		args := []string{"create", "secret", "generic", bedrockSecretName, "-n", namespace}
+		for k, v := range bedrockSecretData {
+			args = append(args, fmt.Sprintf("--from-literal=%s=%s", k, v))
+		}
+		if err := kubectl(args...); err != nil {
+			return fmt.Errorf("create Bedrock provider secret: %w", err)
+		}
+	case "7":
 		providerName = prompt(reader, "  Provider name", "custom")
 		secretEnvKey = prompt(reader, "  API key env var name (empty if none)", "API_KEY")
 		baseURL = prompt(reader, "  API base URL", "")
@@ -1829,6 +1862,7 @@ var providerSuggestions = []suggestion{
 	{"anthropic", "Anthropic (Claude)"},
 	{"azure-openai", "Azure OpenAI Service"},
 	{"ollama", "Ollama (local)"},
+	{"bedrock", "AWS Bedrock (Claude, Nova, etc.)"},
 	{"openai-compatible", "OpenAI-compatible endpoint"},
 }
 
@@ -1858,6 +1892,12 @@ var modelSuggestions = map[string][]suggestion{
 		{"gemini-2.5-pro", "Most capable, 1M ctx"},
 		{"gemini-2.5-flash", "Fast & efficient, 1M ctx"},
 		{"gemini-2.0-flash", "Previous gen fast, 1M ctx"},
+	},
+	"bedrock": {
+		{"anthropic.claude-sonnet-4-20250514-v1:0", "Claude Sonnet 4"},
+		{"anthropic.claude-haiku-4-5-20251001-v1:0", "Claude Haiku 4.5"},
+		{"amazon.nova-pro-v1:0", "Amazon Nova Pro"},
+		{"amazon.nova-lite-v1:0", "Amazon Nova Lite"},
 	},
 	"ollama": {
 		{"llama3", "Meta Llama 3 8B"},
@@ -1894,6 +1934,10 @@ func fetchProviderModels(provider, apiKey, baseURL string) ([]string, error) {
 	case "anthropic":
 		endpoint = "https://api.anthropic.com/v1/models"
 		authHeader = "" // Anthropic uses x-api-key
+	case "bedrock":
+		// Bedrock model listing requires the Bedrock service API and AWS credentials
+		// which the CLI may not have. Rely on static model suggestions.
+		return nil, fmt.Errorf("dynamic model listing not supported for Bedrock")
 	default:
 		if baseURL != "" {
 			endpoint = strings.TrimRight(baseURL, "/") + "/v1/models"
@@ -2199,6 +2243,10 @@ const (
 	wizStepWhatsAppQR                        // auto — stream QR from pod logs
 	wizStepDone                              // auto — show result
 	wizStepLMStudioAPIKeyRequired            // y/n: LM Studio requires API key?
+	wizStepAWSRegion                         // text: AWS region for Bedrock
+	wizStepAWSAccessKeyID                    // text: AWS Access Key ID
+	wizStepAWSSecretAccessKey                // text: AWS Secret Access Key
+	wizStepAWSSessionToken                   // text: AWS Session Token (optional)
 
 	// Persona wizard steps
 	wizStepPersonaPick                   // menu: select a persona pack
@@ -2241,6 +2289,12 @@ type wizardState struct {
 	heartbeatLabel  string // human-readable label (e.g. "every hour")
 	githubRepo      string // GitHub repo (owner/repo) for github-gitops skill
 	teamTask        string // Team-level instructions/objective
+
+	// AWS Bedrock credentials (collected via dedicated wizard steps).
+	awsRegion          string
+	awsAccessKeyID     string
+	awsSecretAccessKey string
+	awsSessionToken    string
 
 	// Dynamic model list (fetched from provider API when key is supplied).
 	fetchedModels []string // model IDs fetched from the API
@@ -8161,7 +8215,7 @@ func (m tuiModel) advanceWizard(val string) (tea.Model, tea.Cmd) {
 		}
 		w.instanceName = val
 		w.step = wizStepProvider
-		m.input.Placeholder = "Choice [1-6] (default: 1 — OpenAI)"
+		m.input.Placeholder = "Choice [1-7] (default: 1 — OpenAI)"
 		return m, nil
 
 	case wizStepProvider:
@@ -8196,6 +8250,12 @@ func (m tuiModel) advanceWizard(val string) (tea.Model, tea.Cmd) {
 			m.input.Placeholder = "LM Studio URL (default: http://localhost:1234/v1)"
 			return m, nil
 		case "6":
+			w.providerName = "bedrock"
+			w.secretEnvKey = ""
+			w.step = wizStepAWSRegion
+			m.input.Placeholder = "AWS Region (default: us-east-1)"
+			return m, nil
+		case "7":
 			w.providerName = "custom"
 			w.secretEnvKey = "API_KEY"
 			w.step = wizStepBaseURL
@@ -8250,6 +8310,49 @@ func (m tuiModel) advanceWizard(val string) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case wizStepAWSRegion:
+		if val == "" {
+			val = "us-east-1"
+		}
+		w.awsRegion = val
+		w.step = wizStepAWSAccessKeyID
+		m.input.Placeholder = "AWS Access Key ID (Enter to skip for IRSA/pod identity)"
+		return m, nil
+
+	case wizStepAWSAccessKeyID:
+		w.awsAccessKeyID = val
+		modelStep := wizStepModel
+		if w.personaMode {
+			modelStep = wizStepPersonaModel
+		}
+		if val == "" {
+			// No static credentials — IRSA or pod identity will be used.
+			w.step = modelStep
+			m.input.Placeholder = "Model ID (default: anthropic.claude-sonnet-4-20250514-v1:0)"
+			return m, nil
+		}
+		w.step = wizStepAWSSecretAccessKey
+		m.input.Placeholder = "AWS Secret Access Key"
+		m.input.EchoMode = textinput.EchoPassword
+		return m, nil
+
+	case wizStepAWSSecretAccessKey:
+		w.awsSecretAccessKey = val
+		m.input.EchoMode = textinput.EchoNormal
+		w.step = wizStepAWSSessionToken
+		m.input.Placeholder = "AWS Session Token (optional, Enter to skip)"
+		return m, nil
+
+	case wizStepAWSSessionToken:
+		w.awsSessionToken = val
+		if w.personaMode {
+			w.step = wizStepPersonaModel
+		} else {
+			w.step = wizStepModel
+		}
+		m.input.Placeholder = "Model ID (default: anthropic.claude-sonnet-4-20250514-v1:0)"
+		return m, nil
+
 	case wizStepAPIKey:
 		w.apiKey = val
 		// Fall back to environment variable if no key was pasted.
@@ -8292,6 +8395,8 @@ func (m tuiModel) advanceWizard(val string) (tea.Model, tea.Cmd) {
 			switch w.providerName {
 			case "anthropic":
 				val = "claude-sonnet-4-20250514"
+			case "bedrock":
+				val = "anthropic.claude-sonnet-4-20250514-v1:0"
 			case "ollama":
 				val = "llama3"
 			default:
@@ -8462,7 +8567,7 @@ func (m tuiModel) advanceWizard(val string) (tea.Model, tea.Cmd) {
 		}
 
 		w.step = wizStepPersonaProvider
-		m.input.Placeholder = "Choice [1-6] (default: 1 — OpenAI)"
+		m.input.Placeholder = "Choice [1-7] (default: 1 — OpenAI)"
 		return m, nil
 
 	case wizStepPersonaProvider:
@@ -8496,6 +8601,12 @@ func (m tuiModel) advanceWizard(val string) (tea.Model, tea.Cmd) {
 			m.input.Placeholder = "LM Studio URL (default: http://localhost:1234/v1)"
 			return m, nil
 		case "6":
+			w.providerName = "bedrock"
+			w.secretEnvKey = ""
+			w.step = wizStepAWSRegion
+			m.input.Placeholder = "AWS Region (default: us-east-1)"
+			return m, nil
+		case "7":
 			w.providerName = "custom"
 			w.secretEnvKey = "API_KEY"
 			w.step = wizStepPersonaBaseURL
@@ -8589,6 +8700,8 @@ func (m tuiModel) advanceWizard(val string) (tea.Model, tea.Cmd) {
 			switch w.providerName {
 			case "anthropic":
 				val = "claude-sonnet-4-20250514"
+			case "bedrock":
+				val = "anthropic.claude-sonnet-4-20250514-v1:0"
 			case "ollama":
 				val = "llama3"
 			default:
@@ -8863,11 +8976,31 @@ func (m tuiModel) renderWizardPanel(h int) string {
 		lines = append(lines, menuNumStyle.Render("  3)")+menuStyle.Render(" Azure OpenAI"))
 		lines = append(lines, menuNumStyle.Render("  4)")+menuStyle.Render(" Ollama          (local, no API key needed)"))
 		lines = append(lines, menuNumStyle.Render("  5)")+menuStyle.Render(" LM Studio       (local, optional API key)"))
-		lines = append(lines, menuNumStyle.Render("  6)")+menuStyle.Render(" Other / OpenAI-compatible"))
+		lines = append(lines, menuNumStyle.Render("  6)")+menuStyle.Render(" AWS Bedrock     (Claude, Nova, etc.)"))
+		lines = append(lines, menuNumStyle.Render("  7)")+menuStyle.Render(" Other / OpenAI-compatible"))
 
 	case wizStepBaseURL:
 		lines = append(lines, stepStyle.Render("  📋 Step 3/9 — AI Provider (continued)"))
 		lines = append(lines, labelStyle.Render("  Enter base URL:"))
+
+	case wizStepAWSRegion:
+		lines = append(lines, stepStyle.Render("  📋 Step 3/9 — AWS Bedrock"))
+		lines = append(lines, labelStyle.Render("  Enter your AWS region:"))
+		lines = append(lines, hintStyle.Render("  Press Enter for us-east-1"))
+
+	case wizStepAWSAccessKeyID:
+		lines = append(lines, stepStyle.Render("  📋 Step 3/9 — AWS Bedrock (continued)"))
+		lines = append(lines, labelStyle.Render("  Enter your AWS Access Key ID:"))
+		lines = append(lines, hintStyle.Render("  Press Enter to skip (for IRSA/pod identity)"))
+
+	case wizStepAWSSecretAccessKey:
+		lines = append(lines, stepStyle.Render("  📋 Step 3/9 — AWS Bedrock (continued)"))
+		lines = append(lines, labelStyle.Render("  Enter your AWS Secret Access Key:"))
+
+	case wizStepAWSSessionToken:
+		lines = append(lines, stepStyle.Render("  📋 Step 3/9 — AWS Bedrock (continued)"))
+		lines = append(lines, labelStyle.Render("  Enter your AWS Session Token (optional):"))
+		lines = append(lines, hintStyle.Render("  Press Enter to skip if using permanent credentials"))
 
 	case wizStepAPIKey:
 		lines = append(lines, stepStyle.Render("  📋 Step 3/9 — AI Provider (continued)"))
@@ -9194,7 +9327,8 @@ func (m tuiModel) renderPersonaWizardPanel(h int,
 		lines = append(lines, menuNumStyle.Render("  [3]")+menuStyle.Render(" Azure OpenAI")+hintStyle.Render(" — Enterprise Azure"))
 		lines = append(lines, menuNumStyle.Render("  [4]")+menuStyle.Render(" Ollama")+hintStyle.Render(" — Local models"))
 		lines = append(lines, menuNumStyle.Render("  [5]")+menuStyle.Render(" LM Studio")+hintStyle.Render(" — Local models"))
-		lines = append(lines, menuNumStyle.Render("  [6]")+menuStyle.Render(" Custom")+hintStyle.Render(" — Any OpenAI-compatible API"))
+		lines = append(lines, menuNumStyle.Render("  [6]")+menuStyle.Render(" AWS Bedrock")+hintStyle.Render(" — Claude, Nova, etc."))
+		lines = append(lines, menuNumStyle.Render("  [7]")+menuStyle.Render(" Custom")+hintStyle.Render(" — Any OpenAI-compatible API"))
 		lines = append(lines, "")
 
 	case wizStepPersonaBaseURL:
@@ -9559,7 +9693,28 @@ func tuiPersonaApply(ns string, w *wizardState) (string, error) {
 	secretName := fmt.Sprintf("%s-%s-key", w.personaPackName, w.providerName)
 
 	// 1. Create AI provider secret.
-	if w.apiKey != "" {
+	if w.providerName == "bedrock" && w.awsRegion != "" {
+		existing := &corev1.Secret{}
+		if err := k8sClient.Get(ctx, types.NamespacedName{Name: secretName, Namespace: ns}, existing); err == nil {
+			_ = k8sClient.Delete(ctx, existing)
+		}
+		secretData := map[string]string{"AWS_REGION": w.awsRegion}
+		if w.awsAccessKeyID != "" {
+			secretData["AWS_ACCESS_KEY_ID"] = w.awsAccessKeyID
+			secretData["AWS_SECRET_ACCESS_KEY"] = w.awsSecretAccessKey
+			if w.awsSessionToken != "" {
+				secretData["AWS_SESSION_TOKEN"] = w.awsSessionToken
+			}
+		}
+		secret := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: secretName, Namespace: ns},
+			StringData: secretData,
+		}
+		if err := k8sClient.Create(ctx, secret); err != nil {
+			return "", fmt.Errorf("create provider secret: %w", err)
+		}
+		msgs = append(msgs, tuiSuccessStyle.Render(fmt.Sprintf("✓ Created secret: %s", secretName)))
+	} else if w.apiKey != "" {
 		existing := &corev1.Secret{}
 		if err := k8sClient.Get(ctx, types.NamespacedName{Name: secretName, Namespace: ns}, existing); err == nil {
 			_ = k8sClient.Delete(ctx, existing)
@@ -9698,7 +9853,29 @@ func tuiOnboardApply(ns string, w *wizardState) (string, error) {
 	policyName := "default-policy"
 
 	// 1. Create AI provider secret.
-	if w.apiKey != "" {
+	if w.providerName == "bedrock" && w.awsRegion != "" {
+		// Bedrock uses multiple AWS credential keys in the secret.
+		existing := &corev1.Secret{}
+		if err := k8sClient.Get(ctx, types.NamespacedName{Name: providerSecretName, Namespace: ns}, existing); err == nil {
+			_ = k8sClient.Delete(ctx, existing)
+		}
+		secretData := map[string]string{"AWS_REGION": w.awsRegion}
+		if w.awsAccessKeyID != "" {
+			secretData["AWS_ACCESS_KEY_ID"] = w.awsAccessKeyID
+			secretData["AWS_SECRET_ACCESS_KEY"] = w.awsSecretAccessKey
+			if w.awsSessionToken != "" {
+				secretData["AWS_SESSION_TOKEN"] = w.awsSessionToken
+			}
+		}
+		secret := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: providerSecretName, Namespace: ns},
+			StringData: secretData,
+		}
+		if err := k8sClient.Create(ctx, secret); err != nil {
+			return "", fmt.Errorf("create provider secret: %w", err)
+		}
+		msgs = append(msgs, tuiSuccessStyle.Render(fmt.Sprintf("✓ Created secret: %s", providerSecretName)))
+	} else if w.apiKey != "" {
 		// Delete existing if present.
 		existing := &corev1.Secret{}
 		if err := k8sClient.Get(ctx, types.NamespacedName{Name: providerSecretName, Namespace: ns}, existing); err == nil {

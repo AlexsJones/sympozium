@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -8,6 +9,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
+	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime/types"
 )
 
 func TestGetEnv(t *testing.T) {
@@ -382,6 +387,28 @@ func TestProviderRouting(t *testing.T) {
 	callAnthropic(ctx, "k", anthropicSrv.URL, "m", "s", "t", nil)
 	if !anthropicCalled {
 		t.Error("expected Anthropic server to be called for anthropic provider")
+	}
+
+	// Verify Bedrock routing uses the mock client interface.
+	bedrockCalled := false
+	mockClient := &mockBedrockClient{
+		handler: func(ctx context.Context, input *bedrockruntime.ConverseInput) (*bedrockruntime.ConverseOutput, error) {
+			bedrockCalled = true
+			return &bedrockruntime.ConverseOutput{
+				Output: &types.ConverseOutputMemberMessage{
+					Value: types.Message{
+						Role:    types.ConversationRoleAssistant,
+						Content: []types.ContentBlock{&types.ContentBlockMemberText{Value: "ok"}},
+					},
+				},
+				StopReason: types.StopReasonEndTurn,
+				Usage:      &types.TokenUsage{InputTokens: aws.Int32(1), OutputTokens: aws.Int32(1)},
+			}, nil
+		},
+	}
+	callBedrockWithClient(ctx, mockClient, "m", "s", "t", nil)
+	if !bedrockCalled {
+		t.Error("expected Bedrock mock client to be called")
 	}
 }
 

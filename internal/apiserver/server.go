@@ -16,6 +16,9 @@ import (
 	"strings"
 	"time"
 
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	awscredentials "github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/bedrock"
 	"github.com/go-logr/logr"
 	"github.com/gorilla/websocket"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -147,6 +150,7 @@ func (s *Server) buildMux(frontendFS fs.FS, token string) http.Handler {
 	// Provider discovery endpoints (model listing, node discovery)
 	mux.HandleFunc("GET /api/v1/providers/nodes", s.listProviderNodes)
 	mux.HandleFunc("GET /api/v1/providers/models", s.proxyProviderModels)
+	mux.HandleFunc("POST /api/v1/providers/bedrock/models", s.listBedrockModels)
 
 	// Cluster info
 	mux.HandleFunc("GET /api/v1/cluster", s.getClusterInfo)
@@ -460,6 +464,10 @@ type CreateInstanceRequest struct {
 	BaseURL           string                          `json:"baseURL,omitempty"`
 	SecretName        string                          `json:"secretName,omitempty"`
 	APIKey            string                          `json:"apiKey,omitempty"`
+	AWSRegion         string                          `json:"awsRegion,omitempty"`
+	AWSAccessKeyID    string                          `json:"awsAccessKeyId,omitempty"`
+	AWSSecretAccessKey string                         `json:"awsSecretAccessKey,omitempty"`
+	AWSSessionToken   string                          `json:"awsSessionToken,omitempty"`
 	PolicyRef         string                          `json:"policyRef,omitempty"`
 	Skills            []sympoziumv1alpha1.SkillRef    `json:"skills,omitempty"`
 	Channels          []sympoziumv1alpha1.ChannelSpec `json:"channels,omitempty"`
@@ -513,6 +521,34 @@ func (s *Server) createInstance(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(req.NodeSelector) > 0 {
 		inst.Spec.Agents.Default.NodeSelector = req.NodeSelector
+	}
+
+	// Bedrock: create a multi-key secret with AWS credentials.
+	if req.Provider == "bedrock" && req.AWSRegion != "" && req.SecretName == "" {
+		req.SecretName = defaultProviderSecretName(req.Name, req.Provider)
+		secretData := map[string]string{"AWS_REGION": req.AWSRegion}
+		if req.AWSAccessKeyID != "" {
+			secretData["AWS_ACCESS_KEY_ID"] = req.AWSAccessKeyID
+			secretData["AWS_SECRET_ACCESS_KEY"] = req.AWSSecretAccessKey
+			if req.AWSSessionToken != "" {
+				secretData["AWS_SESSION_TOKEN"] = req.AWSSessionToken
+			}
+		}
+		secret := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      req.SecretName,
+				Namespace: ns,
+				Labels: map[string]string{
+					"app.kubernetes.io/managed-by": "sympozium",
+					"sympozium.ai/instance":        req.Name,
+				},
+			},
+			StringData: secretData,
+		}
+		if err := createOrUpdateSecret(r.Context(), s.client, secret); err != nil {
+			http.Error(w, "failed to create credentials secret: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
 	}
 
 	if req.Provider != "" && req.APIKey != "" && req.SecretName == "" {
@@ -1207,12 +1243,16 @@ func (s *Server) getPersonaPack(w http.ResponseWriter, r *http.Request) {
 
 // PatchPersonaPackRequest represents a partial update to a PersonaPack.
 type PatchPersonaPackRequest struct {
-	Enabled           *bool                        `json:"enabled,omitempty"`
-	Provider          string                       `json:"provider,omitempty"`
-	SecretName        string                       `json:"secretName,omitempty"`
-	APIKey            string                       `json:"apiKey,omitempty"`
-	Model             string                       `json:"model,omitempty"`
-	BaseURL           string                       `json:"baseURL,omitempty"`
+	Enabled            *bool                        `json:"enabled,omitempty"`
+	Provider           string                       `json:"provider,omitempty"`
+	SecretName         string                       `json:"secretName,omitempty"`
+	APIKey             string                       `json:"apiKey,omitempty"`
+	AWSRegion          string                       `json:"awsRegion,omitempty"`
+	AWSAccessKeyID     string                       `json:"awsAccessKeyId,omitempty"`
+	AWSSecretAccessKey string                       `json:"awsSecretAccessKey,omitempty"`
+	AWSSessionToken    string                       `json:"awsSessionToken,omitempty"`
+	Model              string                       `json:"model,omitempty"`
+	BaseURL            string                       `json:"baseURL,omitempty"`
 	Channels          []string                     `json:"channels,omitempty"`
 	ChannelConfigs    map[string]string            `json:"channelConfigs,omitempty"`
 	PolicyRef         string                       `json:"policyRef,omitempty"`
@@ -1250,6 +1290,34 @@ func (s *Server) patchPersonaPack(w http.ResponseWriter, r *http.Request) {
 
 	if req.Enabled != nil {
 		pp.Spec.Enabled = *req.Enabled
+	}
+
+	// Bedrock: create a multi-key secret with AWS credentials.
+	if req.Provider == "bedrock" && req.AWSRegion != "" && req.SecretName == "" {
+		req.SecretName = defaultProviderSecretName(name, req.Provider)
+		secretData := map[string]string{"AWS_REGION": req.AWSRegion}
+		if req.AWSAccessKeyID != "" {
+			secretData["AWS_ACCESS_KEY_ID"] = req.AWSAccessKeyID
+			secretData["AWS_SECRET_ACCESS_KEY"] = req.AWSSecretAccessKey
+			if req.AWSSessionToken != "" {
+				secretData["AWS_SESSION_TOKEN"] = req.AWSSessionToken
+			}
+		}
+		secret := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      req.SecretName,
+				Namespace: ns,
+				Labels: map[string]string{
+					"app.kubernetes.io/managed-by": "sympozium",
+					"sympozium.ai/persona-pack":    name,
+				},
+			},
+			StringData: secretData,
+		}
+		if err := createOrUpdateSecret(r.Context(), s.client, secret); err != nil {
+			http.Error(w, "failed to create credentials secret: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
 	}
 
 	// Auto-create a K8s Secret when the user provides a raw API key.
@@ -1472,6 +1540,28 @@ func providerEnvKey(provider string) string {
 	default:
 		return "PROVIDER_API_KEY"
 	}
+}
+
+// createOrUpdateSecret creates a secret, or updates it if it already exists.
+func createOrUpdateSecret(ctx context.Context, c client.Client, secret *corev1.Secret) error {
+	createErr := c.Create(ctx, secret)
+	if createErr == nil {
+		return nil
+	}
+	if !k8serrors.IsAlreadyExists(createErr) {
+		return createErr
+	}
+	existing := &corev1.Secret{}
+	if err := c.Get(ctx, types.NamespacedName{Name: secret.Name, Namespace: secret.Namespace}, existing); err != nil {
+		return err
+	}
+	if existing.Data == nil {
+		existing.Data = map[string][]byte{}
+	}
+	for k, v := range secret.StringData {
+		existing.Data[k] = []byte(v)
+	}
+	return c.Update(ctx, existing)
 }
 
 func defaultProviderSecretName(resourceName, provider string) string {
@@ -2454,6 +2544,73 @@ func (s *Server) proxyProviderModels(w http.ResponseWriter, r *http.Request) {
 
 	// Parse models from response.
 	models := parseProviderModels(body)
+
+	writeJSON(w, ProviderModelsResponse{
+		Models: models,
+		Source: "live",
+	})
+}
+
+// listBedrockModels uses AWS credentials to list available Bedrock foundation models.
+func (s *Server) listBedrockModels(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Region          string `json:"region"`
+		AccessKeyID     string `json:"accessKeyId"`
+		SecretAccessKey  string `json:"secretAccessKey"`
+		SessionToken    string `json:"sessionToken,omitempty"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.Region == "" {
+		req.Region = "us-east-1"
+	}
+	if req.AccessKeyID == "" || req.SecretAccessKey == "" {
+		http.Error(w, "accessKeyId and secretAccessKey are required", http.StatusBadRequest)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	cfg, err := awsconfig.LoadDefaultConfig(ctx,
+		awsconfig.WithRegion(req.Region),
+		awsconfig.WithCredentialsProvider(awscredentials.NewStaticCredentialsProvider(
+			req.AccessKeyID, req.SecretAccessKey, req.SessionToken,
+		)),
+	)
+	if err != nil {
+		http.Error(w, "failed to configure AWS: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	bedrockClient := bedrock.NewFromConfig(cfg)
+	output, err := bedrockClient.ListFoundationModels(ctx, &bedrock.ListFoundationModelsInput{})
+	if err != nil {
+		http.Error(w, "failed to list Bedrock models: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+
+	var models []string
+	for _, m := range output.ModelSummaries {
+		if m.ModelId == nil {
+			continue
+		}
+		// Only include models that support text output (conversational).
+		hasText := false
+		for _, mod := range m.OutputModalities {
+			if mod == "TEXT" {
+				hasText = true
+				break
+			}
+		}
+		if !hasText {
+			continue
+		}
+		models = append(models, *m.ModelId)
+	}
+	sort.Strings(models)
 
 	writeJSON(w, ProviderModelsResponse{
 		Models: models,

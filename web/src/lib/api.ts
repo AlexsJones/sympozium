@@ -630,6 +630,10 @@ export const api = {
       baseURL?: string;
       secretName?: string;
       apiKey?: string;
+      awsRegion?: string;
+      awsAccessKeyId?: string;
+      awsSecretAccessKey?: string;
+      awsSessionToken?: string;
       policyRef?: string;
       skills?: SkillRef[];
       channels?: ChannelSpec[];
@@ -812,6 +816,16 @@ export const api = {
       apiFetch<ProviderModelsResponse>(
         `/api/v1/providers/models?baseURL=${encodeURIComponent(baseURL)}`,
       ),
+    bedrockModels: (data: {
+      region: string;
+      accessKeyId: string;
+      secretAccessKey: string;
+      sessionToken?: string;
+    }) =>
+      apiFetch<ProviderModelsResponse>("/api/v1/providers/bedrock/models", {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
   },
 
   githubAuth: {

@@ -23,6 +23,13 @@ const ANTHROPIC_MODELS = [
 
 const AZURE_MODELS = ["gpt-4o", "gpt-4", "gpt-35-turbo"];
 
+const BEDROCK_MODELS = [
+  "anthropic.claude-sonnet-4-20250514-v1:0",
+  "anthropic.claude-haiku-4-5-20251001-v1:0",
+  "amazon.nova-pro-v1:0",
+  "amazon.nova-lite-v1:0",
+];
+
 // ── Fetchers ─────────────────────────────────────────────────────────────────
 
 async function fetchOpenAIModels(apiKey: string): Promise<string[]> {
@@ -61,27 +68,58 @@ async function fetchProviderModelsViaProxy(baseURL: string): Promise<string[]> {
   return res.models;
 }
 
+async function fetchBedrockModels(creds: BedrockCredentials): Promise<string[]> {
+  const res = await api.providers.bedrockModels({
+    region: creds.region,
+    accessKeyId: creds.accessKeyId,
+    secretAccessKey: creds.secretAccessKey,
+    sessionToken: creds.sessionToken || undefined,
+  });
+  return res.models;
+}
+
+// ── Types ────────────────────────────────────────────────────────────────────
+
+export interface BedrockCredentials {
+  region: string;
+  accessKeyId: string;
+  secretAccessKey: string;
+  sessionToken?: string;
+}
+
 // ── Hook ─────────────────────────────────────────────────────────────────────
 
 /**
  * Fetches the model list for a given provider + API key.
  * For local providers (ollama, custom) with a baseURL, proxies through the backend.
+ * For Bedrock, proxies through the backend with AWS credentials.
  * Falls back to a curated static list if the API call fails or no key is given.
  */
-export function useModelList(provider: string, apiKey: string, baseURL?: string) {
+export function useModelList(
+  provider: string,
+  apiKey: string,
+  baseURL?: string,
+  bedrockCredentials?: BedrockCredentials,
+) {
   const isLocalProvider = provider === "ollama" || provider === "lm-studio" || provider === "custom";
   const canFetchLocal = isLocalProvider && !!baseURL;
   const canFetchCloud = !!apiKey && (provider === "openai" || provider === "anthropic");
+  const canFetchBedrock =
+    provider === "bedrock" &&
+    !!bedrockCredentials?.region &&
+    !!bedrockCredentials?.accessKeyId &&
+    !!bedrockCredentials?.secretAccessKey;
 
   const query = useQuery<string[]>({
-    queryKey: ["provider-models", provider, apiKey, baseURL],
+    queryKey: ["provider-models", provider, apiKey, baseURL, bedrockCredentials?.region, bedrockCredentials?.accessKeyId],
     queryFn: async () => {
       if (canFetchLocal) return fetchProviderModelsViaProxy(baseURL!);
+      if (canFetchBedrock) return fetchBedrockModels(bedrockCredentials!);
       if (provider === "openai" && apiKey) return fetchOpenAIModels(apiKey);
       if (provider === "anthropic" && apiKey) return fetchAnthropicModels(apiKey);
       throw new Error("no-fetch");
     },
-    enabled: canFetchLocal || canFetchCloud,
+    enabled: canFetchLocal || canFetchCloud || canFetchBedrock,
     staleTime: 5 * 60 * 1000, // cache 5 min
     retry: false,
   });
@@ -95,6 +133,8 @@ export function useModelList(provider: string, apiKey: string, baseURL?: string)
         return ANTHROPIC_MODELS;
       case "azure-openai":
         return AZURE_MODELS;
+      case "bedrock":
+        return BEDROCK_MODELS;
       default:
         return [];
     }
