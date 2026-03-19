@@ -62,7 +62,9 @@ kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/
 
 Deploy the Sympozium control plane:
 ```bash
-helm install sympozium ./charts/sympozium
+helm repo add sympozium https://deploy.sympozium.ai/charts
+helm repo update
+helm install sympozium sympozium/sympozium
 ```
 
 See [`charts/sympozium/values.yaml`](charts/sympozium/values.yaml) for configuration options.

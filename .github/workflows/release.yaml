@@ -160,7 +160,7 @@ jobs:
           ref: main
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Sync CRDs and bump appVersion
+      - name: Sync CRDs and bump chart version
         run: |
           TAG="${GITHUB_REF_NAME}"
           VERSION="${TAG#v}"
@@ -169,10 +169,11 @@ jobs:
           mkdir -p charts/sympozium/crds
           cp config/crd/bases/*.yaml charts/sympozium/crds/
 
-          echo "Bumping Chart.yaml appVersion to ${VERSION}..."
+          echo "Bumping Chart.yaml version and appVersion to ${VERSION}..."
+          sed -i "s/^version:.*/version: ${VERSION}/" charts/sympozium/Chart.yaml
           sed -i "s/^appVersion:.*/appVersion: \"${VERSION}\"/" charts/sympozium/Chart.yaml
 
-          echo "Done. appVersion=${VERSION}"
+          echo "Done. version=${VERSION}, appVersion=${VERSION}"
 
       - name: Commit and push
         run: |
@@ -182,6 +183,27 @@ jobs:
           git diff --cached --quiet && echo "No chart changes" && exit 0
           git commit -m "chore: sync Helm chart for ${GITHUB_REF_NAME}"
           git push origin main
+
+  # ── Publish Helm chart to GitHub Release ─────────────────────────────────────
+  publish-helm-chart:
+    name: Publish Helm chart package
+    needs: release-helm-chart
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+
+      - name: Package chart
+        run: helm package charts/sympozium --destination .helm-packages
+
+      - name: Upload chart to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: .helm-packages/sympozium-*.tgz
 
   # ── Update Homebrew tap ─────────────────────────────────────────────────────
   update-homebrew:

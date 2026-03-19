@@ -9,6 +9,7 @@ on:
       - 'index.html'
       - 'install.sh'
       - 'CNAME'
+      - 'charts/**'
   workflow_dispatch:
 
 permissions:
@@ -35,6 +36,27 @@ jobs:
 
       - name: Build docs site
         run: mkdocs build --site-dir _site/docs
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+
+      - name: Build Helm repo index
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p _site/charts .helm-packages
+          # Download chart packages from all GitHub releases
+          for tag in $(gh release list -R sympozium-ai/sympozium -L 100 --json tagName -q '.[].tagName'); do
+            gh release download "$tag" -R sympozium-ai/sympozium -p 'sympozium-*.tgz' -D .helm-packages 2>/dev/null || true
+          done
+          # Generate index.yaml and serve chart packages from Pages
+          if ls .helm-packages/*.tgz 1>/dev/null 2>&1; then
+            helm repo index .helm-packages --url https://deploy.sympozium.ai/charts
+            cp .helm-packages/index.yaml _site/charts/
+            cp .helm-packages/*.tgz _site/charts/
+          else
+            echo "No chart packages found in releases — skipping Helm repo index"
+          fi
 
       - name: Assemble root site
         run: |
