@@ -71,6 +71,25 @@ spec:
       ports:
         - protocol: TCP
           port: 11434
+    # Allow memory server (same namespace, port 8080)
+    - to:
+        - podSelector:
+            matchLabels:
+              sympozium.ai/component: memory
+      ports:
+        - protocol: TCP
+          port: 8080
+    # Allow OTel collector (cross-namespace, gRPC port 4317)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: sympozium-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: sympozium-otel-collector
+      ports:
+        - protocol: TCP
+          port: 4317
 ---
 # Same egress rules for server-mode agent pods (Deployments)
 apiVersion: networking.k8s.io/v1
@@ -142,6 +161,25 @@ spec:
       ports:
         - protocol: TCP
           port: 11434
+    # Allow memory server (same namespace, port 8080)
+    - to:
+        - podSelector:
+            matchLabels:
+              sympozium.ai/component: memory
+      ports:
+        - protocol: TCP
+          port: 8080
+    # Allow OTel collector (cross-namespace, gRPC port 4317)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: sympozium-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: sympozium-otel-collector
+      ports:
+        - protocol: TCP
+          port: 4317
 ---
 # Deny-all baseline for channel pods (Telegram, Slack, Discord, etc.)
 # Channel pods need egress to deliver responses back to their platform APIs.
