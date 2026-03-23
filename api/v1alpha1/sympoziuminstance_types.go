@@ -193,6 +193,34 @@ type ChannelSpec struct {
 	// ConfigRef references the secret containing channel credentials.
 	// Optional for channels that use alternative authentication (e.g. WhatsApp QR pairing).
 	ConfigRef SecretRef `json:"configRef,omitempty"`
+
+	// AccessControl restricts which users and chats can interact via this channel.
+	// When nil, all users and chats are allowed.
+	// +optional
+	AccessControl *ChannelAccessControl `json:"accessControl,omitempty"`
+}
+
+// ChannelAccessControl restricts which users and chats can interact via a channel.
+type ChannelAccessControl struct {
+	// AllowedSenders restricts interaction to these sender IDs.
+	// When non-empty, only listed senders can trigger agent runs.
+	// +optional
+	AllowedSenders []string `json:"allowedSenders,omitempty"`
+
+	// DeniedSenders blocks these sender IDs from interacting.
+	// Overrides AllowedSenders when a sender appears in both lists.
+	// +optional
+	DeniedSenders []string `json:"deniedSenders,omitempty"`
+
+	// AllowedChats restricts interaction to these chat/group IDs.
+	// When non-empty, only messages from listed chats are accepted.
+	// +optional
+	AllowedChats []string `json:"allowedChats,omitempty"`
+
+	// DenyMessage is the text sent back to rejected senders.
+	// When empty, rejected messages are silently dropped.
+	// +optional
+	DenyMessage string `json:"denyMessage,omitempty"`
 }
 
 // AgentsSpec defines agent configuration.

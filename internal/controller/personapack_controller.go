@@ -294,6 +294,11 @@ func (r *PersonaPackReconciler) reconcilePersona(
 						cs.ConfigRef = sympoziumv1alpha1.SecretRef{Secret: secretName}
 					}
 				}
+				if pack.Spec.ChannelAccessControl != nil {
+					if ac, ok := pack.Spec.ChannelAccessControl[ch]; ok {
+						cs.AccessControl = ac
+					}
+				}
 				channelSpecs = append(channelSpecs, cs)
 			}
 			existingInst.Spec.Channels = channelSpecs
@@ -451,6 +456,12 @@ func (r *PersonaPackReconciler) buildInstance(
 				cs.ConfigRef = sympoziumv1alpha1.SecretRef{
 					Secret: secretName,
 				}
+			}
+		}
+		// Apply channel access control from the pack if configured.
+		if pack.Spec.ChannelAccessControl != nil {
+			if ac, ok := pack.Spec.ChannelAccessControl[ch]; ok {
+				cs.AccessControl = ac
 			}
 		}
 		inst.Spec.Channels = append(inst.Spec.Channels, cs)

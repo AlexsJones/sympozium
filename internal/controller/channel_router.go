@@ -160,6 +160,18 @@ func (cr *ChannelRouter) handleInbound(ctx context.Context, event *eventbus.Even
 		return
 	}
 
+	// Enforce channel access control before creating an AgentRun.
+	if allowed, denyMsg := checkChannelAccess(inst, &msg); !allowed {
+		span.SetAttributes(attribute.Bool("sympozium.access.denied", true))
+		cr.Log.Info("Channel message denied by access control",
+			"instance", msg.InstanceName, "channel", msg.Channel,
+			"senderId", msg.SenderID, "chatId", msg.ChatID)
+		if denyMsg != "" {
+			cr.sendDenialResponse(ctx, msg, denyMsg)
+		}
+		return
+	}
+
 	// Resolve model configuration from the SympoziumInstance (same logic as TUI).
 	provider := resolveProvider(inst)
 	authSecret := resolveAuthSecret(inst)
@@ -337,4 +349,69 @@ func truncateForLog(s string, n int) string {
 		return s
 	}
 	return s[:n] + "..."
+}
+
+// checkChannelAccess evaluates access control rules for the channel that
+// produced this message. Returns (allowed, denyMessage).
+func checkChannelAccess(
+	inst *sympoziumv1alpha1.SympoziumInstance,
+	msg *channelpkg.InboundMessage,
+) (bool, string) {
+	var ch *sympoziumv1alpha1.ChannelSpec
+	for i := range inst.Spec.Channels {
+		if inst.Spec.Channels[i].Type == msg.Channel {
+			ch = &inst.Spec.Channels[i]
+			break
+		}
+	}
+	if ch == nil || ch.AccessControl == nil {
+		return true, "" // no rules = allow all
+	}
+	ac := ch.AccessControl
+
+	// Chat allowlist.
+	if len(ac.AllowedChats) > 0 && !stringSliceContains(ac.AllowedChats, msg.ChatID) {
+		return false, ac.DenyMessage
+	}
+
+	// Sender allowlist.
+	if len(ac.AllowedSenders) > 0 && !stringSliceContains(ac.AllowedSenders, msg.SenderID) {
+		return false, ac.DenyMessage
+	}
+
+	// Sender denylist (overrides allowlist).
+	if len(ac.DeniedSenders) > 0 && stringSliceContains(ac.DeniedSenders, msg.SenderID) {
+		return false, ac.DenyMessage
+	}
+
+	return true, ""
+}
+
+// sendDenialResponse sends a denial message back through the originating channel.
+func (cr *ChannelRouter) sendDenialResponse(ctx context.Context, msg channelpkg.InboundMessage, text string) {
+	outMsg := channelpkg.OutboundMessage{
+		Channel: msg.Channel,
+		ChatID:  msg.ChatID,
+		Text:    text,
+	}
+	outEvent, err := eventbus.NewEvent(eventbus.TopicChannelMessageSend, map[string]string{
+		"instanceName": msg.InstanceName,
+		"channel":      msg.Channel,
+	}, outMsg)
+	if err != nil {
+		cr.Log.Error(err, "failed to create denial response event")
+		return
+	}
+	if err := cr.EventBus.Publish(ctx, eventbus.TopicChannelMessageSend, outEvent); err != nil {
+		cr.Log.Error(err, "failed to publish denial response")
+	}
+}
+
+func stringSliceContains(list []string, val string) bool {
+	for _, v := range list {
+		if v == val {
+			return true
+		}
+	}
+	return false
 }

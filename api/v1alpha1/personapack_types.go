@@ -70,6 +70,11 @@ type PersonaPackSpec struct {
 	// with this directive so every agent works toward the same goal.
 	// +optional
 	TaskOverride string `json:"taskOverride,omitempty"`
+
+	// ChannelAccessControl maps channel types to their access control rules.
+	// Propagated to generated instances during reconciliation.
+	// +optional
+	ChannelAccessControl map[string]*ChannelAccessControl `json:"channelAccessControl,omitempty"`
 }
 
 // PersonaSpec defines a single agent persona within a PersonaPack.

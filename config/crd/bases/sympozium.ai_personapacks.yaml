@@ -89,6 +89,42 @@ spec:
                 description: Category classifies this persona pack (e.g. "platform",
                   "security", "devops").
                 type: string
+              channelAccessControl:
+                additionalProperties:
+                  description: ChannelAccessControl restricts which users and chats
+                    can interact via a channel.
+                  properties:
+                    allowedChats:
+                      description: |-
+                        AllowedChats restricts interaction to these chat/group IDs.
+                        When non-empty, only messages from listed chats are accepted.
+                      items:
+                        type: string
+                      type: array
+                    allowedSenders:
+                      description: |-
+                        AllowedSenders restricts interaction to these sender IDs.
+                        When non-empty, only listed senders can trigger agent runs.
+                      items:
+                        type: string
+                      type: array
+                    deniedSenders:
+                      description: |-
+                        DeniedSenders blocks these sender IDs from interacting.
+                        Overrides AllowedSenders when a sender appears in both lists.
+                      items:
+                        type: string
+                      type: array
+                    denyMessage:
+                      description: |-
+                        DenyMessage is the text sent back to rejected senders.
+                        When empty, rejected messages are silently dropped.
+                      type: string
+                  type: object
+                description: |-
+                  ChannelAccessControl maps channel types to their access control rules.
+                  Propagated to generated instances during reconciliation.
+                type: object
               channelConfigs:
                 additionalProperties:
                   type: string

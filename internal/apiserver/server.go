@@ -1261,8 +1261,9 @@ type PatchPersonaPackRequest struct {
 	PolicyRef          string                       `json:"policyRef,omitempty"`
 	HeartbeatInterval  string                       `json:"heartbeatInterval,omitempty"`
 	SkillParams        map[string]map[string]string `json:"skillParams,omitempty"`
-	GithubToken        string                       `json:"githubToken,omitempty"`
-	Personas           []PersonaPatchSpec           `json:"personas,omitempty"`
+	GithubToken          string                                                  `json:"githubToken,omitempty"`
+	Personas             []PersonaPatchSpec                                      `json:"personas,omitempty"`
+	ChannelAccessControl map[string]*sympoziumv1alpha1.ChannelAccessControl      `json:"channelAccessControl,omitempty"`
 }
 
 // PersonaPatchSpec allows partial updates to individual personas by name.
@@ -1401,6 +1402,10 @@ func (s *Server) patchPersonaPack(w http.ResponseWriter, r *http.Request) {
 
 	if req.ChannelConfigs != nil {
 		pp.Spec.ChannelConfigs = req.ChannelConfigs
+	}
+
+	if len(req.ChannelAccessControl) > 0 {
+		pp.Spec.ChannelAccessControl = req.ChannelAccessControl
 	}
 
 	if req.PolicyRef != "" {
