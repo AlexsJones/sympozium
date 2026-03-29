@@ -80,6 +80,8 @@ Sympozium takes the agentic control model and rebuilds it on Kubernetes primitiv
 | [Writing Skills](guides/writing-skills.md) | Build your own SkillPacks |
 | [Writing Tools](guides/writing-tools.md) | Add new tools to the agent runner |
 | [Ollama & Local Inference](guides/ollama.md) | Node-based and in-cluster Ollama setup with auto-discovery |
+| [LM Studio](guides/lm-studio.md) | Local GGUF model serving with desktop GUI |
+| [AWS Bedrock](guides/aws-bedrock.md) | Amazon Bedrock setup with Claude, Nova, and other foundation models |
 
 ---
 
