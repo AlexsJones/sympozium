@@ -19,7 +19,7 @@ Amazon Bedrock provides access to foundation models from Amazon (Nova), Anthropi
 2. Go to **Model access** in the left sidebar
 3. Click **Manage model access**
 4. Select the models you want to use:
-   - **Anthropic Claude**: `anthropic.claude-3-sonnet-20240229-v1:0`, `anthropic.claude-3-haiku-20240307-v1:0`, etc.
+   - **Anthropic Claude**: `anthropic.claude-sonnet-4-20250514-v1:0`, `anthropic.claude-haiku-4-5-20251001-v1:0`, etc.
    - **Amazon Nova**: `amazon.nova-pro-v1:0`, `amazon.nova-lite-v1:0`
 5. Check the boxes and click **Confirm changes**
 
@@ -53,6 +53,7 @@ You have three options for authentication:
         "bedrock:ListFoundationModels",
         "bedrock:GetFoundationModel",
         "bedrock:Converse",
+        "bedrock:ConverseStream",
         "bedrock:InvokeModel"
       ],
       "Resource": "*"
@@ -110,6 +111,8 @@ If running on EC2/EKS nodes with an instance profile:
 
 ## Step 3: Create Kubernetes Secret
 
+The `AWS_REGION` key in the secret tells Sympozium which Bedrock region to use. This must match the region where you enabled model access.
+
 ### For IAM User Credentials
 ```bash
 kubectl create secret generic my-instance-bedrock-key -n sympozium \
@@ -151,17 +154,20 @@ metadata:
   name: my-bedrock-agent
   namespace: sympozium
 spec:
-  provider: bedrock
-  model: anthropic.claude-3-sonnet-20240229-v1:0
-  region: us-east-1
-  secretRef:
-    name: my-instance-bedrock-key
+  authRefs:
+    - provider: bedrock
+      secret: my-instance-bedrock-key
+  agents:
+    default:
+      model: anthropic.claude-sonnet-4-20250514-v1:0
   # Optional: Enable specific skills
   skills:
-    - name: k8s-ops
+    - skillPackRef: k8s-ops
   # Optional: Channel bindings (Telegram, Slack, etc.)
   channels:
-    - name: my-telegram-channel
+    - type: telegram
+      configRef:
+        secret: my-telegram-creds
 ```
 
 ## Available Bedrock Models
@@ -170,20 +176,19 @@ Sympozium supports all text-capable foundation models. Common options:
 
 | Provider | Model ID | Description |
 |----------|----------|-------------|
-| Anthropic | `anthropic.claude-3-sonnet-20240229-v1:0` | Balanced performance/cost |
-| Anthropic | `anthropic.claude-3-haiku-20240307-v1:0` | Fast, lightweight |
-| Anthropic | `anthropic.claude-3-opus-20240229-v1:0` | Most powerful |
-| Anthropic | `anthropic.claude-3.5-sonnet-20241022-v2:0` | Latest Claude 3.5 |
+| Anthropic | `anthropic.claude-sonnet-4-20250514-v1:0` | Best balanced performance |
+| Anthropic | `anthropic.claude-haiku-4-5-20251001-v1:0` | Fast and cost-efficient |
+| Anthropic | `anthropic.claude-3-5-sonnet-20241022-v2:0` | Claude 3.5 Sonnet |
 | Amazon | `amazon.nova-pro-v1:0` | Amazon's Nova Pro |
 | Amazon | `amazon.nova-lite-v1:0` | Amazon's Nova Lite |
 
-### Listing Available Models
-```bash
-# Via API (requires credentials in environment)
-export AWS_REGION=us-east-1
-export AWS_ACCESS_KEY_ID=<your-key>
-export AWS_SECRET_ACCESS_KEY=<your-secret>
+Run `aws bedrock list-foundation-models` to see all models available in your region.
 
+### Listing Available Models via Sympozium API
+
+This endpoint is exposed by the Sympozium API server inside the cluster:
+
+```bash
 curl -X POST http://<apiserver>/api/v1/providers/bedrock/models \
   -H "Content-Type: application/json" \
   -d '{"region": "us-east-1", "accessKeyId": "<key>", "secretAccessKey": "<secret>"}'
@@ -198,7 +203,7 @@ Bedrock's Converse API supports native tool calling. Sympozium automatically:
 
 Example workflow:
 ```
-User task → Model generates tool_use block → Sympozium executes tool → 
+User task → Model generates tool_use block → Sympozium executes tool →
 Model receives tool_result → Final response
 ```
 
@@ -207,27 +212,27 @@ Model receives tool_result → Final response
 ### AccessDeniedException
 - Verify the model is approved in Bedrock Console
 - Check IAM permissions include `bedrock:Converse` and `bedrock:ListFoundationModels`
-- Ensure region matches where models are provisioned
+- Ensure the `AWS_REGION` in your secret matches where models are provisioned
 
 ### ModelNotAccessibleException
 - Some models require explicit opt-in in specific regions
 - Try a different region or model ID
 
 ### Credentials not discovered
-- Verify environment variables: `AWS_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`
+- Verify secret contains: `AWS_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`
 - For IRSA, check service account annotations and IAM role trust policy
-- Ensure AWS SDK can access the credentials (check pod logs)
+- Check agent pod logs: `kubectl logs -l sympozium.ai/instance=<name> -n sympozium`
 
 ### Region mismatch
 - Bedrock models are region-specific
-- Ensure `region` in SympoziumInstance matches where you approved model access
+- Ensure `AWS_REGION` in your Kubernetes secret matches where you approved model access
 
 ## Best Practices
 
 1. **Use IRSA for production**: Avoid long-lived access keys
 2. **Least privilege IAM**: Restrict to specific model ARNs when possible
-3. **Model selection**: Start with `anthropic.claude-3-haiku` for cost efficiency
-4. **Region consistency**: Keep region consistent across AWS config and model approval
+3. **Model selection**: Start with `anthropic.claude-haiku-4-5-20251001-v1:0` for cost efficiency
+4. **Region consistency**: Keep `AWS_REGION` in your secret consistent with where you approved model access
 5. **Monitor costs**: Bedrock charges per input/output token
 
 ## Example: Full Deployment
@@ -254,11 +259,17 @@ metadata:
   name: bedrock-assistant
   namespace: sympozium
 spec:
-  provider: bedrock
-  model: anthropic.claude-3-haiku-20240307-v1:0
-  region: us-east-1
-  secretRef:
-    name: bedrock-agent-key
+  authRefs:
+    - provider: bedrock
+      secret: bedrock-agent-key
+  agents:
+    default:
+      model: anthropic.claude-sonnet-4-20250514-v1:0
+  skills:
+    - skillPackRef: k8s-ops
+  memory:
+    enabled: true
+    maxSizeKB: 256
 EOF
 
 # 4. Test with a simple AgentRun
@@ -274,6 +285,7 @@ spec:
 EOF
 
 # 5. Check results
+kubectl get sympoziuminstance bedrock-assistant -n sympozium
 kubectl get agentrun test-bedrock -n sympozium -o yaml
 ```
 
