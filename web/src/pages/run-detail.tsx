@@ -13,7 +13,7 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { ArrowLeft, Clock, Cpu, Zap } from "lucide-react";
+import { ArrowLeft, Clock, Cpu, Zap, AlertTriangle } from "lucide-react";
 import { formatAge } from "@/lib/utils";
 
 export function RunDetailPage() {
@@ -104,6 +104,31 @@ export function RunDetailPage() {
         </div>
       )}
 
+      {/* PostRunning banner */}
+      {run.status?.phase === "PostRunning" && (
+        <div className="flex items-center gap-2 rounded-lg border border-orange-500/30 bg-orange-500/5 p-3">
+          <Clock className="h-4 w-4 text-orange-400 animate-spin" />
+          <div className="text-sm">
+            <span className="font-medium text-orange-400">Post-run hooks executing</span>
+            {run.status.postRunJobName && (
+              <span className="text-muted-foreground ml-2 font-mono">
+                Job: {run.status.postRunJobName}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* PostRunFailed condition */}
+      {run.status?.conditions?.some(c => c.type === "PostRunFailed" && c.status === "True") && (
+        <div className="flex items-center gap-2 rounded-lg border border-yellow-500/30 bg-yellow-500/5 p-3">
+          <AlertTriangle className="h-4 w-4 text-yellow-500" />
+          <span className="text-sm text-yellow-500">
+            One or more post-run hooks failed (agent outcome unchanged)
+          </span>
+        </div>
+      )}
+
       <Tabs defaultValue="task">
         <TabsList>
           <TabsTrigger value="task">Task</TabsTrigger>
@@ -137,7 +162,9 @@ export function RunDetailPage() {
                 <p className="text-sm text-muted-foreground">
                   {run.status?.phase === "Running"
                     ? "Run is still in progress…"
-                    : "No result available"}
+                    : run.status?.phase === "PostRunning"
+                      ? "Agent completed, running post-hooks…"
+                      : "No result available"}
                 </p>
               )}
             </CardContent>
@@ -166,6 +193,13 @@ export function RunDetailPage() {
                 {" "}
                 · Exit code:{" "}
                 <span className="font-mono">{run.status.exitCode}</span>
+              </>
+            )}
+            {run.status.postRunJobName && (
+              <>
+                {" "}
+                · PostRun Job:{" "}
+                <span className="font-mono">{run.status.postRunJobName}</span>
               </>
             )}
           </div>

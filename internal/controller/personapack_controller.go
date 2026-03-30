@@ -416,6 +416,7 @@ func (r *PersonaPackReconciler) buildInstance(
 					Model:        model,
 					BaseURL:      pack.Spec.BaseURL,
 					AgentSandbox: pack.Spec.AgentSandbox,
+					Lifecycle:    persona.Lifecycle,
 				},
 			},
 			// Copy auth refs from the pack (set during install via TUI).

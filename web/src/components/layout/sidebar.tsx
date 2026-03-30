@@ -11,6 +11,7 @@ import {
   Heart,
   Globe,
   Plug,
+  BookOpen,
   PanelLeftClose,
   PanelLeftOpen,
 } from "lucide-react";
@@ -80,8 +81,29 @@ export function AppSidebar({ collapsed, onToggle }: AppSidebarProps) {
       </ScrollArea>
 
       {/* Help & Contribute */}
+      {collapsed && (
+        <div className="border-t border-border/50 px-2 py-2 flex flex-col items-center gap-1">
+          <a href="https://deploy.sympozium.ai/docs" target="_blank" rel="noopener noreferrer" title="Documentation"
+            className="flex items-center justify-center rounded-md p-1.5 text-muted-foreground hover:bg-white/5 hover:text-foreground transition-colors">
+            <BookOpen className="h-4 w-4" />
+          </a>
+          <a href="https://github.com/sympozium-ai/sympozium" target="_blank" rel="noopener noreferrer" title="GitHub"
+            className="flex items-center justify-center rounded-md p-1.5 text-muted-foreground hover:bg-white/5 hover:text-foreground transition-colors">
+            <Github className="h-4 w-4" />
+          </a>
+        </div>
+      )}
       {!collapsed && (
         <div className="border-t border-border/50 px-4 py-3 space-y-2">
+          <a
+            href="https://deploy.sympozium.ai/docs"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-2 rounded-md px-2 py-1.5 text-xs font-medium text-muted-foreground hover:bg-white/5 hover:text-foreground transition-colors"
+          >
+            <BookOpen className="h-3.5 w-3.5" />
+            Documentation
+          </a>
           <a
             href="https://github.com/sympozium-ai/sympozium"
             target="_blank"

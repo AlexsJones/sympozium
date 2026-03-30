@@ -122,6 +122,12 @@ func (s *Spawner) Spawn(ctx context.Context, req SpawnRequest) (*SpawnResult, er
 		},
 	}
 
+	// Look up the instance to propagate lifecycle hooks to sub-agents.
+	var inst sympoziumv1alpha1.SympoziumInstance
+	if err := s.Client.Get(ctx, client.ObjectKey{Namespace: req.Namespace, Name: req.InstanceName}, &inst); err == nil {
+		agentRun.Spec.Lifecycle = inst.Spec.Agents.Default.Lifecycle
+	}
+
 	if err := s.Client.Create(ctx, agentRun); err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "create agentrun failed")

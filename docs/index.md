@@ -76,6 +76,7 @@ Sympozium takes the agentic control model and rebuilds it on Kubernetes primitiv
 | [Custom Resources](concepts/custom-resources.md) | The six CRDs that model every agentic concept |
 | [PersonaPacks](concepts/personapacks.md) | Pre-configured agent bundles |
 | [Skills & Sidecars](concepts/skills.md) | Isolated tool containers with ephemeral RBAC |
+| [Lifecycle Hooks](concepts/lifecycle-hooks.md) | PreRun and postRun containers for setup and teardown |
 | [Security](concepts/security.md) | Defence-in-depth at every layer |
 | [Writing Skills](guides/writing-skills.md) | Build your own SkillPacks |
 | [Writing Tools](guides/writing-tools.md) | Add new tools to the agent runner |

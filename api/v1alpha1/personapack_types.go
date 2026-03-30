@@ -124,6 +124,11 @@ type PersonaSpec struct {
 	// WebEndpoint configures the web endpoint for this persona.
 	// +optional
 	WebEndpoint *PersonaWebEndpoint `json:"webEndpoint,omitempty"`
+
+	// Lifecycle defines pre and post run hooks for this persona.
+	// Propagated to the generated SympoziumInstance's AgentConfig.
+	// +optional
+	Lifecycle *LifecycleHooks `json:"lifecycle,omitempty"`
 }
 
 // PersonaWebEndpoint configures the web endpoint for a persona.

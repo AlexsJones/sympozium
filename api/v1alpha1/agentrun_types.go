@@ -73,6 +73,12 @@ type AgentRunSpec struct {
 	// ImagePullSecrets are secrets to use when pulling container images.
 	// +optional
 	ImagePullSecrets []corev1.LocalObjectReference `json:"imagePullSecrets,omitempty"`
+
+	// Lifecycle defines pre and post run hooks for this agent run.
+	// PreRun hooks execute as init containers before the agent starts.
+	// PostRun hooks execute in a follow-up Job after the agent completes.
+	// +optional
+	Lifecycle *LifecycleHooks `json:"lifecycle,omitempty"`
 }
 
 // ParentRunRef links a sub-agent to its parent.
@@ -207,11 +213,12 @@ type ToolPolicySpec struct {
 type AgentRunPhase string
 
 const (
-	AgentRunPhasePending   AgentRunPhase = "Pending"
-	AgentRunPhaseRunning   AgentRunPhase = "Running"
-	AgentRunPhaseServing   AgentRunPhase = "Serving"
-	AgentRunPhaseSucceeded AgentRunPhase = "Succeeded"
-	AgentRunPhaseFailed    AgentRunPhase = "Failed"
+	AgentRunPhasePending     AgentRunPhase = "Pending"
+	AgentRunPhaseRunning     AgentRunPhase = "Running"
+	AgentRunPhaseServing     AgentRunPhase = "Serving"
+	AgentRunPhasePostRunning AgentRunPhase = "PostRunning"
+	AgentRunPhaseSucceeded   AgentRunPhase = "Succeeded"
+	AgentRunPhaseFailed      AgentRunPhase = "Failed"
 )
 
 // AgentRunStatus defines the observed state of AgentRun.
@@ -274,6 +281,10 @@ type AgentRunStatus struct {
 	// +optional
 	TraceID string `json:"traceID,omitempty"`
 
+	// PostRunJobName is the name of the Job created for postRun lifecycle hooks.
+	// +optional
+	PostRunJobName string `json:"postRunJobName,omitempty"`
+
 	// Conditions represent the latest available observations.
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
@@ -295,6 +306,56 @@ type TokenUsage struct {
 
 	// DurationMs is the wall-clock time of the LLM interaction in milliseconds.
 	DurationMs int64 `json:"durationMs"`
+}
+
+// LifecycleHookContainer defines a container to run as a lifecycle hook.
+type LifecycleHookContainer struct {
+	// Name is the container name.
+	Name string `json:"name"`
+
+	// Image is the container image.
+	Image string `json:"image"`
+
+	// Command overrides the container entrypoint.
+	// +optional
+	Command []string `json:"command,omitempty"`
+
+	// Args are arguments to the entrypoint.
+	// +optional
+	Args []string `json:"args,omitempty"`
+
+	// Env is a list of environment variables for this hook container.
+	// +optional
+	Env []EnvVar `json:"env,omitempty"`
+
+	// Timeout is the maximum duration for this hook container.
+	// Defaults to 5 minutes.
+	// +optional
+	Timeout *metav1.Duration `json:"timeout,omitempty"`
+}
+
+// LifecycleHooks defines pre and post run hooks for an agent.
+type LifecycleHooks struct {
+	// PreRun containers execute as init containers before the agent starts.
+	// They have access to /workspace, /ipc, /tmp and standard env vars.
+	// +optional
+	PreRun []LifecycleHookContainer `json:"preRun,omitempty"`
+
+	// PostRun containers execute in a follow-up Job after the agent completes.
+	// They have access to /workspace (with agent output) and receive
+	// AGENT_EXIT_CODE and AGENT_RESULT as additional env vars.
+	// PostRun failures are recorded as Conditions but do not change the
+	// agent's final phase (best-effort semantics).
+	// +optional
+	PostRun []LifecycleHookContainer `json:"postRun,omitempty"`
+
+	// RBAC defines namespace-scoped Kubernetes RBAC rules to create for
+	// lifecycle hook containers. A Role and RoleBinding are provisioned
+	// in the agent namespace, bound to the "sympozium-agent" ServiceAccount.
+	// This allows hooks to interact with Kubernetes resources (e.g., create
+	// or delete ConfigMaps, read Secrets).
+	// +optional
+	RBAC []RBACRule `json:"rbac,omitempty"`
 }
 
 // +kubebuilder:object:root=true

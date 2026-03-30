@@ -264,6 +264,11 @@ type AgentConfig struct {
 	// Used for node-pinned inference (e.g., Ollama installed on specific GPU nodes).
 	// +optional
 	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
+
+	// Lifecycle defines pre and post run hooks for agent runs.
+	// Propagated to AgentRunSpec.Lifecycle when runs are created.
+	// +optional
+	Lifecycle *LifecycleHooks `json:"lifecycle,omitempty"`
 }
 
 // SandboxSpec defines sandbox configuration.

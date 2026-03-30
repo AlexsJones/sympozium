@@ -78,6 +78,9 @@
 .phase-serving {
   @apply bg-yellow-500/20 text-yellow-400 border-yellow-500/30;
 }
+.phase-postrunning {
+  @apply bg-orange-500/20 text-orange-400 border-orange-500/30;
+}
 
 /* Glow effects matching website */
 .glow-primary {

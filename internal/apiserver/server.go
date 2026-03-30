@@ -308,7 +308,8 @@ func (s *Server) deleteInstance(w http.ResponseWriter, r *http.Request) {
 
 // PatchInstanceRequest is the request body for partially updating a SympoziumInstance.
 type PatchInstanceRequest struct {
-	WebEndpoint *PatchWebEndpoint `json:"webEndpoint,omitempty"`
+	WebEndpoint *PatchWebEndpoint                 `json:"webEndpoint,omitempty"`
+	Lifecycle   *sympoziumv1alpha1.LifecycleHooks `json:"lifecycle,omitempty"`
 }
 
 // PatchWebEndpoint is the web endpoint patch payload.
@@ -378,6 +379,16 @@ func (s *Server) patchInstance(w http.ResponseWriter, r *http.Request) {
 					Params:       params,
 				})
 			}
+		}
+	}
+
+	// Apply lifecycle hooks patch.
+	if req.Lifecycle != nil {
+		hasHooks := len(req.Lifecycle.PreRun) > 0 || len(req.Lifecycle.PostRun) > 0 || len(req.Lifecycle.RBAC) > 0
+		if hasHooks {
+			inst.Spec.Agents.Default.Lifecycle = req.Lifecycle
+		} else {
+			inst.Spec.Agents.Default.Lifecycle = nil
 		}
 	}
 
@@ -826,6 +837,7 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 			},
 			Skills:           inst.Spec.Skills,
 			ImagePullSecrets: inst.Spec.ImagePullSecrets,
+			Lifecycle:        inst.Spec.Agents.Default.Lifecycle,
 		},
 	}
 

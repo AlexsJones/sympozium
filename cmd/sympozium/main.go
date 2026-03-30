@@ -2422,6 +2422,12 @@ type tuiModel struct {
 	editSkills              []editSkillItem     // toggleable skills list
 	editChannels            []editChannelItem   // channel bindings
 	editWebEndpoint         editWebEndpointForm // web endpoint config
+	editLifecycle           editLifecycleForm   // lifecycle hooks config
+	editLifecycleHookInput  bool                // sub-modal for hook editing
+	editLifecycleHookTI     textinput.Model     // text input for hook sub-modal
+	editLifecycleHookField  int                 // 0=name, 1=image, 2=command, 3=env
+	editLifecycleHookIdx    int                 // index into preRun/postRun being edited
+	editLifecycleHookIsPost bool                // true if editing postRun, false for preRun
 	editGateway             editGatewayForm     // gateway config
 	showGatewayEditModal    bool                // separate modal for gateway
 	editPersonaPackName     string              // non-empty when editing a PersonaPack
@@ -2500,11 +2506,32 @@ type editPersonaItem struct {
 	enabled     bool   // true = active, false = excluded
 }
 
+// editLifecycleHook represents a single preRun or postRun hook in the edit modal.
+type editLifecycleHook struct {
+	name    string // container name
+	image   string // container image
+	command string // command as a single string (split by spaces on save)
+	envVars string // "KEY=VALUE" per line
+}
+
+// editLifecycleForm holds the editable lifecycle hooks for a SympoziumInstance.
+type editLifecycleForm struct {
+	preRun  []editLifecycleHook
+	postRun []editLifecycleHook
+	rbac    string // "resource:verb1,verb2" per line (e.g. "configmaps:get,list,create,delete")
+}
+
+// editLifecycleFieldCount returns the dynamic field count for the lifecycle tab.
+func (f *editLifecycleForm) fieldCount() int {
+	// preRun hooks + "add preRun" button + postRun hooks + "add postRun" button + rbac field
+	return len(f.preRun) + 1 + len(f.postRun) + 1 + 1
+}
+
 var editScheduleTypes = []string{"heartbeat", "scheduled", "sweep"}
 var editConcurrencyPolicies = []string{"Forbid", "Allow", "Replace"}
 var editMemoryFieldCount = 3    // enabled, maxSizeKB, systemPrompt
 var editHeartbeatFieldCount = 6 // schedule, task, type, concurrencyPolicy, includeMemory, suspend
-var editTabNames = []string{"Memory", "Heartbeat", "Skills", "Channels", "Web Endpoint"}
+var editTabNames = []string{"Memory", "Heartbeat", "Skills", "Channels", "Web Endpoint", "Lifecycle"}
 var availableChannelTypes = []string{"telegram", "slack", "discord", "whatsapp"}
 
 // personaHeartbeatOptions defines the selectable intervals for PersonaPack editing.
@@ -2530,6 +2557,159 @@ func channelTokenKeyFor(chType string) string {
 		return "DISCORD_BOT_TOKEN"
 	default:
 		return "" // whatsapp uses QR pairing, no token
+	}
+}
+
+// lifecycleEnvToString converts a list of EnvVar to "KEY=VALUE" lines.
+func lifecycleEnvToString(envs []sympoziumv1alpha1.EnvVar) string {
+	var lines []string
+	for _, e := range envs {
+		lines = append(lines, e.Name+"="+e.Value)
+	}
+	return strings.Join(lines, "\n")
+}
+
+// lifecycleEnvFromString parses "KEY=VALUE" lines into EnvVar list.
+func lifecycleEnvFromString(s string) []sympoziumv1alpha1.EnvVar {
+	if strings.TrimSpace(s) == "" {
+		return nil
+	}
+	var envs []sympoziumv1alpha1.EnvVar
+	for _, line := range strings.Split(s, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, "=", 2)
+		if len(parts) == 2 {
+			envs = append(envs, sympoziumv1alpha1.EnvVar{Name: parts[0], Value: parts[1]})
+		}
+	}
+	return envs
+}
+
+// lifecycleRBACToString converts RBAC rules to "resource:verb1,verb2" lines.
+func lifecycleRBACToString(rules []sympoziumv1alpha1.RBACRule) string {
+	var lines []string
+	for _, r := range rules {
+		lines = append(lines, strings.Join(r.Resources, ",")+":"+strings.Join(r.Verbs, ","))
+	}
+	return strings.Join(lines, "\n")
+}
+
+// lifecycleRBACFromString parses "resource:verb1,verb2" lines into RBAC rules.
+func lifecycleRBACFromString(s string) []sympoziumv1alpha1.RBACRule {
+	if strings.TrimSpace(s) == "" {
+		return nil
+	}
+	var rules []sympoziumv1alpha1.RBACRule
+	for _, line := range strings.Split(s, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, ":", 2)
+		if len(parts) == 2 {
+			rules = append(rules, sympoziumv1alpha1.RBACRule{
+				APIGroups: []string{""},
+				Resources: strings.Split(parts[0], ","),
+				Verbs:     strings.Split(parts[1], ","),
+			})
+		}
+	}
+	return rules
+}
+
+// handleLifecycleEnter opens a sub-modal for editing/adding lifecycle hooks.
+func (m *tuiModel) handleLifecycleEnter() {
+	lc := &m.editLifecycle
+	preLen := len(lc.preRun)
+	addPreIdx := preLen        // "add preRun" button
+	postStart := addPreIdx + 1 // first postRun hook
+	postLen := len(lc.postRun)
+	addPostIdx := postStart + postLen // "add postRun" button
+	rbacIdx := addPostIdx + 1         // RBAC field
+
+	switch {
+	case m.editField < preLen:
+		// Edit existing preRun hook.
+		h := &lc.preRun[m.editField]
+		m.openLifecycleHookEditor(h, m.editField, false)
+	case m.editField == addPreIdx:
+		// Add new preRun hook.
+		lc.preRun = append(lc.preRun, editLifecycleHook{name: fmt.Sprintf("pre-hook-%d", preLen+1), image: "busybox:1.36"})
+		h := &lc.preRun[len(lc.preRun)-1]
+		m.openLifecycleHookEditor(h, len(lc.preRun)-1, false)
+	case m.editField >= postStart && m.editField < addPostIdx:
+		// Edit existing postRun hook.
+		idx := m.editField - postStart
+		h := &lc.postRun[idx]
+		m.openLifecycleHookEditor(h, idx, true)
+	case m.editField == addPostIdx:
+		// Add new postRun hook.
+		lc.postRun = append(lc.postRun, editLifecycleHook{name: fmt.Sprintf("post-hook-%d", postLen+1), image: "busybox:1.36"})
+		h := &lc.postRun[len(lc.postRun)-1]
+		m.openLifecycleHookEditor(h, len(lc.postRun)-1, true)
+	case m.editField == rbacIdx:
+		// Open RBAC editor sub-modal.
+		m.editLifecycleHookInput = true
+		m.editLifecycleHookField = 4 // special: RBAC
+		ti := textinput.New()
+		ti.Placeholder = "configmaps:get,list,create,delete"
+		ti.CharLimit = 256
+		ti.Width = 50
+		ti.SetValue(lc.rbac)
+		ti.Focus()
+		m.editLifecycleHookTI = ti
+	}
+}
+
+func (m *tuiModel) openLifecycleHookEditor(h *editLifecycleHook, idx int, isPost bool) {
+	m.editLifecycleHookInput = true
+	m.editLifecycleHookField = 0 // start with name
+	m.editLifecycleHookIdx = idx
+	m.editLifecycleHookIsPost = isPost
+	ti := textinput.New()
+	ti.Placeholder = "hook name"
+	ti.CharLimit = 63
+	ti.Width = 50
+	ti.SetValue(h.name)
+	ti.Focus()
+	m.editLifecycleHookTI = ti
+}
+
+// currentLifecycleHook returns a pointer to the hook being edited in the sub-modal.
+func (m *tuiModel) currentLifecycleHook() *editLifecycleHook {
+	if m.editLifecycleHookIsPost {
+		if m.editLifecycleHookIdx < len(m.editLifecycle.postRun) {
+			return &m.editLifecycle.postRun[m.editLifecycleHookIdx]
+		}
+	} else {
+		if m.editLifecycleHookIdx < len(m.editLifecycle.preRun) {
+			return &m.editLifecycle.preRun[m.editLifecycleHookIdx]
+		}
+	}
+	return nil
+}
+
+// handleLifecycleDelete removes the currently selected lifecycle hook.
+func (m *tuiModel) handleLifecycleDelete() {
+	lc := &m.editLifecycle
+	preLen := len(lc.preRun)
+	addPreIdx := preLen
+	postStart := addPreIdx + 1
+	postLen := len(lc.postRun)
+	addPostIdx := postStart + postLen
+
+	switch {
+	case m.editField < preLen:
+		lc.preRun = append(lc.preRun[:m.editField], lc.preRun[m.editField+1:]...)
+		if m.editField >= len(lc.preRun) && m.editField > 0 {
+			m.editField--
+		}
+	case m.editField >= postStart && m.editField < addPostIdx:
+		idx := m.editField - postStart
+		lc.postRun = append(lc.postRun[:idx], lc.postRun[idx+1:]...)
 	}
 }
 
@@ -2922,6 +3102,68 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 
+			// Lifecycle hook sub-modal — intercept keys first.
+			if m.editLifecycleHookInput {
+				switch msg.Type {
+				case tea.KeyEsc:
+					m.editLifecycleHookInput = false
+					return m, nil
+				case tea.KeyEnter:
+					val := m.editLifecycleHookTI.Value()
+					if m.editLifecycleHookField == 4 {
+						// RBAC editing.
+						m.editLifecycle.rbac = val
+						m.editLifecycleHookInput = false
+						return m, nil
+					}
+					// Hook field editing — save current field and advance to next.
+					hook := m.currentLifecycleHook()
+					if hook == nil {
+						m.editLifecycleHookInput = false
+						return m, nil
+					}
+					switch m.editLifecycleHookField {
+					case 0:
+						hook.name = val
+						m.editLifecycleHookField = 1
+						ti := textinput.New()
+						ti.Placeholder = "container image (e.g. curlimages/curl:latest)"
+						ti.CharLimit = 256
+						ti.Width = 50
+						ti.SetValue(hook.image)
+						ti.Focus()
+						m.editLifecycleHookTI = ti
+					case 1:
+						hook.image = val
+						m.editLifecycleHookField = 2
+						ti := textinput.New()
+						ti.Placeholder = "command (e.g. sh -c 'curl http://...')"
+						ti.CharLimit = 512
+						ti.Width = 50
+						ti.SetValue(hook.command)
+						ti.Focus()
+						m.editLifecycleHookTI = ti
+					case 2:
+						hook.command = val
+						m.editLifecycleHookField = 3
+						ti := textinput.New()
+						ti.Placeholder = "KEY=VALUE (one per line)"
+						ti.CharLimit = 512
+						ti.Width = 50
+						ti.SetValue(hook.envVars)
+						ti.Focus()
+						m.editLifecycleHookTI = ti
+					case 3:
+						hook.envVars = val
+						m.editLifecycleHookInput = false
+					}
+					return m, nil
+				default:
+					m.editLifecycleHookTI, tiCmd = m.editLifecycleHookTI.Update(msg)
+					return m, tiCmd
+				}
+			}
+
 			// Channel token sub-modal text input — intercept keys first.
 			if m.editChannelTokenInput {
 				switch msg.Type {
@@ -2984,6 +3226,8 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					max = len(m.editChannels)
 				} else if m.editTab == 4 {
 					max = editWebEndpointFieldCount
+				} else if m.editTab == 5 {
+					max = m.editLifecycle.fieldCount()
 				}
 				if m.editField < max-1 {
 					m.editField++
@@ -3062,6 +3306,14 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if m.editField == 0 {
 						m.editWebEndpoint.enabled = !m.editWebEndpoint.enabled
 					}
+				} else if m.editTab == 5 {
+					m.handleLifecycleEnter()
+				}
+				return m, nil
+			case "d":
+				// Delete lifecycle hook.
+				if m.editTab == 5 {
+					m.handleLifecycleDelete()
 				}
 				return m, nil
 			case "left", "h":
@@ -3202,6 +3454,8 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if m.editField == 0 {
 						m.editWebEndpoint.enabled = !m.editWebEndpoint.enabled
 					}
+				} else if m.editTab == 5 {
+					m.handleLifecycleEnter()
 				}
 				return m, nil
 			case "a":
@@ -4420,6 +4674,27 @@ func (m tuiModel) handleRowEdit() (tea.Model, tea.Cmd) {
 				m.editWebEndpoint.rateLimit = fmt.Sprintf("%d", inst.Spec.WebEndpoint.RateLimit.RequestsPerMinute)
 			}
 		}
+		// Populate lifecycle tab.
+		m.editLifecycle = editLifecycleForm{}
+		if lc := inst.Spec.Agents.Default.Lifecycle; lc != nil {
+			for _, h := range lc.PreRun {
+				m.editLifecycle.preRun = append(m.editLifecycle.preRun, editLifecycleHook{
+					name:    h.Name,
+					image:   h.Image,
+					command: strings.Join(h.Command, " "),
+					envVars: lifecycleEnvToString(h.Env),
+				})
+			}
+			for _, h := range lc.PostRun {
+				m.editLifecycle.postRun = append(m.editLifecycle.postRun, editLifecycleHook{
+					name:    h.Name,
+					image:   h.Image,
+					command: strings.Join(h.Command, " "),
+					envVars: lifecycleEnvToString(h.Env),
+				})
+			}
+			m.editLifecycle.rbac = lifecycleRBACToString(lc.RBAC)
+		}
 		m.showEditModal = true
 	case viewSchedules:
 		if m.selectedRow >= len(m.schedules) {
@@ -4585,6 +4860,9 @@ func (m tuiModel) applyEditModal() tea.Cmd {
 	mem := m.editMemory
 	hb := m.editHeartbeat
 	webEP := m.editWebEndpoint
+	lifecycle := m.editLifecycle
+	lifecycle.preRun = append([]editLifecycleHook(nil), m.editLifecycle.preRun...)
+	lifecycle.postRun = append([]editLifecycleHook(nil), m.editLifecycle.postRun...)
 	skills := make([]editSkillItem, len(m.editSkills))
 	copy(skills, m.editSkills)
 	channels := make([]editChannelItem, len(m.editChannels))
@@ -4680,6 +4958,40 @@ func (m tuiModel) applyEditModal() tea.Cmd {
 				}
 			} else {
 				inst.Spec.WebEndpoint = nil
+			}
+
+			// Apply lifecycle hooks.
+			lcForm := lifecycle
+			if len(lcForm.preRun) > 0 || len(lcForm.postRun) > 0 || lcForm.rbac != "" {
+				lh := &sympoziumv1alpha1.LifecycleHooks{}
+				for _, h := range lcForm.preRun {
+					var cmd []string
+					if h.command != "" {
+						cmd = strings.Fields(h.command)
+					}
+					lh.PreRun = append(lh.PreRun, sympoziumv1alpha1.LifecycleHookContainer{
+						Name:    h.name,
+						Image:   h.image,
+						Command: cmd,
+						Env:     lifecycleEnvFromString(h.envVars),
+					})
+				}
+				for _, h := range lcForm.postRun {
+					var cmd []string
+					if h.command != "" {
+						cmd = strings.Fields(h.command)
+					}
+					lh.PostRun = append(lh.PostRun, sympoziumv1alpha1.LifecycleHookContainer{
+						Name:    h.name,
+						Image:   h.image,
+						Command: cmd,
+						Env:     lifecycleEnvFromString(h.envVars),
+					})
+				}
+				lh.RBAC = lifecycleRBACFromString(lcForm.rbac)
+				inst.Spec.Agents.Default.Lifecycle = lh
+			} else {
+				inst.Spec.Agents.Default.Lifecycle = nil
 			}
 
 			if err := k8sClient.Update(ctx, &inst); err != nil {
@@ -5892,6 +6204,10 @@ func (m tuiModel) renderRunsTable(tableH int) string {
 		if run.Status.SandboxName != "" || run.Status.SandboxClaimName != "" {
 			phase = phase + " ▣"
 		}
+		// Add lifecycle postRun indicator.
+		if run.Status.PostRunJobName != "" && run.Status.Phase == sympoziumv1alpha1.AgentRunPhasePostRunning {
+			phase = "PostRunning ⇢"
+		}
 
 		// Determine trigger source from labels.
 		triggerType := run.Labels["sympozium.ai/type"]
@@ -5925,12 +6241,14 @@ func (m tuiModel) renderRunsTable(tableH int) string {
 				style = tuiRowAltStyle
 			}
 			// Colorize phase.
-			switch phase {
-			case "Running":
+			switch {
+			case phase == "Running":
 				phaseCol = tuiRunningStyle.Render(fmt.Sprintf("%-12s ", phase))
-			case "Completed":
+			case strings.HasPrefix(phase, "PostRunning"):
+				phaseCol = tuiRunningStyle.Render(fmt.Sprintf("%-12s ", phase))
+			case phase == "Completed":
 				phaseCol = tuiSuccessStyle.Render(fmt.Sprintf("%-12s ", phase))
-			case "Failed", "Timeout":
+			case phase == "Failed" || phase == "Timeout":
 				phaseCol = tuiErrorStyle.Render(fmt.Sprintf("%-12s ", phase))
 			default:
 				phaseCol = tuiDimStyle.Render(fmt.Sprintf("%-12s ", phase))
@@ -6844,6 +7162,12 @@ func (m tuiModel) renderDetailFeed(width, height int) string {
 			}
 		case "Running":
 			allLines = append(allLines, tuiRunningStyle.Render("   ⏳ Running..."))
+		case "PostRunning":
+			postMsg := "   ⏳ Running post-hooks..."
+			if run.Status.PostRunJobName != "" {
+				postMsg += " (" + run.Status.PostRunJobName + ")"
+			}
+			allLines = append(allLines, tuiRunningStyle.Render(postMsg))
 		case "Failed", "Timeout":
 			errMsg := run.Status.Error
 			if errMsg == "" {
@@ -6970,6 +7294,12 @@ func (m tuiModel) renderDetailPaneFullscreen() string {
 				}
 			case "Running":
 				allLines = append(allLines, tuiRunningStyle.Render("   ⏳ Running..."))
+			case "PostRunning":
+				postMsg := "   ⏳ Running post-hooks..."
+				if run.Status.PostRunJobName != "" {
+					postMsg += " (" + run.Status.PostRunJobName + ")"
+				}
+				allLines = append(allLines, tuiRunningStyle.Render(postMsg))
 			case "Failed", "Timeout":
 				errMsg := run.Status.Error
 				if errMsg == "" {
@@ -7552,6 +7882,83 @@ func (m tuiModel) renderEditModal(base string) string {
 				}
 			}
 		}
+	} else if m.editTab == 5 {
+		// Lifecycle tab
+		lc := &m.editLifecycle
+		fieldIdx := 0
+
+		content.WriteString(tuiDimStyle.Render("  ── PreRun Hooks ──") + "\n")
+		for i, h := range lc.preRun {
+			lbl := fmt.Sprintf("  ● %s  %s", h.name, tuiDimStyle.Render(h.image))
+			if m.editField == fieldIdx {
+				lbl = highlight.Render(fmt.Sprintf("▸ ● %s  %s", h.name, h.image))
+			} else {
+				lbl = value.Render(lbl)
+			}
+			_ = i
+			content.WriteString("  " + lbl + "\n")
+			fieldIdx++
+		}
+		// "Add preRun hook" button.
+		addPreLbl := tuiDimStyle.Render("  + Add preRun hook")
+		if m.editField == fieldIdx {
+			addPreLbl = highlight.Render("▸ + Add preRun hook")
+		}
+		content.WriteString("  " + addPreLbl + "\n\n")
+		fieldIdx++
+
+		content.WriteString(tuiDimStyle.Render("  ── PostRun Hooks ──") + "\n")
+		for i, h := range lc.postRun {
+			lbl := fmt.Sprintf("  ● %s  %s", h.name, tuiDimStyle.Render(h.image))
+			if m.editField == fieldIdx {
+				lbl = highlight.Render(fmt.Sprintf("▸ ● %s  %s", h.name, h.image))
+			} else {
+				lbl = value.Render(lbl)
+			}
+			_ = i
+			content.WriteString("  " + lbl + "\n")
+			fieldIdx++
+		}
+		// "Add postRun hook" button.
+		addPostLbl := tuiDimStyle.Render("  + Add postRun hook")
+		if m.editField == fieldIdx {
+			addPostLbl = highlight.Render("▸ + Add postRun hook")
+		}
+		content.WriteString("  " + addPostLbl + "\n\n")
+		fieldIdx++
+
+		// RBAC field.
+		rbacDisplay := lc.rbac
+		if rbacDisplay == "" {
+			rbacDisplay = "(none — press enter to configure)"
+		}
+		rbacLbl := fmt.Sprintf("  RBAC: %s", tuiDimStyle.Render(rbacDisplay))
+		if m.editField == fieldIdx {
+			rbacLbl = highlight.Render(fmt.Sprintf("▸ RBAC: %s", rbacDisplay))
+		} else {
+			rbacLbl = value.Render(rbacLbl)
+		}
+		content.WriteString("  " + rbacLbl + "\n\n")
+
+		// Read-only env var reference.
+		content.WriteString(tuiDimStyle.Render("  ── Available Environment Variables ──") + "\n")
+		envVars := []struct{ name, desc, scope string }{
+			{"AGENT_RUN_ID", "Unique run identifier", "all"},
+			{"INSTANCE_NAME", "SympoziumInstance name", "all"},
+			{"AGENT_NAMESPACE", "Kubernetes namespace", "all"},
+			{"AGENT_EXIT_CODE", "Exit code (postRun only)", "postRun"},
+			{"AGENT_RESULT", "Agent response (postRun only)", "postRun"},
+		}
+		for _, ev := range envVars {
+			scope := ""
+			if ev.scope == "postRun" {
+				scope = " (postRun)"
+			}
+			content.WriteString(tuiDimStyle.Render(fmt.Sprintf("  %-20s %s%s", ev.name, ev.desc, scope)) + "\n")
+		}
+		content.WriteString(tuiDimStyle.Render("  + custom env vars from spec.env") + "\n")
+		content.WriteString("\n")
+		content.WriteString(tuiDimStyle.Render("  enter=edit  d=delete  space=edit") + "\n")
 	}
 
 	// Task sub-modal overlay
@@ -7584,6 +7991,16 @@ func (m tuiModel) renderEditModal(base string) string {
 		content.WriteString("  " + tiView)
 		content.WriteString("\n")
 		content.WriteString(tuiDimStyle.Render("  enter confirm · esc cancel"))
+	} else if m.editLifecycleHookInput {
+		fieldNames := []string{"Name", "Image", "Command", "Env Vars", "RBAC Rules"}
+		fieldName := fieldNames[m.editLifecycleHookField]
+		content.WriteString("\n")
+		content.WriteString(tuiModalTitleStyle.Render(fmt.Sprintf("  Lifecycle Hook — %s", fieldName)))
+		content.WriteString("\n")
+		tiView := m.editLifecycleHookTI.View()
+		content.WriteString("  " + tiView)
+		content.WriteString("\n")
+		content.WriteString(tuiDimStyle.Render("  enter next field · esc cancel"))
 	} else if m.editPersonaPackName != "" {
 		content.WriteString("\n")
 		content.WriteString(tuiDimStyle.Render("  ↑↓ navigate · ←→ cycle heartbeat · space/enter toggle · ctrl+s apply · esc cancel"))
@@ -7773,6 +8190,16 @@ func tuiRunStatus(ns, name string) (string, error) {
 		u := run.Status.TokenUsage
 		b.WriteString("\n" + tuiDimStyle.Render(fmt.Sprintf("  ⟠ tokens: %d in / %d out (%d total) │ tools: %d │ %dms",
 			u.InputTokens, u.OutputTokens, u.TotalTokens, u.ToolCalls, u.DurationMs)))
+	}
+	if run.Status.PostRunJobName != "" {
+		b.WriteString(fmt.Sprintf("\n  ⇢ postRun job: %s", run.Status.PostRunJobName))
+	}
+	// Show PostRunFailed condition if present.
+	for _, cond := range run.Status.Conditions {
+		if cond.Type == "PostRunFailed" && cond.Status == "True" {
+			b.WriteString("\n" + tuiErrorStyle.Render("  ⚠ post-run hooks failed (agent outcome unchanged)"))
+			break
+		}
 	}
 	if run.Status.Error != "" {
 		b.WriteString("\n" + tuiErrorStyle.Render("  ✗ "+run.Status.Error))

@@ -871,3 +871,639 @@ func TestBuildJob_NoNodeSelector(t *testing.T) {
 		t.Errorf("NodeSelector should be nil when not set, got %v", ns)
 	}
 }
+
+// ── Lifecycle hook tests ────────────────────────────────────────────────────
+
+// newTestRunWithLifecycle returns a test AgentRun with lifecycle hooks configured.
+func newTestRunWithLifecycle(preRun, postRun []sympoziumv1alpha1.LifecycleHookContainer, rbac []sympoziumv1alpha1.RBACRule) *sympoziumv1alpha1.AgentRun {
+	run := newTestRun()
+	run.Spec.Lifecycle = &sympoziumv1alpha1.LifecycleHooks{
+		PreRun:  preRun,
+		PostRun: postRun,
+		RBAC:    rbac,
+	}
+	return run
+}
+
+func TestBuildContainers_PreRunInitContainers(t *testing.T) {
+	r := &AgentRunReconciler{}
+	run := newTestRunWithLifecycle(
+		[]sympoziumv1alpha1.LifecycleHookContainer{
+			{
+				Name:    "fetch-context",
+				Image:   "curlimages/curl:latest",
+				Command: []string{"sh", "-c", "curl -s http://example.com > /workspace/context.json"},
+			},
+			{
+				Name:    "setup-repo",
+				Image:   "alpine/git:latest",
+				Command: []string{"git", "clone", "https://github.com/org/repo", "/workspace/repo"},
+				Env:     []sympoziumv1alpha1.EnvVar{{Name: "GIT_TOKEN", Value: "abc123"}},
+			},
+		},
+		nil, nil,
+	)
+
+	containers, initContainers := r.buildContainers(run, false, nil, nil, nil)
+
+	// Agent + IPC bridge = 2 containers.
+	if len(containers) != 2 {
+		t.Fatalf("expected 2 containers, got %d", len(containers))
+	}
+
+	// Find preRun init containers by name prefix.
+	var preInits []corev1.Container
+	for _, ic := range initContainers {
+		if strings.HasPrefix(ic.Name, "pre-") {
+			preInits = append(preInits, ic)
+		}
+	}
+	if len(preInits) != 2 {
+		t.Fatalf("expected 2 preRun init containers, got %d (total init containers: %d)", len(preInits), len(initContainers))
+	}
+
+	// Verify first hook.
+	if preInits[0].Name != "pre-fetch-context" {
+		t.Errorf("first preRun init container name = %q, want pre-fetch-context", preInits[0].Name)
+	}
+	if preInits[0].Image != "curlimages/curl:latest" {
+		t.Errorf("first preRun init container image = %q, want curlimages/curl:latest", preInits[0].Image)
+	}
+
+	// Verify second hook has custom env var.
+	if preInits[1].Name != "pre-setup-repo" {
+		t.Errorf("second preRun init container name = %q, want pre-setup-repo", preInits[1].Name)
+	}
+	foundGitToken := false
+	for _, e := range preInits[1].Env {
+		if e.Name == "GIT_TOKEN" && e.Value == "abc123" {
+			foundGitToken = true
+		}
+	}
+	if !foundGitToken {
+		t.Error("second preRun init container missing GIT_TOKEN env var")
+	}
+}
+
+func TestBuildContainers_PreRunVolumeMounts(t *testing.T) {
+	r := &AgentRunReconciler{}
+	run := newTestRunWithLifecycle(
+		[]sympoziumv1alpha1.LifecycleHookContainer{
+			{Name: "setup", Image: "busybox:1.36", Command: []string{"true"}},
+		},
+		nil, nil,
+	)
+
+	_, initContainers := r.buildContainers(run, false, nil, nil, nil)
+
+	var hook *corev1.Container
+	for i := range initContainers {
+		if initContainers[i].Name == "pre-setup" {
+			hook = &initContainers[i]
+			break
+		}
+	}
+	if hook == nil {
+		t.Fatal("pre-setup init container not found")
+	}
+
+	// Verify volume mounts: workspace, ipc, tmp.
+	mountNames := map[string]bool{}
+	for _, m := range hook.VolumeMounts {
+		mountNames[m.Name] = true
+	}
+	for _, want := range []string{"workspace", "ipc", "tmp"} {
+		if !mountNames[want] {
+			t.Errorf("preRun init container missing volume mount %q", want)
+		}
+	}
+}
+
+func TestBuildContainers_PreRunSecurityContext(t *testing.T) {
+	r := &AgentRunReconciler{}
+	run := newTestRunWithLifecycle(
+		[]sympoziumv1alpha1.LifecycleHookContainer{
+			{Name: "setup", Image: "busybox:1.36", Command: []string{"true"}},
+		},
+		nil, nil,
+	)
+
+	_, initContainers := r.buildContainers(run, false, nil, nil, nil)
+
+	var hook *corev1.Container
+	for i := range initContainers {
+		if initContainers[i].Name == "pre-setup" {
+			hook = &initContainers[i]
+			break
+		}
+	}
+	if hook == nil {
+		t.Fatal("pre-setup init container not found")
+	}
+
+	sc := hook.SecurityContext
+	if sc == nil {
+		t.Fatal("preRun init container missing SecurityContext")
+	}
+	if sc.ReadOnlyRootFilesystem == nil || !*sc.ReadOnlyRootFilesystem {
+		t.Error("preRun init container should have ReadOnlyRootFilesystem=true")
+	}
+	if sc.Capabilities == nil || len(sc.Capabilities.Drop) == 0 {
+		t.Error("preRun init container should drop ALL capabilities")
+	}
+}
+
+func TestBuildContainers_PreRunBaseEnvVars(t *testing.T) {
+	r := &AgentRunReconciler{}
+	run := newTestRunWithLifecycle(
+		[]sympoziumv1alpha1.LifecycleHookContainer{
+			{Name: "setup", Image: "busybox:1.36", Command: []string{"true"}},
+		},
+		nil, nil,
+	)
+
+	_, initContainers := r.buildContainers(run, false, nil, nil, nil)
+
+	var hook *corev1.Container
+	for i := range initContainers {
+		if initContainers[i].Name == "pre-setup" {
+			hook = &initContainers[i]
+			break
+		}
+	}
+	if hook == nil {
+		t.Fatal("pre-setup init container not found")
+	}
+
+	envMap := map[string]string{}
+	for _, e := range hook.Env {
+		envMap[e.Name] = e.Value
+	}
+	for _, want := range []string{"AGENT_RUN_ID", "INSTANCE_NAME", "AGENT_NAMESPACE"} {
+		if _, ok := envMap[want]; !ok {
+			t.Errorf("preRun init container missing env var %q", want)
+		}
+	}
+	if envMap["AGENT_RUN_ID"] != "test-run" {
+		t.Errorf("AGENT_RUN_ID = %q, want test-run", envMap["AGENT_RUN_ID"])
+	}
+	if envMap["INSTANCE_NAME"] != "my-instance" {
+		t.Errorf("INSTANCE_NAME = %q, want my-instance", envMap["INSTANCE_NAME"])
+	}
+}
+
+func TestBuildContainers_PreRunForwardsSpecEnv(t *testing.T) {
+	r := &AgentRunReconciler{}
+	run := newTestRunWithLifecycle(
+		[]sympoziumv1alpha1.LifecycleHookContainer{
+			{Name: "setup", Image: "busybox:1.36", Command: []string{"true"}},
+		},
+		nil, nil,
+	)
+	run.Spec.Env = map[string]string{"PAGERDUTY_URL": "https://pd.example.com"}
+
+	_, initContainers := r.buildContainers(run, false, nil, nil, nil)
+
+	var hook *corev1.Container
+	for i := range initContainers {
+		if initContainers[i].Name == "pre-setup" {
+			hook = &initContainers[i]
+			break
+		}
+	}
+	if hook == nil {
+		t.Fatal("pre-setup init container not found")
+	}
+
+	found := false
+	for _, e := range hook.Env {
+		if e.Name == "PAGERDUTY_URL" && e.Value == "https://pd.example.com" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("preRun init container missing forwarded spec.env PAGERDUTY_URL")
+	}
+}
+
+func TestBuildContainers_PreRunAppearsAfterSystemInits(t *testing.T) {
+	r := &AgentRunReconciler{}
+	run := newTestRunWithLifecycle(
+		[]sympoziumv1alpha1.LifecycleHookContainer{
+			{Name: "my-hook", Image: "busybox:1.36", Command: []string{"true"}},
+		},
+		nil, nil,
+	)
+	// Add memory skill so wait-for-memory init container is present.
+	run.Spec.Skills = []sympoziumv1alpha1.SkillRef{{SkillPackRef: "memory"}}
+
+	_, initContainers := r.buildContainers(run, true, nil, nil, nil)
+
+	if len(initContainers) < 2 {
+		t.Fatalf("expected at least 2 init containers (wait-for-memory + pre-my-hook), got %d", len(initContainers))
+	}
+
+	// The preRun hook must come AFTER system init containers.
+	lastIdx := len(initContainers) - 1
+	if initContainers[lastIdx].Name != "pre-my-hook" {
+		t.Errorf("preRun hook should be last init container, got %q at position %d", initContainers[lastIdx].Name, lastIdx)
+	}
+	if initContainers[0].Name != "wait-for-memory" {
+		t.Errorf("first init container should be wait-for-memory, got %q", initContainers[0].Name)
+	}
+}
+
+func TestBuildContainers_NoLifecycleNoExtraInits(t *testing.T) {
+	r := &AgentRunReconciler{}
+	run := newTestRun()
+	// No lifecycle hooks.
+
+	_, initContainers := r.buildContainers(run, false, nil, nil, nil)
+
+	for _, ic := range initContainers {
+		if strings.HasPrefix(ic.Name, "pre-") {
+			t.Errorf("unexpected preRun init container %q when no lifecycle defined", ic.Name)
+		}
+	}
+}
+
+func TestBuildVolumes_WorkspacePVCWhenPostRunDefined(t *testing.T) {
+	r := &AgentRunReconciler{}
+	run := newTestRunWithLifecycle(
+		nil,
+		[]sympoziumv1alpha1.LifecycleHookContainer{
+			{Name: "upload", Image: "amazon/aws-cli:latest", Command: []string{"aws", "s3", "cp", "/workspace/out", "s3://bucket/"}},
+		},
+		nil,
+	)
+
+	volumes := r.buildVolumes(run, false, nil, nil)
+
+	var workspace *corev1.Volume
+	for i := range volumes {
+		if volumes[i].Name == "workspace" {
+			workspace = &volumes[i]
+			break
+		}
+	}
+	if workspace == nil {
+		t.Fatal("workspace volume not found")
+	}
+	if workspace.VolumeSource.PersistentVolumeClaim == nil {
+		t.Fatal("workspace should use PVC when postRun hooks are defined")
+	}
+	if workspace.VolumeSource.PersistentVolumeClaim.ClaimName != "test-run-workspace" {
+		t.Errorf("PVC claim name = %q, want test-run-workspace", workspace.VolumeSource.PersistentVolumeClaim.ClaimName)
+	}
+}
+
+func TestBuildVolumes_WorkspaceEmptyDirWhenNoPostRun(t *testing.T) {
+	r := &AgentRunReconciler{}
+	run := newTestRunWithLifecycle(
+		[]sympoziumv1alpha1.LifecycleHookContainer{
+			{Name: "setup", Image: "busybox:1.36", Command: []string{"true"}},
+		},
+		nil, // No postRun.
+		nil,
+	)
+
+	volumes := r.buildVolumes(run, false, nil, nil)
+
+	var workspace *corev1.Volume
+	for i := range volumes {
+		if volumes[i].Name == "workspace" {
+			workspace = &volumes[i]
+			break
+		}
+	}
+	if workspace == nil {
+		t.Fatal("workspace volume not found")
+	}
+	if workspace.VolumeSource.EmptyDir == nil {
+		t.Fatal("workspace should use EmptyDir when no postRun hooks are defined")
+	}
+}
+
+func TestBuildPostRunJob_ContainerSpec(t *testing.T) {
+	r := &AgentRunReconciler{}
+	run := newTestRunWithLifecycle(
+		nil,
+		[]sympoziumv1alpha1.LifecycleHookContainer{
+			{
+				Name:    "notify-slack",
+				Image:   "curlimages/curl:latest",
+				Command: []string{"sh", "-c", "curl -X POST $SLACK_URL"},
+				Env:     []sympoziumv1alpha1.EnvVar{{Name: "SLACK_URL", Value: "https://hooks.slack.com/xxx"}},
+			},
+			{
+				Name:    "upload-artifacts",
+				Image:   "amazon/aws-cli:latest",
+				Command: []string{"aws", "s3", "cp", "/workspace/output", "s3://bucket/results/"},
+			},
+		},
+		nil,
+	)
+	run.Spec.Env = map[string]string{"TEAM": "platform"}
+
+	job := r.buildPostRunJob(run, 0, "task completed successfully")
+
+	// Verify job name.
+	if job.Name != "test-run-postrun" {
+		t.Errorf("postRun Job name = %q, want test-run-postrun", job.Name)
+	}
+
+	// PostRun hooks should be init containers (sequential execution).
+	if len(job.Spec.Template.Spec.InitContainers) != 2 {
+		t.Fatalf("expected 2 postRun init containers, got %d", len(job.Spec.Template.Spec.InitContainers))
+	}
+
+	// Final "done" container should exist.
+	if len(job.Spec.Template.Spec.Containers) != 1 {
+		t.Fatalf("expected 1 main container (done), got %d", len(job.Spec.Template.Spec.Containers))
+	}
+	if job.Spec.Template.Spec.Containers[0].Name != "done" {
+		t.Errorf("main container name = %q, want done", job.Spec.Template.Spec.Containers[0].Name)
+	}
+
+	// Verify first hook container.
+	hook1 := job.Spec.Template.Spec.InitContainers[0]
+	if hook1.Name != "post-notify-slack" {
+		t.Errorf("first postRun container name = %q, want post-notify-slack", hook1.Name)
+	}
+	if hook1.Image != "curlimages/curl:latest" {
+		t.Errorf("first postRun container image = %q, want curlimages/curl:latest", hook1.Image)
+	}
+
+	// Verify env vars include AGENT_EXIT_CODE, AGENT_RESULT, custom env, and hook env.
+	envMap := map[string]string{}
+	for _, e := range hook1.Env {
+		envMap[e.Name] = e.Value
+	}
+	if envMap["AGENT_EXIT_CODE"] != "0" {
+		t.Errorf("AGENT_EXIT_CODE = %q, want 0", envMap["AGENT_EXIT_CODE"])
+	}
+	if envMap["AGENT_RESULT"] != "task completed successfully" {
+		t.Errorf("AGENT_RESULT = %q, want 'task completed successfully'", envMap["AGENT_RESULT"])
+	}
+	if envMap["TEAM"] != "platform" {
+		t.Errorf("TEAM = %q, want platform (forwarded from spec.env)", envMap["TEAM"])
+	}
+	if envMap["SLACK_URL"] != "https://hooks.slack.com/xxx" {
+		t.Errorf("SLACK_URL = %q, want https://hooks.slack.com/xxx", envMap["SLACK_URL"])
+	}
+
+	// Verify second hook has AGENT_EXIT_CODE too.
+	hook2 := job.Spec.Template.Spec.InitContainers[1]
+	if hook2.Name != "post-upload-artifacts" {
+		t.Errorf("second postRun container name = %q, want post-upload-artifacts", hook2.Name)
+	}
+	hook2Env := map[string]string{}
+	for _, e := range hook2.Env {
+		hook2Env[e.Name] = e.Value
+	}
+	if hook2Env["AGENT_EXIT_CODE"] != "0" {
+		t.Errorf("second hook AGENT_EXIT_CODE = %q, want 0", hook2Env["AGENT_EXIT_CODE"])
+	}
+}
+
+func TestBuildPostRunJob_FailedAgentExitCode(t *testing.T) {
+	r := &AgentRunReconciler{}
+	run := newTestRunWithLifecycle(
+		nil,
+		[]sympoziumv1alpha1.LifecycleHookContainer{
+			{Name: "cleanup", Image: "busybox:1.36", Command: []string{"true"}},
+		},
+		nil,
+	)
+
+	job := r.buildPostRunJob(run, 1, "OOMKilled")
+
+	hook := job.Spec.Template.Spec.InitContainers[0]
+	envMap := map[string]string{}
+	for _, e := range hook.Env {
+		envMap[e.Name] = e.Value
+	}
+	if envMap["AGENT_EXIT_CODE"] != "1" {
+		t.Errorf("AGENT_EXIT_CODE = %q, want 1", envMap["AGENT_EXIT_CODE"])
+	}
+	if envMap["AGENT_RESULT"] != "OOMKilled" {
+		t.Errorf("AGENT_RESULT = %q, want OOMKilled", envMap["AGENT_RESULT"])
+	}
+}
+
+func TestBuildPostRunJob_WorkspacePVC(t *testing.T) {
+	r := &AgentRunReconciler{}
+	run := newTestRunWithLifecycle(
+		nil,
+		[]sympoziumv1alpha1.LifecycleHookContainer{
+			{Name: "upload", Image: "busybox:1.36", Command: []string{"true"}},
+		},
+		nil,
+	)
+
+	job := r.buildPostRunJob(run, 0, "done")
+
+	// Workspace volume should use PVC.
+	var workspace *corev1.Volume
+	for i := range job.Spec.Template.Spec.Volumes {
+		if job.Spec.Template.Spec.Volumes[i].Name == "workspace" {
+			workspace = &job.Spec.Template.Spec.Volumes[i]
+			break
+		}
+	}
+	if workspace == nil {
+		t.Fatal("workspace volume not found in postRun Job")
+	}
+	if workspace.VolumeSource.PersistentVolumeClaim == nil {
+		t.Fatal("postRun Job workspace should use PVC")
+	}
+	if workspace.VolumeSource.PersistentVolumeClaim.ClaimName != "test-run-workspace" {
+		t.Errorf("PVC claim name = %q, want test-run-workspace", workspace.VolumeSource.PersistentVolumeClaim.ClaimName)
+	}
+
+	// Hook container should mount /workspace.
+	hook := job.Spec.Template.Spec.InitContainers[0]
+	foundMount := false
+	for _, m := range hook.VolumeMounts {
+		if m.Name == "workspace" && m.MountPath == "/workspace" {
+			foundMount = true
+		}
+	}
+	if !foundMount {
+		t.Error("postRun hook container missing /workspace volume mount")
+	}
+}
+
+func TestBuildPostRunJob_SecurityContext(t *testing.T) {
+	r := &AgentRunReconciler{}
+	run := newTestRunWithLifecycle(
+		nil,
+		[]sympoziumv1alpha1.LifecycleHookContainer{
+			{Name: "hook", Image: "busybox:1.36", Command: []string{"true"}},
+		},
+		nil,
+	)
+
+	job := r.buildPostRunJob(run, 0, "done")
+
+	// Pod-level security context.
+	psc := job.Spec.Template.Spec.SecurityContext
+	if psc == nil {
+		t.Fatal("postRun Job missing pod SecurityContext")
+	}
+	if psc.RunAsNonRoot == nil || !*psc.RunAsNonRoot {
+		t.Error("postRun Job should have RunAsNonRoot=true")
+	}
+
+	// Container-level security context.
+	hook := job.Spec.Template.Spec.InitContainers[0]
+	sc := hook.SecurityContext
+	if sc == nil {
+		t.Fatal("postRun hook container missing SecurityContext")
+	}
+	if sc.ReadOnlyRootFilesystem == nil || !*sc.ReadOnlyRootFilesystem {
+		t.Error("postRun hook container should have ReadOnlyRootFilesystem=true")
+	}
+	if sc.Capabilities == nil || len(sc.Capabilities.Drop) == 0 {
+		t.Error("postRun hook container should drop ALL capabilities")
+	}
+}
+
+func TestBuildPostRunJob_ServiceAccount(t *testing.T) {
+	r := &AgentRunReconciler{}
+	run := newTestRunWithLifecycle(
+		nil,
+		[]sympoziumv1alpha1.LifecycleHookContainer{
+			{Name: "hook", Image: "busybox:1.36", Command: []string{"true"}},
+		},
+		nil,
+	)
+
+	job := r.buildPostRunJob(run, 0, "done")
+
+	if job.Spec.Template.Spec.ServiceAccountName != "sympozium-agent" {
+		t.Errorf("postRun Job ServiceAccountName = %q, want sympozium-agent", job.Spec.Template.Spec.ServiceAccountName)
+	}
+}
+
+func TestBuildPostRunJob_Labels(t *testing.T) {
+	r := &AgentRunReconciler{}
+	run := newTestRunWithLifecycle(
+		nil,
+		[]sympoziumv1alpha1.LifecycleHookContainer{
+			{Name: "hook", Image: "busybox:1.36", Command: []string{"true"}},
+		},
+		nil,
+	)
+
+	job := r.buildPostRunJob(run, 0, "done")
+
+	labels := job.Labels
+	if labels["sympozium.ai/component"] != "post-run" {
+		t.Errorf("postRun Job component label = %q, want post-run", labels["sympozium.ai/component"])
+	}
+	if labels["sympozium.ai/agent-run"] != "test-run" {
+		t.Errorf("postRun Job agent-run label = %q, want test-run", labels["sympozium.ai/agent-run"])
+	}
+}
+
+func TestBuildPostRunJob_TruncatesLongResult(t *testing.T) {
+	r := &AgentRunReconciler{}
+	run := newTestRunWithLifecycle(
+		nil,
+		[]sympoziumv1alpha1.LifecycleHookContainer{
+			{Name: "hook", Image: "busybox:1.36", Command: []string{"true"}},
+		},
+		nil,
+	)
+
+	// Create a result larger than 32Ki.
+	longResult := strings.Repeat("x", 40*1024)
+	job := r.buildPostRunJob(run, 0, longResult)
+
+	hook := job.Spec.Template.Spec.InitContainers[0]
+	for _, e := range hook.Env {
+		if e.Name == "AGENT_RESULT" {
+			if len(e.Value) > 32*1024 {
+				t.Errorf("AGENT_RESULT should be truncated to 32Ki, got %d bytes", len(e.Value))
+			}
+			return
+		}
+	}
+	t.Error("AGENT_RESULT env var not found")
+}
+
+// ── RBAC tests ──────────────────────────────────────────────────────────────
+
+func TestLifecycleRBACRules_ConfigMapAccess(t *testing.T) {
+	// Verify the RBAC rules type supports the ConfigMap create/delete pattern
+	// that the issue specifically requested.
+	rules := []sympoziumv1alpha1.RBACRule{
+		{
+			APIGroups: []string{""},
+			Resources: []string{"configmaps"},
+			Verbs:     []string{"get", "list", "create", "delete"},
+		},
+	}
+
+	run := newTestRunWithLifecycle(
+		[]sympoziumv1alpha1.LifecycleHookContainer{
+			{Name: "create-cm", Image: "bitnami/kubectl:latest", Command: []string{"kubectl", "create", "configmap", "test", "--from-literal=key=value"}},
+		},
+		[]sympoziumv1alpha1.LifecycleHookContainer{
+			{Name: "delete-cm", Image: "bitnami/kubectl:latest", Command: []string{"kubectl", "delete", "configmap", "test"}},
+		},
+		rules,
+	)
+
+	if run.Spec.Lifecycle.RBAC == nil || len(run.Spec.Lifecycle.RBAC) != 1 {
+		t.Fatal("expected 1 RBAC rule")
+	}
+	rule := run.Spec.Lifecycle.RBAC[0]
+	if rule.APIGroups[0] != "" {
+		t.Errorf("APIGroups[0] = %q, want empty string (core API group)", rule.APIGroups[0])
+	}
+	if rule.Resources[0] != "configmaps" {
+		t.Errorf("Resources[0] = %q, want configmaps", rule.Resources[0])
+	}
+	wantVerbs := map[string]bool{"get": true, "list": true, "create": true, "delete": true}
+	for _, v := range rule.Verbs {
+		if !wantVerbs[v] {
+			t.Errorf("unexpected verb %q", v)
+		}
+	}
+}
+
+// ── Sandbox + lifecycle integration ─────────────────────────────────────────
+
+func TestBuildVolumes_WorkspacePVCWithSandboxEnabled(t *testing.T) {
+	r := &AgentRunReconciler{}
+	run := newTestRunWithLifecycle(
+		nil,
+		[]sympoziumv1alpha1.LifecycleHookContainer{
+			{Name: "upload", Image: "busybox:1.36", Command: []string{"true"}},
+		},
+		nil,
+	)
+	// Enable agent sandbox — volumes should still use PVC for workspace.
+	run.Spec.AgentSandbox = &sympoziumv1alpha1.AgentSandboxSpec{
+		Enabled:      true,
+		RuntimeClass: "gvisor",
+	}
+
+	volumes := r.buildVolumes(run, false, nil, nil)
+
+	var workspace *corev1.Volume
+	for i := range volumes {
+		if volumes[i].Name == "workspace" {
+			workspace = &volumes[i]
+			break
+		}
+	}
+	if workspace == nil {
+		t.Fatal("workspace volume not found")
+	}
+	if workspace.VolumeSource.PersistentVolumeClaim == nil {
+		t.Fatal("workspace should use PVC even with sandbox enabled when postRun hooks are defined")
+	}
+}

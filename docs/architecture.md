@@ -47,6 +47,15 @@ graph TB
 graph LR
     CM["Controller Manager"] -- "creates Job or<br/>Sandbox CR" --> AP
 
+    subgraph LCH["Lifecycle Hooks"]
+        direction TB
+        PRE["PreRun Init Containers<br/><small>fetch context, clone repos</small>"]
+        POST["PostRun Job<br/><small>upload artifacts, notify</small>"]
+    end
+
+    PRE -- "runs before" --> AP
+    AP -- "runs before" --> POST
+
     subgraph AP["Agent Pod"]
         direction TB
         A1["Agent Container<br/><small>LLM provider agnostic</small>"]
@@ -66,13 +75,14 @@ graph LR
     A1 -. "memory_search<br/>memory_store" .- MSCAR
     MSCAR -- "reads / writes" --> PVC
 
-    subgraph SEC["Skill RBAC"]
+    subgraph SEC["Skill & Lifecycle RBAC"]
         SR["Role + RoleBinding<br/><small>namespace-scoped</small>"]
         SCR["ClusterRole + Binding<br/><small>cluster-scoped</small>"]
     end
 
     SKS -- "uses" --> SR
     SKS -- "uses" --> SCR
+    LCH -. "uses" .-> SR
     CM -- "creates / deletes" --> SEC
 
     subgraph MCP["MCP Servers"]
@@ -89,6 +99,7 @@ graph LR
     style MEM stroke:#7c3aed,stroke-width:2px
     style SEC stroke:#238636,stroke-width:2px
     style MCP stroke:#0ea5e9,stroke-width:2px
+    style LCH stroke:#e67e22,stroke-width:2px
 ```
 
 ### Channels & Web Endpoints
@@ -130,7 +141,7 @@ graph LR
 ## How It Works
 
 1. **A message arrives** via a channel pod (Telegram, Slack, etc.) and is published to the NATS event bus.
-2. **The controller creates an AgentRun CR**, which reconciles into an ephemeral K8s Job — an agent container + IPC bridge sidecar + optional sandbox + skill sidecars (with auto-provisioned RBAC).
+2. **The controller creates an AgentRun CR**, which reconciles into an ephemeral K8s Job — optional preRun lifecycle init containers, then an agent container + IPC bridge sidecar + optional sandbox + skill sidecars (with auto-provisioned RBAC). PostRun lifecycle hooks execute in a follow-up Job after the agent completes.
 3. **The agent container** calls the configured LLM provider (OpenAI, Anthropic, Azure, Ollama, or any OpenAI-compatible endpoint), with skills mounted as files, persistent memory provided by the memory sidecar (SQLite + FTS5 on a PersistentVolume), and tool sidecars providing runtime capabilities like `kubectl`. A legacy ConfigMap-based memory path is preserved as a fallback.
 4. **Results flow back** through the IPC bridge → NATS → channel pod → user. The controller extracts structured results and memory updates from pod logs.
 5. **Web endpoints** expose agents as HTTP APIs. When an instance has the `web-endpoint` skill, the controller creates a long-lived Deployment (serving mode) with a web-proxy sidecar. The proxy accepts OpenAI-compatible (`/v1/chat/completions`) and MCP (`/sse`, `/message`) requests, creating per-request AgentRun Jobs. An Envoy Gateway with per-instance HTTPRoutes provides external access with TLS.

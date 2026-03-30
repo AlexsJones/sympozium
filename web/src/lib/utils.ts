@@ -39,6 +39,8 @@ export function phaseColor(phase: string | undefined): string {
       return "phase-pending";
     case "serving":
       return "phase-serving";
+    case "postrunning":
+      return "phase-postrunning";
     default:
       return "bg-secondary text-muted-foreground";
   }

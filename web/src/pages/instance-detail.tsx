@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useParams, Link, useSearchParams } from "react-router-dom";
-import { useInstance, useCapabilities } from "@/hooks/use-api";
+import { useInstance, useCapabilities, usePatchInstance } from "@/hooks/use-api";
 import { StatusBadge } from "@/components/status-badge";
 import { GithubAuthDialog } from "@/components/github-auth-dialog";
 import {
@@ -9,6 +9,8 @@ import {
   type SympoziumInstance,
   type AgentSandboxInstanceSpec,
   type CapabilityStatus,
+  type LifecycleHooks,
+  type LifecycleHookContainer,
 } from "@/lib/api";
 import {
   Card,
@@ -20,13 +22,23 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { ArrowLeft, AlertTriangle } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { ArrowLeft, AlertTriangle, Plus, Pencil, Trash2 } from "lucide-react";
 import { formatAge } from "@/lib/utils";
 
 export function InstanceDetailPage() {
   const { name } = useParams<{ name: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
-  const allowedTabs = new Set(["overview", "channels", "skills", "memory", "web-endpoint"]);
+  const allowedTabs = new Set(["overview", "channels", "skills", "memory", "web-endpoint", "lifecycle"]);
   const paramTab = searchParams.get("tab");
   const [activeTab, setActiveTab] = useState<string>(
     paramTab && allowedTabs.has(paramTab) ? paramTab : "overview",
@@ -84,6 +96,7 @@ export function InstanceDetailPage() {
           <TabsTrigger value="skills">Skills</TabsTrigger>
           <TabsTrigger value="memory">Memory</TabsTrigger>
           <TabsTrigger value="web-endpoint">Web Endpoint</TabsTrigger>
+          <TabsTrigger value="lifecycle">Lifecycle</TabsTrigger>
         </TabsList>
 
         <TabsContent value="overview">
@@ -217,6 +230,10 @@ export function InstanceDetailPage() {
 
         <TabsContent value="web-endpoint">
           <WebEndpointTab inst={inst} />
+        </TabsContent>
+
+        <TabsContent value="lifecycle">
+          <LifecycleTab instanceName={inst.metadata.name} lifecycle={inst.spec.agents?.default?.lifecycle} />
         </TabsContent>
       </Tabs>
     </div>
@@ -447,5 +464,267 @@ function SkillsTab({
         onClose={() => setAuthDialogOpen(false)}
       />
     </>
+  );
+}
+
+const lifecycleEnvVars = [
+  { name: "AGENT_RUN_ID", desc: "Unique run identifier", scope: "all" },
+  { name: "INSTANCE_NAME", desc: "SympoziumInstance name", scope: "all" },
+  { name: "AGENT_NAMESPACE", desc: "Kubernetes namespace", scope: "all" },
+  { name: "AGENT_EXIT_CODE", desc: "Agent container exit code", scope: "postRun" },
+  { name: "AGENT_RESULT", desc: "Agent response (truncated to 32Ki)", scope: "postRun" },
+];
+
+const emptyHook: LifecycleHookContainer = { name: "", image: "", command: [], env: [] };
+
+function LifecycleTab({ instanceName, lifecycle }: { instanceName: string; lifecycle?: LifecycleHooks }) {
+  const patchMutation = usePatchInstance();
+  const [editingHook, setEditingHook] = useState<{ hook: LifecycleHookContainer; phase: "preRun" | "postRun"; index: number } | null>(null);
+  const [dialogOpen, setDialogOpen] = useState(false);
+
+  const preRun = lifecycle?.preRun ?? [];
+  const postRun = lifecycle?.postRun ?? [];
+  const rbac = lifecycle?.rbac ?? [];
+
+  const saveLifecycle = (updated: LifecycleHooks) => {
+    patchMutation.mutate({ name: instanceName, data: { lifecycle: updated } });
+  };
+
+  const openAddHook = (phase: "preRun" | "postRun") => {
+    setEditingHook({ hook: { ...emptyHook }, phase, index: -1 });
+    setDialogOpen(true);
+  };
+
+  const openEditHook = (phase: "preRun" | "postRun", index: number) => {
+    const hooks = phase === "preRun" ? preRun : postRun;
+    setEditingHook({ hook: { ...hooks[index], command: [...(hooks[index].command ?? [])], env: [...(hooks[index].env ?? [])] }, phase, index });
+    setDialogOpen(true);
+  };
+
+  const deleteHook = (phase: "preRun" | "postRun", index: number) => {
+    const updated: LifecycleHooks = { preRun: [...preRun], postRun: [...postRun], rbac: [...rbac] };
+    if (phase === "preRun") {
+      updated.preRun = preRun.filter((_, i) => i !== index);
+    } else {
+      updated.postRun = postRun.filter((_, i) => i !== index);
+    }
+    saveLifecycle(updated);
+  };
+
+  const saveHook = (hook: LifecycleHookContainer) => {
+    if (!editingHook) return;
+    const updated: LifecycleHooks = { preRun: [...preRun], postRun: [...postRun], rbac: [...rbac] };
+    const list = editingHook.phase === "preRun" ? updated.preRun! : updated.postRun!;
+    if (editingHook.index === -1) {
+      list.push(hook);
+    } else {
+      list[editingHook.index] = hook;
+    }
+    saveLifecycle(updated);
+    setDialogOpen(false);
+    setEditingHook(null);
+  };
+
+  return (
+    <div className="space-y-4">
+      <HookSection
+        title="PreRun Hooks"
+        description="Execute as init containers before the agent starts."
+        hooks={preRun}
+        onAdd={() => openAddHook("preRun")}
+        onEdit={(i) => openEditHook("preRun", i)}
+        onDelete={(i) => deleteHook("preRun", i)}
+      />
+
+      <HookSection
+        title="PostRun Hooks"
+        description="Execute in a follow-up Job after the agent completes."
+        hooks={postRun}
+        onAdd={() => openAddHook("postRun")}
+        onEdit={(i) => openEditHook("postRun", i)}
+        onDelete={(i) => deleteHook("postRun", i)}
+      />
+
+      {rbac.length > 0 && (
+        <Card>
+          <CardHeader><CardTitle className="text-base">RBAC Rules</CardTitle></CardHeader>
+          <CardContent>
+            <div className="space-y-2">
+              {rbac.map((rule, i) => (
+                <div key={i} className="flex items-center gap-2 text-sm font-mono">
+                  <Badge variant="secondary">{rule.apiGroups.map(g => g || "core").join(", ")}</Badge>
+                  <span className="text-muted-foreground">{rule.resources.join(", ")}</span>
+                  <span className="text-xs text-muted-foreground">[{rule.verbs.join(", ")}]</span>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      <Card>
+        <CardHeader><CardTitle className="text-base">Available Environment Variables</CardTitle></CardHeader>
+        <CardContent>
+          <div className="space-y-1">
+            {lifecycleEnvVars.map((ev) => (
+              <div key={ev.name} className="flex items-baseline gap-3 text-sm">
+                <code className="font-mono text-xs bg-muted/50 px-1.5 py-0.5 rounded min-w-[10rem]">{ev.name}</code>
+                <span className="text-muted-foreground">{ev.desc}</span>
+                {ev.scope === "postRun" && (
+                  <Badge variant="outline" className="text-[10px] px-1.5 py-0">postRun only</Badge>
+                )}
+              </div>
+            ))}
+            <p className="text-xs text-muted-foreground mt-3">
+              Custom env vars from <code className="font-mono">spec.env</code> are also forwarded to all hook containers.
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+
+      <HookEditDialog
+        open={dialogOpen}
+        onOpenChange={(open) => { setDialogOpen(open); if (!open) setEditingHook(null); }}
+        hook={editingHook?.hook ?? emptyHook}
+        phase={editingHook?.phase ?? "preRun"}
+        isNew={editingHook?.index === -1}
+        onSave={saveHook}
+      />
+    </div>
+  );
+}
+
+function HookSection({ title, description, hooks, onAdd, onEdit, onDelete }: {
+  title: string;
+  description: string;
+  hooks: LifecycleHookContainer[];
+  onAdd: () => void;
+  onEdit: (index: number) => void;
+  onDelete: (index: number) => void;
+}) {
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between">
+        <CardTitle className="text-base">{title}</CardTitle>
+        <Button variant="outline" size="sm" onClick={onAdd}>
+          <Plus className="h-3.5 w-3.5 mr-1" /> Add
+        </Button>
+      </CardHeader>
+      <CardContent>
+        {hooks.length > 0 ? (
+          <div className="space-y-3">
+            {hooks.map((hook, i) => (
+              <div key={i} className="rounded-lg border p-3 space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium text-sm">{hook.name}</span>
+                    <Badge variant="secondary" className="font-mono text-xs">{hook.image}</Badge>
+                  </div>
+                  <div className="flex gap-1">
+                    <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={() => onEdit(i)}>
+                      <Pencil className="h-3.5 w-3.5" />
+                    </Button>
+                    <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-destructive hover:text-destructive" onClick={() => onDelete(i)}>
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                </div>
+                {hook.command && hook.command.length > 0 && (
+                  <div className="text-xs">
+                    <span className="text-muted-foreground">Command: </span>
+                    <code className="font-mono bg-muted/50 px-1 py-0.5 rounded">{hook.command.join(" ")}</code>
+                  </div>
+                )}
+                {hook.env && hook.env.length > 0 && (
+                  <div className="text-xs space-y-0.5">
+                    <span className="text-muted-foreground">Env:</span>
+                    {hook.env.map((e, j) => (
+                      <div key={j} className="ml-2 font-mono">
+                        <span className="text-muted-foreground">{e.name}</span>=<span>{e.value}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            No hooks configured. {description}
+          </p>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function HookEditDialog({ open, onOpenChange, hook, phase, isNew, onSave }: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  hook: LifecycleHookContainer;
+  phase: "preRun" | "postRun";
+  isNew: boolean;
+  onSave: (hook: LifecycleHookContainer) => void;
+}) {
+  const [name, setName] = useState(hook.name);
+  const [image, setImage] = useState(hook.image);
+  const [command, setCommand] = useState(hook.command?.join(" ") ?? "");
+  const [envText, setEnvText] = useState(hook.env?.map(e => `${e.name}=${e.value}`).join("\n") ?? "");
+
+  // Reset form when hook changes.
+  useEffect(() => {
+    setName(hook.name);
+    setImage(hook.image);
+    setCommand(hook.command?.join(" ") ?? "");
+    setEnvText(hook.env?.map(e => `${e.name}=${e.value}`).join("\n") ?? "");
+  }, [hook]);
+
+  const handleSave = () => {
+    const envParsed = envText.split("\n").filter(l => l.includes("=")).map(l => {
+      const [k, ...v] = l.split("=");
+      return { name: k.trim(), value: v.join("=") };
+    });
+    onSave({
+      name: name.trim(),
+      image: image.trim(),
+      command: command.trim() ? command.trim().split(/\s+/) : undefined,
+      env: envParsed.length > 0 ? envParsed : undefined,
+    });
+  };
+
+  const valid = name.trim() !== "" && image.trim() !== "";
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>{isNew ? "Add" : "Edit"} {phase === "preRun" ? "PreRun" : "PostRun"} Hook</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4 pt-2">
+          <div className="space-y-2">
+            <Label htmlFor="hook-name">Name</Label>
+            <Input id="hook-name" placeholder="e.g. fetch-context" value={name} onChange={e => setName(e.target.value)} />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="hook-image">Image</Label>
+            <Input id="hook-image" placeholder="e.g. curlimages/curl:latest" value={image} onChange={e => setImage(e.target.value)} />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="hook-command">Command</Label>
+            <Input id="hook-command" placeholder="e.g. sh -c 'curl http://...'" value={command} onChange={e => setCommand(e.target.value)} />
+            <p className="text-xs text-muted-foreground">Space-separated. Leave empty to use the image's default entrypoint.</p>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="hook-env">Environment Variables</Label>
+            <Textarea id="hook-env" placeholder={"KEY=VALUE\nANOTHER=value"} value={envText} onChange={e => setEnvText(e.target.value)} rows={3} className="font-mono text-xs" />
+            <p className="text-xs text-muted-foreground">One per line, KEY=VALUE format.</p>
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+            <Button onClick={handleSave} disabled={!valid}>{isNew ? "Add Hook" : "Save"}</Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }

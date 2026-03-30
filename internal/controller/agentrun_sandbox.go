@@ -164,6 +164,18 @@ func (r *AgentRunReconciler) reconcilePendingAgentSandbox(
 		log.Error(err, "Failed to create skill RBAC")
 	}
 
+	// Create RBAC for lifecycle hook containers if needed.
+	if err := r.ensureLifecycleRBAC(ctx, log, agentRun); err != nil {
+		log.Error(err, "Failed to create lifecycle RBAC")
+	}
+
+	// Create workspace PVC when postRun lifecycle hooks are defined.
+	if agentRun.Spec.Lifecycle != nil && len(agentRun.Spec.Lifecycle.PostRun) > 0 {
+		if err := r.ensureWorkspacePVC(ctx, agentRun); err != nil {
+			return ctrl.Result{}, fmt.Errorf("creating workspace PVC: %w", err)
+		}
+	}
+
 	// Build containers/volumes using the existing shared logic.
 	containers, initContainers := r.buildContainers(agentRun, memoryEnabled, observability, taskSidecars, mcpServers)
 	volumes := r.buildVolumes(agentRun, memoryEnabled, taskSidecars, mcpServers)
@@ -292,9 +304,17 @@ func (r *AgentRunReconciler) reconcileRunningAgentSandbox(
 		log.Info("Agent Sandbox completed successfully")
 		result, resultErr, usage := r.extractResultFromPod(ctx, log, agentRun)
 		if resultErr != "" {
+			hasPostRunHooks := agentRun.Spec.Lifecycle != nil && len(agentRun.Spec.Lifecycle.PostRun) > 0
+			if hasPostRunHooks {
+				return r.startPostRun(ctx, log, agentRun, 1, resultErr, nil)
+			}
 			return ctrl.Result{}, r.failRun(ctx, agentRun, resultErr)
 		}
 		r.extractAndPersistMemory(ctx, log, agentRun)
+		hasPostRunHooks := agentRun.Spec.Lifecycle != nil && len(agentRun.Spec.Lifecycle.PostRun) > 0
+		if hasPostRunHooks {
+			return r.startPostRun(ctx, log, agentRun, 0, result, usage)
+		}
 		return r.succeedRun(ctx, agentRun, result, usage)
 
 	case "Failed", "Error":
@@ -302,14 +322,17 @@ func (r *AgentRunReconciler) reconcileRunningAgentSandbox(
 		// agent-runner writes a detailed error there. Fall back to the
 		// Sandbox condition message if pod logs aren't available.
 		_, resultErr, _ := r.extractResultFromPod(ctx, log, agentRun)
-		if resultErr != "" {
-			return ctrl.Result{}, r.failRun(ctx, agentRun, resultErr)
+		if resultErr == "" {
+			resultErr = sandboxConditionMessage(sandbox.Object)
 		}
-		reason := sandboxConditionMessage(sandbox.Object)
-		if reason == "" {
-			reason = fmt.Sprintf("sandbox CR entered phase %q", phase)
+		if resultErr == "" {
+			resultErr = fmt.Sprintf("sandbox CR entered phase %q", phase)
 		}
-		return ctrl.Result{}, r.failRun(ctx, agentRun, reason)
+		hasPostRunHooks := agentRun.Spec.Lifecycle != nil && len(agentRun.Spec.Lifecycle.PostRun) > 0
+		if hasPostRunHooks {
+			return r.startPostRun(ctx, log, agentRun, 1, resultErr, nil)
+		}
+		return ctrl.Result{}, r.failRun(ctx, agentRun, resultErr)
 
 	case "Suspended":
 		log.Info("Agent Sandbox is suspended")

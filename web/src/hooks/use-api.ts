@@ -69,6 +69,20 @@ export function useCreateInstance() {
   });
 }
 
+export function usePatchInstance() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ name, data }: { name: string; data: Parameters<typeof api.instances.patch>[1] }) =>
+      api.instances.patch(name, data),
+    onSuccess: (_data, variables) => {
+      qc.invalidateQueries({ queryKey: ["instances"] });
+      qc.invalidateQueries({ queryKey: ["instances", variables.name] });
+      toast.success("Instance updated");
+    },
+    onError: toastError,
+  });
+}
+
 // ── Runs ─────────────────────────────────────────────────────────────────────
 
 export function useRuns() {

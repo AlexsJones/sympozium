@@ -61,7 +61,7 @@ spec:
   timeout: "5m"
 ```
 
-Phase transitions: `Pending` → `Running` → `Succeeded` (or `Failed`).
+Phase transitions: `Pending` → `Running` → `Succeeded` (or `Failed`). When [lifecycle hooks](lifecycle-hooks.md) with `postRun` are defined: `Pending` → `Running` → `PostRunning` → `Succeeded` (or `Failed`).
 
 ---
 

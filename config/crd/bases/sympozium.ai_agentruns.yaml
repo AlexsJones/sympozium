@@ -133,6 +133,151 @@ spec:
                 description: InstanceRef is the name of the SympoziumInstance this
                   run belongs to.
                 type: string
+              lifecycle:
+                description: |-
+                  Lifecycle defines pre and post run hooks for this agent run.
+                  PreRun hooks execute as init containers before the agent starts.
+                  PostRun hooks execute in a follow-up Job after the agent completes.
+                properties:
+                  postRun:
+                    description: |-
+                      PostRun containers execute in a follow-up Job after the agent completes.
+                      They have access to /workspace (with agent output) and receive
+                      AGENT_EXIT_CODE and AGENT_RESULT as additional env vars.
+                      PostRun failures are recorded as Conditions but do not change the
+                      agent's final phase (best-effort semantics).
+                    items:
+                      description: LifecycleHookContainer defines a container to run
+                        as a lifecycle hook.
+                      properties:
+                        args:
+                          description: Args are arguments to the entrypoint.
+                          items:
+                            type: string
+                          type: array
+                        command:
+                          description: Command overrides the container entrypoint.
+                          items:
+                            type: string
+                          type: array
+                        env:
+                          description: Env is a list of environment variables for
+                            this hook container.
+                          items:
+                            description: EnvVar is a simplified environment variable
+                              (name + value).
+                            properties:
+                              name:
+                                type: string
+                              value:
+                                type: string
+                            required:
+                            - name
+                            - value
+                            type: object
+                          type: array
+                        image:
+                          description: Image is the container image.
+                          type: string
+                        name:
+                          description: Name is the container name.
+                          type: string
+                        timeout:
+                          description: |-
+                            Timeout is the maximum duration for this hook container.
+                            Defaults to 5 minutes.
+                          type: string
+                      required:
+                      - image
+                      - name
+                      type: object
+                    type: array
+                  preRun:
+                    description: |-
+                      PreRun containers execute as init containers before the agent starts.
+                      They have access to /workspace, /ipc, /tmp and standard env vars.
+                    items:
+                      description: LifecycleHookContainer defines a container to run
+                        as a lifecycle hook.
+                      properties:
+                        args:
+                          description: Args are arguments to the entrypoint.
+                          items:
+                            type: string
+                          type: array
+                        command:
+                          description: Command overrides the container entrypoint.
+                          items:
+                            type: string
+                          type: array
+                        env:
+                          description: Env is a list of environment variables for
+                            this hook container.
+                          items:
+                            description: EnvVar is a simplified environment variable
+                              (name + value).
+                            properties:
+                              name:
+                                type: string
+                              value:
+                                type: string
+                            required:
+                            - name
+                            - value
+                            type: object
+                          type: array
+                        image:
+                          description: Image is the container image.
+                          type: string
+                        name:
+                          description: Name is the container name.
+                          type: string
+                        timeout:
+                          description: |-
+                            Timeout is the maximum duration for this hook container.
+                            Defaults to 5 minutes.
+                          type: string
+                      required:
+                      - image
+                      - name
+                      type: object
+                    type: array
+                  rbac:
+                    description: |-
+                      RBAC defines namespace-scoped Kubernetes RBAC rules to create for
+                      lifecycle hook containers. A Role and RoleBinding are provisioned
+                      in the agent namespace, bound to the "sympozium-agent" ServiceAccount.
+                      This allows hooks to interact with Kubernetes resources (e.g., create
+                      or delete ConfigMaps, read Secrets).
+                    items:
+                      description: RBACRule defines a single Kubernetes RBAC policy
+                        rule.
+                      properties:
+                        apiGroups:
+                          description: APIGroups is the list of API groups (e.g. "",
+                            "apps", "batch").
+                          items:
+                            type: string
+                          type: array
+                        resources:
+                          description: Resources is the list of resources (e.g. "pods",
+                            "deployments").
+                          items:
+                            type: string
+                          type: array
+                        verbs:
+                          description: Verbs is the list of allowed verbs (e.g. "get",
+                            "list", "watch").
+                          items:
+                            type: string
+                          type: array
+                      required:
+                      - apiGroups
+                      - resources
+                      - verbs
+                      type: object
+                    type: array
+                type: object
               mode:
                 default: task
                 description: |-
@@ -394,6 +539,10 @@ spec:
                 type: string
               podName:
                 description: PodName is the name of the pod running this agent.
+                type: string
+              postRunJobName:
+                description: PostRunJobName is the name of the Job created for postRun
+                  lifecycle hooks.
                 type: string
               result:
                 description: Result is the agent's final reply (populated on success).

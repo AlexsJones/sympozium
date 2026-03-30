@@ -219,6 +219,8 @@ func (r *AgentRunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		result, err = r.reconcilePending(ctx, log, agentRun)
 	case sympoziumv1alpha1.AgentRunPhaseRunning:
 		result, err = r.reconcileRunning(ctx, log, agentRun)
+	case sympoziumv1alpha1.AgentRunPhasePostRunning:
+		result, err = r.reconcilePostRunning(ctx, log, agentRun)
 	case sympoziumv1alpha1.AgentRunPhaseServing:
 		result, err = r.reconcileServing(ctx, log, agentRun)
 	case sympoziumv1alpha1.AgentRunPhaseSucceeded, sympoziumv1alpha1.AgentRunPhaseFailed:
@@ -381,6 +383,19 @@ func (r *AgentRunReconciler) reconcilePending(ctx context.Context, log logr.Logg
 		log.Error(err, "Failed to create skill RBAC, continuing without")
 	}
 
+	// Create RBAC for lifecycle hook containers if needed.
+	if err := r.ensureLifecycleRBAC(ctx, log, agentRun); err != nil {
+		log.Error(err, "Failed to create lifecycle RBAC, continuing without")
+	}
+
+	// Create a workspace PVC when postRun lifecycle hooks are defined,
+	// so the workspace persists between the main Job and the postRun Job.
+	if agentRun.Spec.Lifecycle != nil && len(agentRun.Spec.Lifecycle.PostRun) > 0 {
+		if err := r.ensureWorkspacePVC(ctx, agentRun); err != nil {
+			return ctrl.Result{}, fmt.Errorf("creating workspace PVC: %w", err)
+		}
+	}
+
 	// Build and create the Job
 	job := r.buildJob(agentRun, memoryEnabled, observability, sidecars, mcpServers)
 	if err := controllerutil.SetControllerReference(agentRun, job, r.Scheme); err != nil {
@@ -464,20 +479,41 @@ func (r *AgentRunReconciler) reconcileRunning(ctx context.Context, log logr.Logg
 		}
 	}
 
+	// hasPostRunHooks is true when lifecycle postRun containers are defined.
+	hasPostRunHooks := agentRun.Spec.Lifecycle != nil && len(agentRun.Spec.Lifecycle.PostRun) > 0
+
 	// Check Job completion
 	if job.Status.Succeeded > 0 {
 		// Extract the LLM response from pod logs before the pod is gone.
 		result, _, usage := r.extractResultFromPod(ctx, log, agentRun)
 		// Extract and persist memory updates if applicable.
 		r.extractAndPersistMemory(ctx, log, agentRun)
+		if hasPostRunHooks {
+			return r.startPostRun(ctx, log, agentRun, 0, result, usage)
+		}
 		return r.succeedRun(ctx, agentRun, result, usage)
 	}
 	if job.Status.Failed > 0 {
-		_, podErr, _ := r.extractResultFromPod(ctx, log, agentRun)
-		if podErr != "" {
-			return ctrl.Result{}, r.failRun(ctx, agentRun, podErr)
+		// The Job may report failure because a non-agent container (e.g. ipc-bridge)
+		// exited non-zero. Check if the agent itself succeeded via structured result
+		// markers in pod logs — if so, treat it as success.
+		result, podErr, usage := r.extractResultFromPod(ctx, log, agentRun)
+		if result != "" && podErr == "" {
+			log.Info("Job failed but agent produced a success result; treating as success")
+			r.extractAndPersistMemory(ctx, log, agentRun)
+			if hasPostRunHooks {
+				return r.startPostRun(ctx, log, agentRun, 0, result, usage)
+			}
+			return r.succeedRun(ctx, agentRun, result, usage)
 		}
-		return ctrl.Result{}, r.failRun(ctx, agentRun, "Job failed")
+		errMsg := "Job failed"
+		if podErr != "" {
+			errMsg = podErr
+		}
+		if hasPostRunHooks {
+			return r.startPostRun(ctx, log, agentRun, 1, errMsg, nil)
+		}
+		return ctrl.Result{}, r.failRun(ctx, agentRun, errMsg)
 	}
 
 	// When the pod has skill sidecar containers (3+ containers), those
@@ -495,6 +531,9 @@ func (r *AgentRunReconciler) reconcileRunning(ctx context.Context, log logr.Logg
 				r.extractAndPersistMemory(ctx, log, agentRun)
 				// Delete the Job so Kubernetes kills remaining sidecar containers.
 				_ = r.Delete(ctx, job, client.PropagationPolicy(metav1.DeletePropagationBackground))
+				if hasPostRunHooks {
+					return r.startPostRun(ctx, log, agentRun, 0, result, usage)
+				}
 				return r.succeedRun(ctx, agentRun, result, usage)
 			}
 			errMsg := fmt.Sprintf("agent container exited with code %d", exitCode)
@@ -507,6 +546,9 @@ func (r *AgentRunReconciler) reconcileRunning(ctx context.Context, log logr.Logg
 				errMsg = logErr
 			}
 			_ = r.Delete(ctx, job, client.PropagationPolicy(metav1.DeletePropagationBackground))
+			if hasPostRunHooks {
+				return r.startPostRun(ctx, log, agentRun, 1, errMsg, nil)
+			}
 			return ctrl.Result{}, r.failRun(ctx, agentRun, errMsg)
 		}
 	}
@@ -564,6 +606,11 @@ func (r *AgentRunReconciler) checkAgentContainer(ctx context.Context, log logr.L
 func (r *AgentRunReconciler) reconcileCompleted(ctx context.Context, log logr.Logger, agentRun *sympoziumv1alpha1.AgentRun) (ctrl.Result, error) {
 	// Clean up cluster-scoped RBAC created for skill sidecars.
 	r.cleanupSkillRBAC(ctx, log, agentRun)
+
+	// Clean up workspace PVC if it was created for postRun lifecycle hooks.
+	if agentRun.Status.PostRunJobName != "" {
+		r.cleanupWorkspacePVC(ctx, log, agentRun)
+	}
 
 	// Remove the finalizer so the CR can be deleted later if needed.
 	// Use a Patch (not Update) to avoid overwriting status fields (like
@@ -1787,6 +1834,60 @@ func (r *AgentRunReconciler) buildContainers(
 		containers = append(containers, container)
 	}
 
+	// Inject preRun lifecycle hook containers as init containers.
+	// These run after system init containers (wait-for-memory, mcp-discover)
+	// but before the agent starts.
+	if agentRun.Spec.Lifecycle != nil {
+		for _, hook := range agentRun.Spec.Lifecycle.PreRun {
+			hookContainer := corev1.Container{
+				Name:            fmt.Sprintf("pre-%s", hook.Name),
+				Image:           hook.Image,
+				ImagePullPolicy: corev1.PullIfNotPresent,
+				SecurityContext: &corev1.SecurityContext{
+					ReadOnlyRootFilesystem:   &readOnly,
+					AllowPrivilegeEscalation: &noPrivEsc,
+					Capabilities: &corev1.Capabilities{
+						Drop: []corev1.Capability{"ALL"},
+					},
+				},
+				VolumeMounts: []corev1.VolumeMount{
+					{Name: "workspace", MountPath: "/workspace"},
+					{Name: "ipc", MountPath: "/ipc"},
+					{Name: "tmp", MountPath: "/tmp"},
+				},
+				Env: []corev1.EnvVar{
+					{Name: "AGENT_RUN_ID", Value: agentRun.Name},
+					{Name: "INSTANCE_NAME", Value: agentRun.Spec.InstanceRef},
+					{Name: "AGENT_NAMESPACE", Value: agentRun.Namespace},
+				},
+				Resources: corev1.ResourceRequirements{
+					Requests: corev1.ResourceList{
+						corev1.ResourceCPU:    resource.MustParse("100m"),
+						corev1.ResourceMemory: resource.MustParse("128Mi"),
+					},
+					Limits: corev1.ResourceList{
+						corev1.ResourceCPU:    resource.MustParse("500m"),
+						corev1.ResourceMemory: resource.MustParse("512Mi"),
+					},
+				},
+			}
+			if len(hook.Command) > 0 {
+				hookContainer.Command = hook.Command
+			}
+			if len(hook.Args) > 0 {
+				hookContainer.Args = hook.Args
+			}
+			for _, e := range hook.Env {
+				hookContainer.Env = append(hookContainer.Env, corev1.EnvVar{Name: e.Name, Value: e.Value})
+			}
+			// Forward custom env vars from spec.env.
+			for _, k := range envKeys {
+				hookContainer.Env = append(hookContainer.Env, corev1.EnvVar{Name: k, Value: agentRun.Spec.Env[k]})
+			}
+			initContainers = append(initContainers, hookContainer)
+		}
+	}
+
 	return containers, initContainers
 }
 
@@ -1848,15 +1949,31 @@ func (r *AgentRunReconciler) buildVolumes(agentRun *sympoziumv1alpha1.AgentRun, 
 	tmpSizeLimit := resource.MustParse("256Mi")
 	memoryMedium := corev1.StorageMediumMemory
 
-	volumes := []corev1.Volume{
-		{
+	// Use a PVC for /workspace when postRun lifecycle hooks are defined,
+	// so the workspace can be shared between the main Job and the postRun Job.
+	var workspaceVolume corev1.Volume
+	if agentRun.Spec.Lifecycle != nil && len(agentRun.Spec.Lifecycle.PostRun) > 0 {
+		workspaceVolume = corev1.Volume{
+			Name: "workspace",
+			VolumeSource: corev1.VolumeSource{
+				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+					ClaimName: fmt.Sprintf("%s-workspace", agentRun.Name),
+				},
+			},
+		}
+	} else {
+		workspaceVolume = corev1.Volume{
 			Name: "workspace",
 			VolumeSource: corev1.VolumeSource{
 				EmptyDir: &corev1.EmptyDirVolumeSource{
 					SizeLimit: &workspaceSizeLimit,
 				},
 			},
-		},
+		}
+	}
+
+	volumes := []corev1.Volume{
+		workspaceVolume,
 		{
 			Name: "ipc",
 			VolumeSource: corev1.VolumeSource{
@@ -2601,6 +2718,78 @@ func (r *AgentRunReconciler) ensureSkillRBAC(ctx context.Context, log logr.Logge
 	return nil
 }
 
+// ensureLifecycleRBAC creates namespace-scoped Role and RoleBinding for lifecycle
+// hook containers. This grants the "sympozium-agent" ServiceAccount the permissions
+// specified in lifecycle.rbac, so hook containers can interact with Kubernetes
+// resources (e.g., create/delete ConfigMaps).
+func (r *AgentRunReconciler) ensureLifecycleRBAC(ctx context.Context, log logr.Logger, agentRun *sympoziumv1alpha1.AgentRun) error {
+	if agentRun.Spec.Lifecycle == nil || len(agentRun.Spec.Lifecycle.RBAC) == 0 {
+		return nil
+	}
+
+	roleName := fmt.Sprintf("sympozium-lifecycle-%s", agentRun.Name)
+	var rules []rbacv1.PolicyRule
+	for _, rule := range agentRun.Spec.Lifecycle.RBAC {
+		rules = append(rules, rbacv1.PolicyRule{
+			APIGroups: rule.APIGroups,
+			Resources: rule.Resources,
+			Verbs:     rule.Verbs,
+		})
+	}
+
+	role := &rbacv1.Role{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      roleName,
+			Namespace: agentRun.Namespace,
+			Labels: map[string]string{
+				"sympozium.ai/agent-run":  agentRun.Name,
+				"sympozium.ai/component":  "lifecycle",
+				"sympozium.ai/managed-by": "sympozium",
+			},
+		},
+		Rules: rules,
+	}
+	if err := controllerutil.SetControllerReference(agentRun, role, r.Scheme); err != nil {
+		log.Error(err, "Failed to set owner on lifecycle Role")
+	}
+	if err := r.Create(ctx, role); err != nil && !errors.IsAlreadyExists(err) {
+		return fmt.Errorf("creating lifecycle Role %s: %w", roleName, err)
+	}
+
+	rb := &rbacv1.RoleBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      roleName,
+			Namespace: agentRun.Namespace,
+			Labels: map[string]string{
+				"sympozium.ai/agent-run":  agentRun.Name,
+				"sympozium.ai/component":  "lifecycle",
+				"sympozium.ai/managed-by": "sympozium",
+			},
+		},
+		RoleRef: rbacv1.RoleRef{
+			APIGroup: "rbac.authorization.k8s.io",
+			Kind:     "Role",
+			Name:     roleName,
+		},
+		Subjects: []rbacv1.Subject{
+			{
+				Kind:      "ServiceAccount",
+				Name:      "sympozium-agent",
+				Namespace: agentRun.Namespace,
+			},
+		},
+	}
+	if err := controllerutil.SetControllerReference(agentRun, rb, r.Scheme); err != nil {
+		log.Error(err, "Failed to set owner on lifecycle RoleBinding")
+	}
+	if err := r.Create(ctx, rb); err != nil && !errors.IsAlreadyExists(err) {
+		return fmt.Errorf("creating lifecycle RoleBinding %s: %w", roleName, err)
+	}
+
+	log.Info("Created lifecycle RBAC", "role", roleName)
+	return nil
+}
+
 // cleanupSkillRBAC removes cluster-scoped RBAC resources created for an AgentRun.
 // Namespace-scoped resources (Role, RoleBinding) are cleaned up automatically
 // via owner references and garbage collection.
@@ -2805,6 +2994,348 @@ func (r *AgentRunReconciler) resolveMCPServerURLs(
 		resolved = append(resolved, srv)
 	}
 	return resolved
+}
+
+// startPostRun transitions an AgentRun to the PostRunning phase and creates
+// a follow-up Job that executes the postRun lifecycle hook containers.
+func (r *AgentRunReconciler) startPostRun(
+	ctx context.Context, log logr.Logger,
+	agentRun *sympoziumv1alpha1.AgentRun,
+	exitCode int32, resultOrError string,
+	usage *sympoziumv1alpha1.TokenUsage,
+) (ctrl.Result, error) {
+	log.Info("Starting postRun lifecycle hooks", "exitCode", exitCode)
+
+	// Store the agent result/error and exit code in status before building the postRun Job.
+	err := r.updateStatusWithRetry(ctx, agentRun, func(ar *sympoziumv1alpha1.AgentRun) {
+		ar.Status.ExitCode = &exitCode
+		if exitCode == 0 {
+			ar.Status.Result = resultOrError
+		} else {
+			ar.Status.Error = resultOrError
+		}
+		ar.Status.TokenUsage = usage
+	})
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("updating status before postRun: %w", err)
+	}
+
+	postRunJob := r.buildPostRunJob(agentRun, exitCode, resultOrError)
+	if err := controllerutil.SetControllerReference(agentRun, postRunJob, r.Scheme); err != nil {
+		return ctrl.Result{}, fmt.Errorf("setting owner reference on postRun Job: %w", err)
+	}
+
+	if err := r.Create(ctx, postRunJob); err != nil {
+		if errors.IsAlreadyExists(err) {
+			log.Info("PostRun Job already exists")
+		} else {
+			return ctrl.Result{}, fmt.Errorf("creating postRun Job: %w", err)
+		}
+	}
+
+	err = r.updateStatusWithRetry(ctx, agentRun, func(ar *sympoziumv1alpha1.AgentRun) {
+		ar.Status.Phase = sympoziumv1alpha1.AgentRunPhasePostRunning
+		ar.Status.PostRunJobName = postRunJob.Name
+	})
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+}
+
+// buildPostRunJob constructs a Job that runs the postRun lifecycle hook containers.
+// Each hook runs as a sequential init container, followed by a no-op final container.
+func (r *AgentRunReconciler) buildPostRunJob(
+	agentRun *sympoziumv1alpha1.AgentRun,
+	exitCode int32, resultOrError string,
+) *batchv1.Job {
+	labels := map[string]string{
+		"sympozium.ai/agent-run":       agentRun.Name,
+		"sympozium.ai/instance":        agentRun.Spec.InstanceRef,
+		"sympozium.ai/component":       "post-run",
+		"app.kubernetes.io/part-of":    "sympozium",
+		"app.kubernetes.io/managed-by": "sympozium-controller",
+	}
+
+	jobName := fmt.Sprintf("%s-postrun", agentRun.Name)
+	// Kubernetes name length limit is 63 chars.
+	if len(jobName) > 63 {
+		jobName = jobName[:63]
+	}
+
+	ttl := int32(300)
+	deadline := int64(600) // 10 min default for postRun
+	backoffLimit := int32(0)
+
+	readOnly := true
+	noPrivEsc := false
+	runAsNonRoot := true
+	runAsUser := int64(1000)
+	fsGroup := int64(1000)
+
+	// Truncate result for env var safety (env vars have a practical limit).
+	truncatedResult := resultOrError
+	if len(truncatedResult) > 32*1024 {
+		truncatedResult = truncatedResult[:32*1024]
+	}
+
+	// Build base env vars available to all postRun containers.
+	baseEnv := []corev1.EnvVar{
+		{Name: "AGENT_RUN_ID", Value: agentRun.Name},
+		{Name: "INSTANCE_NAME", Value: agentRun.Spec.InstanceRef},
+		{Name: "AGENT_NAMESPACE", Value: agentRun.Namespace},
+		{Name: "AGENT_EXIT_CODE", Value: fmt.Sprintf("%d", exitCode)},
+		{Name: "AGENT_RESULT", Value: truncatedResult},
+	}
+	// Forward custom env vars from spec.env.
+	envKeys := make([]string, 0, len(agentRun.Spec.Env))
+	for k := range agentRun.Spec.Env {
+		envKeys = append(envKeys, k)
+	}
+	sort.Strings(envKeys)
+	for _, k := range envKeys {
+		baseEnv = append(baseEnv, corev1.EnvVar{Name: k, Value: agentRun.Spec.Env[k]})
+	}
+
+	// Each postRun hook becomes a sequential init container.
+	var initContainers []corev1.Container
+	for _, hook := range agentRun.Spec.Lifecycle.PostRun {
+		hookEnv := make([]corev1.EnvVar, len(baseEnv))
+		copy(hookEnv, baseEnv)
+		for _, e := range hook.Env {
+			hookEnv = append(hookEnv, corev1.EnvVar{Name: e.Name, Value: e.Value})
+		}
+
+		hookContainer := corev1.Container{
+			Name:            fmt.Sprintf("post-%s", hook.Name),
+			Image:           hook.Image,
+			ImagePullPolicy: corev1.PullIfNotPresent,
+			SecurityContext: &corev1.SecurityContext{
+				ReadOnlyRootFilesystem:   &readOnly,
+				AllowPrivilegeEscalation: &noPrivEsc,
+				Capabilities: &corev1.Capabilities{
+					Drop: []corev1.Capability{"ALL"},
+				},
+			},
+			VolumeMounts: []corev1.VolumeMount{
+				{Name: "workspace", MountPath: "/workspace"},
+				{Name: "tmp", MountPath: "/tmp"},
+			},
+			Env: hookEnv,
+			Resources: corev1.ResourceRequirements{
+				Requests: corev1.ResourceList{
+					corev1.ResourceCPU:    resource.MustParse("100m"),
+					corev1.ResourceMemory: resource.MustParse("128Mi"),
+				},
+				Limits: corev1.ResourceList{
+					corev1.ResourceCPU:    resource.MustParse("500m"),
+					corev1.ResourceMemory: resource.MustParse("512Mi"),
+				},
+			},
+		}
+		if len(hook.Command) > 0 {
+			hookContainer.Command = hook.Command
+		}
+		if len(hook.Args) > 0 {
+			hookContainer.Args = hook.Args
+		}
+		initContainers = append(initContainers, hookContainer)
+	}
+
+	// Volumes: workspace PVC + tmp EmptyDir.
+	tmpSizeLimit := resource.MustParse("256Mi")
+	volumes := []corev1.Volume{
+		{
+			Name: "workspace",
+			VolumeSource: corev1.VolumeSource{
+				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+					ClaimName: fmt.Sprintf("%s-workspace", agentRun.Name),
+				},
+			},
+		},
+		{
+			Name: "tmp",
+			VolumeSource: corev1.VolumeSource{
+				EmptyDir: &corev1.EmptyDirVolumeSource{
+					SizeLimit: &tmpSizeLimit,
+				},
+			},
+		},
+	}
+
+	return &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      jobName,
+			Namespace: agentRun.Namespace,
+			Labels:    labels,
+		},
+		Spec: batchv1.JobSpec{
+			TTLSecondsAfterFinished: &ttl,
+			ActiveDeadlineSeconds:   &deadline,
+			BackoffLimit:            &backoffLimit,
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: labels,
+				},
+				Spec: corev1.PodSpec{
+					RestartPolicy:      corev1.RestartPolicyNever,
+					ServiceAccountName: "sympozium-agent",
+					ImagePullSecrets:   agentRun.Spec.ImagePullSecrets,
+					SecurityContext: &corev1.PodSecurityContext{
+						RunAsNonRoot: &runAsNonRoot,
+						RunAsUser:    &runAsUser,
+						FSGroup:      &fsGroup,
+					},
+					InitContainers: initContainers,
+					Containers: []corev1.Container{
+						{
+							Name:            "done",
+							Image:           "busybox:1.36",
+							ImagePullPolicy: corev1.PullIfNotPresent,
+							Command:         []string{"true"},
+							SecurityContext: &corev1.SecurityContext{
+								ReadOnlyRootFilesystem:   &readOnly,
+								AllowPrivilegeEscalation: &noPrivEsc,
+								Capabilities: &corev1.Capabilities{
+									Drop: []corev1.Capability{"ALL"},
+								},
+							},
+							Resources: corev1.ResourceRequirements{
+								Requests: corev1.ResourceList{
+									corev1.ResourceCPU:    resource.MustParse("10m"),
+									corev1.ResourceMemory: resource.MustParse("8Mi"),
+								},
+								Limits: corev1.ResourceList{
+									corev1.ResourceCPU:    resource.MustParse("50m"),
+									corev1.ResourceMemory: resource.MustParse("16Mi"),
+								},
+							},
+						},
+					},
+					Volumes: volumes,
+				},
+			},
+		},
+	}
+}
+
+// reconcilePostRunning monitors the postRun Job and transitions to the final phase.
+func (r *AgentRunReconciler) reconcilePostRunning(ctx context.Context, log logr.Logger, agentRun *sympoziumv1alpha1.AgentRun) (ctrl.Result, error) {
+	if agentRun.Status.PostRunJobName == "" {
+		log.Info("PostRunning phase but no postRun Job name; failing")
+		return ctrl.Result{}, r.failRun(ctx, agentRun, "postRun Job name missing")
+	}
+
+	var job batchv1.Job
+	if err := r.Get(ctx, client.ObjectKey{Namespace: agentRun.Namespace, Name: agentRun.Status.PostRunJobName}, &job); err != nil {
+		if errors.IsNotFound(err) {
+			log.Info("PostRun Job not found, requeueing")
+			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+		}
+		return ctrl.Result{}, err
+	}
+
+	// Determine the original agent outcome from status.
+	agentSucceeded := agentRun.Status.ExitCode != nil && *agentRun.Status.ExitCode == 0
+
+	if job.Status.Succeeded > 0 {
+		log.Info("PostRun hooks completed successfully")
+		if agentSucceeded {
+			return r.succeedRun(ctx, agentRun, agentRun.Status.Result, agentRun.Status.TokenUsage)
+		}
+		return ctrl.Result{}, r.failRun(ctx, agentRun, agentRun.Status.Error)
+	}
+
+	if job.Status.Failed > 0 {
+		log.Info("PostRun hooks failed (best-effort, not changing agent outcome)")
+		// Record the postRun failure as a Condition but don't change the agent's outcome.
+		_ = r.updateStatusWithRetry(ctx, agentRun, func(ar *sympoziumv1alpha1.AgentRun) {
+			now := metav1.Now()
+			ar.Status.Conditions = append(ar.Status.Conditions, metav1.Condition{
+				Type:               "PostRunFailed",
+				Status:             metav1.ConditionTrue,
+				LastTransitionTime: now,
+				Reason:             "PostRunJobFailed",
+				Message:            "One or more postRun lifecycle hooks failed",
+			})
+		})
+		if agentSucceeded {
+			return r.succeedRun(ctx, agentRun, agentRun.Status.Result, agentRun.Status.TokenUsage)
+		}
+		return ctrl.Result{}, r.failRun(ctx, agentRun, agentRun.Status.Error)
+	}
+
+	// PostRun Job still running — check timeout.
+	if agentRun.Status.StartedAt != nil {
+		elapsed := time.Since(agentRun.Status.StartedAt.Time)
+		// PostRun gets 10 minutes by default.
+		postRunTimeout := 10 * time.Minute
+		if elapsed > postRunTimeout {
+			log.Info("PostRun Job timed out", "elapsed", elapsed)
+			_ = r.Delete(ctx, &job, client.PropagationPolicy(metav1.DeletePropagationForeground))
+			if agentSucceeded {
+				return r.succeedRun(ctx, agentRun, agentRun.Status.Result, agentRun.Status.TokenUsage)
+			}
+			return ctrl.Result{}, r.failRun(ctx, agentRun, agentRun.Status.Error)
+		}
+	}
+
+	return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+}
+
+// ensureWorkspacePVC creates a PersistentVolumeClaim for the workspace volume
+// when postRun lifecycle hooks are defined. This allows the workspace to persist
+// between the main agent Job and the postRun Job.
+func (r *AgentRunReconciler) ensureWorkspacePVC(ctx context.Context, agentRun *sympoziumv1alpha1.AgentRun) error {
+	pvcName := fmt.Sprintf("%s-workspace", agentRun.Name)
+	storageSize := resource.MustParse("1Gi")
+	accessMode := corev1.ReadWriteOnce
+
+	pvc := &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      pvcName,
+			Namespace: agentRun.Namespace,
+			Labels: map[string]string{
+				"sympozium.ai/agent-run": agentRun.Name,
+				"sympozium.ai/component": "workspace",
+			},
+		},
+		Spec: corev1.PersistentVolumeClaimSpec{
+			AccessModes: []corev1.PersistentVolumeAccessMode{accessMode},
+			Resources: corev1.VolumeResourceRequirements{
+				Requests: corev1.ResourceList{
+					corev1.ResourceStorage: storageSize,
+				},
+			},
+		},
+	}
+
+	if err := controllerutil.SetControllerReference(agentRun, pvc, r.Scheme); err != nil {
+		return fmt.Errorf("setting owner reference on workspace PVC: %w", err)
+	}
+
+	if err := r.Create(ctx, pvc); err != nil {
+		if errors.IsAlreadyExists(err) {
+			return nil
+		}
+		return err
+	}
+	return nil
+}
+
+// cleanupWorkspacePVC deletes the workspace PVC created for postRun lifecycle hooks.
+func (r *AgentRunReconciler) cleanupWorkspacePVC(ctx context.Context, log logr.Logger, agentRun *sympoziumv1alpha1.AgentRun) {
+	pvcName := fmt.Sprintf("%s-workspace", agentRun.Name)
+	pvc := &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      pvcName,
+			Namespace: agentRun.Namespace,
+		},
+	}
+	if err := r.Delete(ctx, pvc); err != nil && !errors.IsNotFound(err) {
+		log.Error(err, "Failed to delete workspace PVC", "pvc", pvcName)
+	}
 }
 
 // SetupWithManager sets up the controller with the Manager.

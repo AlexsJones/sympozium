@@ -46,12 +46,39 @@ export interface AgentSandboxInstanceSpec {
   };
 }
 
+export interface EnvVar {
+  name: string;
+  value: string;
+}
+
+export interface LifecycleHookContainer {
+  name: string;
+  image: string;
+  command?: string[];
+  args?: string[];
+  env?: EnvVar[];
+  timeout?: string;
+}
+
+export interface RBACRule {
+  apiGroups: string[];
+  resources: string[];
+  verbs: string[];
+}
+
+export interface LifecycleHooks {
+  preRun?: LifecycleHookContainer[];
+  postRun?: LifecycleHookContainer[];
+  rbac?: RBACRule[];
+}
+
 export interface AgentConfig {
   model: string;
   baseURL?: string;
   thinking?: string;
   nodeSelector?: Record<string, string>;
   agentSandbox?: AgentSandboxInstanceSpec;
+  lifecycle?: LifecycleHooks;
 }
 
 export interface AgentsSpec {
@@ -129,6 +156,7 @@ export interface AgentRunSpec {
   timeout?: string;
   cleanup?: string;
   mode?: string;
+  lifecycle?: LifecycleHooks;
 }
 
 export interface AgentRunStatus {
@@ -143,6 +171,7 @@ export interface AgentRunStatus {
   error?: string;
   exitCode?: number;
   tokenUsage?: TokenUsage;
+  postRunJobName?: string;
   conditions?: Condition[];
 }
 
@@ -639,7 +668,10 @@ export const api = {
       apiFetch<SympoziumInstance>(`/api/v1/instances/${name}`),
     delete: (name: string) =>
       apiFetch<void>(`/api/v1/instances/${name}`, { method: "DELETE" }),
-    patch: (name: string, data: { webEndpoint?: { enabled?: boolean; hostname?: string; rateLimit?: { requestsPerMinute?: number } } }) =>
+    patch: (name: string, data: {
+      webEndpoint?: { enabled?: boolean; hostname?: string; rateLimit?: { requestsPerMinute?: number } };
+      lifecycle?: LifecycleHooks | null;
+    }) =>
       apiFetch<SympoziumInstance>(`/api/v1/instances/${name}`, {
         method: "PATCH",
         body: JSON.stringify(data),

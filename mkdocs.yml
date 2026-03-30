@@ -80,6 +80,7 @@ nav:
     - Custom Resources: concepts/custom-resources.md
     - PersonaPacks: concepts/personapacks.md
     - Skills & Sidecars: concepts/skills.md
+    - Lifecycle Hooks: concepts/lifecycle-hooks.md
     - Channels: concepts/channels.md
     - Agent Sandboxing: concepts/agent-sandbox.md
     - Security: concepts/security.md
