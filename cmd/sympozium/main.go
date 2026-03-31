@@ -1329,6 +1329,13 @@ func runInstall(imageTag string, setValues []string) error {
 		time.Sleep(10 * time.Second)
 	}
 
+	// ── Ensure namespace exists ─────────────────────────────────────────
+	if err := kubectlQuiet("get", "namespace", helmNamespace); err != nil {
+		if err := kubectl("create", "namespace", helmNamespace); err != nil {
+			return fmt.Errorf("create namespace %s: %w", helmNamespace, err)
+		}
+	}
+
 	// ── Helm install or upgrade ─────────────────────────────────────────
 	cfg, err := newHelmConfig(helmNamespace)
 	if err != nil {
