@@ -656,3 +656,148 @@ func TestCallAnthropic_ToolErrorIsError(t *testing.T) {
 		}
 	}
 }
+
+// TestCallOpenAI_EmptyTerminalTurnFallsBack reproduces the exact qwen3.5-9b
+// on LM Studio failure pattern at the wire level:
+//
+//   Turn 1: assistant emits reasoning content + tool_calls, finish_reason="tool_calls"
+//   Turn 2: assistant emits EMPTY content, finish_reason="stop"
+//
+// Before the accumulated-reasoning fallback was added, the agent returned an
+// empty response and the UX showed "No result available" despite 292 output
+// tokens having been generated. This test is the regression guard.
+func TestCallOpenAI_EmptyTerminalTurnFallsBack(t *testing.T) {
+	callCount := 0
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		w.Header().Set("Content-Type", "application/json")
+
+		if callCount == 1 {
+			// Reasoning preamble + tool call.
+			json.NewEncoder(w).Encode(map[string]any{
+				"id": "chatcmpl-1", "object": "chat.completion", "model": "qwen/qwen3.5-9b",
+				"choices": []map[string]any{{
+					"index": 0,
+					"message": map[string]any{
+						"role":    "assistant",
+						"content": "I'll scan the cluster now for security issues.",
+						"tool_calls": []map[string]any{{
+							"id":   "call_abc",
+							"type": "function",
+							"function": map[string]any{
+								"name":      "read_file",
+								"arguments": `{"path":"/tmp/scan"}`,
+							},
+						}},
+					},
+					"finish_reason": "tool_calls",
+				}},
+				"usage": map[string]int{"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150},
+			})
+			return
+		}
+
+		// Terminal turn: empty content (qwen3.5 quirk after tool result).
+		json.NewEncoder(w).Encode(map[string]any{
+			"id": "chatcmpl-2", "object": "chat.completion", "model": "qwen/qwen3.5-9b",
+			"choices": []map[string]any{{
+				"index": 0,
+				"message": map[string]any{
+					"role":    "assistant",
+					"content": "",
+				},
+				"finish_reason": "stop",
+			}},
+			"usage": map[string]int{"prompt_tokens": 200, "completion_tokens": 242, "total_tokens": 442},
+		})
+	})
+
+	srv := httptest.NewServer(handler)
+	defer srv.Close()
+
+	tools := []ToolDef{
+		{Name: "read_file", Description: "Read a file",
+			Parameters: map[string]any{
+				"properties": map[string]any{"path": map[string]any{"type": "string"}},
+				"required":   []string{"path"},
+			}},
+	}
+
+	text, inTok, outTok, toolCalls, err := callOpenAI(t.Context(),
+		"lm-studio", "key", srv.URL, "qwen/qwen3.5-9b",
+		"You are a security scanner.", "Scan the cluster", tools)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if text == "" {
+		t.Fatal("response is EMPTY — accumulated-reasoning fallback did not kick in (REGRESSION)")
+	}
+	if !strings.Contains(text, "I'll scan the cluster now") {
+		t.Errorf("response should contain turn-1 reasoning preamble, got: %q", text)
+	}
+	if callCount != 2 {
+		t.Errorf("callCount = %d, want 2 (tool-call turn + terminal turn)", callCount)
+	}
+	if toolCalls != 1 {
+		t.Errorf("toolCalls = %d, want 1", toolCalls)
+	}
+	if inTok != 300 || outTok != 292 {
+		t.Errorf("tokens = (%d,%d), want (300,292) accumulated across both turns", inTok, outTok)
+	}
+}
+
+// TestCallAnthropic_EmptyTerminalTurnFallsBack is the equivalent regression
+// guard for the Anthropic provider: if the terminal turn has no text blocks,
+// the accumulated reasoning from earlier turns surfaces in the response.
+func TestCallAnthropic_EmptyTerminalTurnFallsBack(t *testing.T) {
+	callCount := 0
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		w.Header().Set("Content-Type", "application/json")
+
+		if callCount == 1 {
+			// Reasoning text + tool_use block.
+			json.NewEncoder(w).Encode(map[string]any{
+				"id": "msg_1", "type": "message", "role": "assistant", "model": "claude-test",
+				"content": []map[string]any{
+					{"type": "text", "text": "Let me check that file for you."},
+					{"type": "tool_use", "id": "tu_1", "name": "read_file",
+						"input": map[string]string{"path": "/tmp/scan"}},
+				},
+				"stop_reason": "tool_use",
+				"usage":       map[string]int{"input_tokens": 100, "output_tokens": 50},
+			})
+			return
+		}
+
+		// Terminal turn: no text blocks at all (e.g. refusal, empty response).
+		json.NewEncoder(w).Encode(map[string]any{
+			"id": "msg_2", "type": "message", "role": "assistant", "model": "claude-test",
+			"content":     []map[string]any{},
+			"stop_reason": "end_turn",
+			"usage":       map[string]int{"input_tokens": 200, "output_tokens": 10},
+		})
+	})
+
+	srv := httptest.NewServer(handler)
+	defer srv.Close()
+
+	tools := []ToolDef{
+		{Name: "read_file", Description: "Read a file",
+			Parameters: map[string]any{
+				"properties": map[string]any{"path": map[string]any{"type": "string"}},
+				"required":   []string{"path"},
+			}},
+	}
+
+	text, _, _, _, err := callAnthropic(t.Context(), "key", srv.URL, "claude-test", "sys", "Check file", tools)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if text == "" {
+		t.Fatal("response is EMPTY — accumulated-reasoning fallback did not kick in (REGRESSION)")
+	}
+	if !strings.Contains(text, "Let me check that file") {
+		t.Errorf("response should contain turn-1 reasoning text, got: %q", text)
+	}
+}
