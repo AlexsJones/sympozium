@@ -986,14 +986,14 @@ export function OnboardingWizard({
                 </p>
               </div>
               <Select
-                value={form.runTimeout || ""}
-                onValueChange={(v) => setForm({ ...form, runTimeout: v })}
+                value={form.runTimeout || "default"}
+                onValueChange={(v) => setForm({ ...form, runTimeout: v === "default" ? "" : v })}
               >
                 <SelectTrigger className="h-7 text-xs">
                   <SelectValue placeholder="Provider default" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">Provider default</SelectItem>
+                  <SelectItem value="default">Provider default</SelectItem>
                   <SelectItem value="10m">10 minutes</SelectItem>
                   <SelectItem value="30m">30 minutes</SelectItem>
                   <SelectItem value="1h">1 hour</SelectItem>
