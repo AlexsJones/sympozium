@@ -350,8 +350,10 @@ func main() {
 	}
 
 	// Auto-store task/response in memory server for future context.
+	// Must be synchronous — the process exits shortly after this point,
+	// so a goroutine would be killed before the HTTP POST completes.
 	if res.Status == "success" && res.Response != "" {
-		go autoStoreMemory(task, res.Response)
+		autoStoreMemory(task, res.Response)
 	}
 
 	// Extract and emit memory update before stripping markers from the response.

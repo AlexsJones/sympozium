@@ -470,6 +470,79 @@ func TestQueryMemoryContext_LongTaskTruncated(t *testing.T) {
 	}
 }
 
+// ── autoStoreMemory tests ────────────────────────────────────────────────────
+
+func TestAutoStoreMemory_StoresContent(t *testing.T) {
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" || r.URL.Path != "/store" {
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+		json.NewDecoder(r.Body).Decode(&gotBody)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"success": true})
+	}))
+	defer srv.Close()
+
+	old := memoryServerURL
+	memoryServerURL = srv.URL
+	defer func() { memoryServerURL = old }()
+
+	autoStoreMemory("list pods", "There are 3 pods running.")
+
+	// autoStoreMemory is synchronous, so gotBody must be populated by now.
+	if gotBody == nil {
+		t.Fatal("expected /store to be called, but it was not — autoStoreMemory may be running in a goroutine")
+	}
+	content, _ := gotBody["content"].(string)
+	if !strings.Contains(content, "list pods") {
+		t.Errorf("expected content to contain task, got %q", content)
+	}
+	if !strings.Contains(content, "There are 3 pods running.") {
+		t.Errorf("expected content to contain response, got %q", content)
+	}
+	tags, _ := gotBody["tags"].([]any)
+	if len(tags) != 2 || tags[0] != "auto" || tags[1] != "agent-run" {
+		t.Errorf("unexpected tags: %v", tags)
+	}
+}
+
+func TestAutoStoreMemory_TruncatesLongContent(t *testing.T) {
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&gotBody)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"success": true})
+	}))
+	defer srv.Close()
+
+	old := memoryServerURL
+	memoryServerURL = srv.URL
+	defer func() { memoryServerURL = old }()
+
+	longTask := strings.Repeat("x", 1000)
+	longResponse := strings.Repeat("y", 2000)
+	autoStoreMemory(longTask, longResponse)
+
+	content, _ := gotBody["content"].(string)
+	// Task truncated to 500 + "...", response to 1000 + "..."
+	if len(content) > 1600 {
+		t.Errorf("content should be truncated, got %d chars", len(content))
+	}
+	if !strings.HasSuffix(strings.SplitN(content, "\n", 2)[0], "...") {
+		t.Error("expected truncated task to end with ...")
+	}
+}
+
+func TestAutoStoreMemory_NoopWithoutServer(t *testing.T) {
+	old := memoryServerURL
+	memoryServerURL = ""
+	defer func() { memoryServerURL = old }()
+
+	// Should not panic or error.
+	autoStoreMemory("task", "response")
+}
+
 func TestExecuteMemoryTool_RetriesWithRecovery(t *testing.T) {
 	var callCount atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
