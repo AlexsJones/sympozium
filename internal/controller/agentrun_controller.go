@@ -39,6 +39,7 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	sympoziumv1alpha1 "github.com/sympozium-ai/sympozium/api/v1alpha1"
+	"github.com/sympozium-ai/sympozium/internal/eventbus"
 	"github.com/sympozium-ai/sympozium/internal/orchestrator"
 	"gopkg.in/yaml.v3"
 )
@@ -79,6 +80,11 @@ type AgentRunReconciler struct {
 	// DynamicClient is used for Agent Sandbox CRD operations.
 	// Nil when agent-sandbox support is disabled or CRDs are not installed.
 	DynamicClient dynamic.Interface
+
+	// EventBus publishes agent lifecycle events (e.g. agent.run.failed) so
+	// that components like the web proxy can react without polling the CRD.
+	// Optional — nil when NATS is not configured.
+	EventBus eventbus.EventBus
 }
 
 const imageRegistry = "ghcr.io/sympozium-ai/sympozium"
@@ -2528,6 +2534,22 @@ func (r *AgentRunReconciler) failRun(ctx context.Context, agentRun *sympoziumv1a
 		"instance", agentRun.Spec.InstanceRef,
 		"error", reason,
 	)
+
+	// Publish failure event so web proxy / channel router can unblock.
+	if r.EventBus != nil {
+		metadata := map[string]string{
+			"agentRunID":   agentRun.Name,
+			"instanceName": agentRun.Spec.InstanceRef,
+		}
+		data := map[string]string{"error": reason}
+		event, err := eventbus.NewEvent(eventbus.TopicAgentRunFailed, metadata, data)
+		if err == nil {
+			if pubErr := r.EventBus.Publish(ctx, eventbus.TopicAgentRunFailed, event); pubErr != nil {
+				slog.ErrorContext(ctx, "failed to publish agent.run.failed event",
+					"agent_run", agentRun.Name, "error", pubErr)
+			}
+		}
+	}
 
 	return nil
 }

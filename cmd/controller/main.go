@@ -117,7 +117,7 @@ func main() {
 		setupLog.Info("Agent Sandbox explicitly disabled via AGENT_SANDBOX_ENABLED=false")
 	}
 
-	if err := (&controller.AgentRunReconciler{
+	agentRunReconciler := &controller.AgentRunReconciler{
 		Client:          mgr.GetClient(),
 		Scheme:          mgr.GetScheme(),
 		Log:             ctrl.Log.WithName("controllers").WithName("AgentRun"),
@@ -126,7 +126,8 @@ func main() {
 		ImageTag:        imageTag,
 		RunHistoryLimit: maxRunHistory,
 		DynamicClient:   dynamicClient,
-	}).SetupWithManager(mgr); err != nil {
+	}
+	if err := agentRunReconciler.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "AgentRun")
 		os.Exit(1)
 	}
@@ -195,6 +196,8 @@ func main() {
 		if err != nil {
 			setupLog.Error(err, "unable to connect to NATS — channel routing disabled")
 		} else {
+			agentRunReconciler.EventBus = eb
+
 			router := &controller.ChannelRouter{
 				Client:   mgr.GetClient(),
 				EventBus: eb,
