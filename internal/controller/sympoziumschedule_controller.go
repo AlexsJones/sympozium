@@ -3,6 +3,8 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -18,6 +20,11 @@ import (
 
 	sympoziumv1alpha1 "github.com/sympozium-ai/sympozium/api/v1alpha1"
 )
+
+// maxScheduleRunCreateRetries bounds the collision-retry loop when the
+// scheduler's chosen run suffix clashes with an existing AgentRun (e.g. from
+// a prior incarnation of this schedule before it was deleted and recreated).
+const maxScheduleRunCreateRetries = 100
 
 const sympoziumScheduleFinalizer = "sympozium.ai/schedule-finalizer"
 
@@ -164,8 +171,20 @@ func (r *SympoziumScheduleReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		return ctrl.Result{RequeueAfter: 60 * time.Second}, nil
 	}
 
+	// Pick the next available run number. The naive `TotalRuns+1` choice
+	// collides when this schedule has been deleted and recreated (e.g.
+	// PersonaPack disabled then re-enabled) because the counter resets
+	// but the old AgentRun resources persist. List existing runs that
+	// belong to this schedule, find the highest numeric suffix, and
+	// start from there.
+	nextNum, err := r.nextScheduledRunNumber(ctx, schedule)
+	if err != nil {
+		log.Error(err, "failed to list existing scheduled runs; falling back to TotalRuns counter")
+		nextNum = int(schedule.Status.TotalRuns) + 1
+	}
+
 	// Create the AgentRun.
-	runName := fmt.Sprintf("%s-%d", schedule.Name, schedule.Status.TotalRuns+1)
+	runName := fmt.Sprintf("%s-%d", schedule.Name, nextNum)
 	agentRun := &sympoziumv1alpha1.AgentRun{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      runName,
@@ -212,20 +231,40 @@ func (r *SympoziumScheduleReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		agentRun.Spec.Skills = append(agentRun.Spec.Skills, skill)
 	}
 
-	if err := r.Create(ctx, agentRun); err != nil {
+	// Collision-retry loop: if another actor (or a race with our own
+	// prior reconcile) created the same name, bump the suffix and try
+	// again. Bounded to avoid an unbounded spin.
+	for attempt := 0; attempt < maxScheduleRunCreateRetries; attempt++ {
+		err := r.Create(ctx, agentRun)
+		if err == nil {
+			break
+		}
 		if !errors.IsAlreadyExists(err) {
 			log.Error(err, "failed to create AgentRun")
 			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+		}
+		log.Info("scheduled run name collision; trying next suffix",
+			"run", runName, "attempt", attempt+1)
+		nextNum++
+		runName = fmt.Sprintf("%s-%d", schedule.Name, nextNum)
+		agentRun.ObjectMeta.Name = runName
+		if attempt == maxScheduleRunCreateRetries-1 {
+			log.Error(fmt.Errorf("exceeded collision retries"),
+				"could not pick a unique scheduled run name", "lastAttempted", runName)
+			return ctrl.Result{RequeueAfter: 60 * time.Second}, nil
 		}
 	}
 
 	log.Info("Created scheduled AgentRun", "run", runName, "type", schedule.Spec.Type)
 
-	// Update status.
+	// Update status. Use the actual number that was committed (after any
+	// collision retries) so TotalRuns stays in sync with observable state.
 	nowMeta := metav1.Now()
 	schedule.Status.LastRunTime = &nowMeta
 	schedule.Status.LastRunName = runName
-	schedule.Status.TotalRuns++
+	if int64(nextNum) > schedule.Status.TotalRuns {
+		schedule.Status.TotalRuns = int64(nextNum)
+	}
 
 	// Recompute next run from now.
 	next := sched.Next(now)
@@ -239,6 +278,50 @@ func (r *SympoziumScheduleReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		delay = 60 * time.Second
 	}
 	return ctrl.Result{RequeueAfter: delay}, nil
+}
+
+// nextScheduledRunNumber returns the next numeric suffix to use when naming
+// a scheduled AgentRun, picking the higher of:
+//
+//   - status.TotalRuns + 1 (the counter the scheduler maintains), and
+//   - 1 + the maximum observed suffix on existing AgentRuns that belong to
+//     this schedule (identified via the sympozium.ai/schedule label).
+//
+// The second branch handles the case where this schedule was previously
+// deleted (e.g. PersonaPack disabled) and recreated: TotalRuns resets to 0
+// but orphan AgentRuns from the previous incarnation persist with names like
+// `<schedule>-1`, `<schedule>-2`, … Picking a suffix that's already in use
+// would collide silently and leave the scheduler emitting ghost "created"
+// log lines without actually creating runs.
+func (r *SympoziumScheduleReconciler) nextScheduledRunNumber(ctx context.Context, schedule *sympoziumv1alpha1.SympoziumSchedule) (int, error) {
+	base := int(schedule.Status.TotalRuns) + 1
+	var runs sympoziumv1alpha1.AgentRunList
+	if err := r.List(ctx, &runs,
+		client.InNamespace(schedule.Namespace),
+		client.MatchingLabels{"sympozium.ai/schedule": schedule.Name},
+	); err != nil {
+		return base, err
+	}
+	prefix := schedule.Name + "-"
+	maxObserved := 0
+	for i := range runs.Items {
+		name := runs.Items[i].Name
+		if !strings.HasPrefix(name, prefix) {
+			continue
+		}
+		suffix := strings.TrimPrefix(name, prefix)
+		n, err := strconv.Atoi(suffix)
+		if err != nil || n <= 0 {
+			continue
+		}
+		if n > maxObserved {
+			maxObserved = n
+		}
+	}
+	if maxObserved+1 > base {
+		return maxObserved + 1, nil
+	}
+	return base, nil
 }
 
 // readMemoryConfigMap reads the MEMORY.md content from the instance's memory
