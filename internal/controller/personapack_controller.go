@@ -277,6 +277,21 @@ func (r *PersonaPackReconciler) reconcilePersona(
 			needsUpdate = true
 		}
 
+		// Propagate persona systemPrompt changes so edits to the pack
+		// actually reach the running agents (otherwise a pack author
+		// can't tune agent behaviour without re-stamping instances).
+		if existingInst.Spec.Memory == nil {
+			existingInst.Spec.Memory = &sympoziumv1alpha1.MemorySpec{
+				Enabled:   true,
+				MaxSizeKB: 256,
+			}
+			needsUpdate = true
+		}
+		if existingInst.Spec.Memory.SystemPrompt != persona.SystemPrompt {
+			existingInst.Spec.Memory.SystemPrompt = persona.SystemPrompt
+			needsUpdate = true
+		}
+
 		// Propagate channel list changes from persona definition.
 		wantChannels := make(map[string]bool)
 		for _, ch := range persona.Channels {
