@@ -231,6 +231,17 @@ func (r *SympoziumScheduleReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		agentRun.Spec.Skills = append(agentRun.Spec.Skills, skill)
 	}
 
+	// Link the AgentRun to its parent Schedule via a controller owner
+	// reference. When the Schedule is deleted (e.g. PersonaPack is
+	// disabled and its owned Schedule is cascade-deleted), Kubernetes
+	// garbage collection will remove the AgentRuns too — so disabling
+	// a pack no longer leaves orphan Failed runs cluttering the UX
+	// with "instance not found" errors from policy validation.
+	if err := controllerutil.SetControllerReference(schedule, agentRun, r.Scheme); err != nil {
+		log.Error(err, "failed to set controller reference on AgentRun")
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+	}
+
 	// Collision-retry loop: if another actor (or a race with our own
 	// prior reconcile) created the same name, bump the suffix and try
 	// again. Bounded to avoid an unbounded spin.

@@ -83,8 +83,20 @@ func TestSympoziumScheduleReconcile_CopiesProviderAndAuthSecretToRun(t *testing.
 	}, run); err != nil {
 		t.Fatalf("get created run: %v", err)
 	}
-	if len(run.OwnerReferences) != 0 {
-		t.Fatalf("expected scheduled run to have no owner references, got %d", len(run.OwnerReferences))
+	// The scheduled AgentRun must be owned by its parent Schedule so
+	// disabling a PersonaPack cascades cleanup and doesn't leave
+	// orphan Failed runs referencing a deleted instance.
+	if len(run.OwnerReferences) != 1 {
+		t.Fatalf("expected scheduled run to have 1 owner reference, got %d", len(run.OwnerReferences))
+	}
+	if run.OwnerReferences[0].Kind != "SympoziumSchedule" {
+		t.Errorf("owner ref kind = %q, want SympoziumSchedule", run.OwnerReferences[0].Kind)
+	}
+	if run.OwnerReferences[0].Name != schedule.Name {
+		t.Errorf("owner ref name = %q, want %q", run.OwnerReferences[0].Name, schedule.Name)
+	}
+	if run.OwnerReferences[0].Controller == nil || !*run.OwnerReferences[0].Controller {
+		t.Errorf("owner ref must be controller=true")
 	}
 
 	if run.Spec.Model.Provider != "anthropic" {

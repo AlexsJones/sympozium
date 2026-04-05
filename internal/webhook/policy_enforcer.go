@@ -33,6 +33,15 @@ func (pe *PolicyEnforcer) Handle(ctx context.Context, req admission.Request) adm
 		return admission.Errored(http.StatusBadRequest, err)
 	}
 
+	// Skip validation for runs that are being deleted. Otherwise the
+	// controller's own finalizer-removal Update gets rejected when the
+	// referenced Instance has already been deleted (e.g. PersonaPack
+	// disable cascade), leaving the AgentRun stuck in a terminating
+	// state forever with no way for kubelet GC to finish.
+	if !run.DeletionTimestamp.IsZero() {
+		return admission.Allowed("run is being deleted; skipping policy validation")
+	}
+
 	// Look up the owning SympoziumInstance
 	var instance sympoziumv1alpha1.SympoziumInstance
 	if err := pe.Client.Get(ctx, types.NamespacedName{
