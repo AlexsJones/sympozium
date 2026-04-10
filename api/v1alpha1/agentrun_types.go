@@ -285,6 +285,12 @@ type AgentRunStatus struct {
 	// +optional
 	PostRunJobName string `json:"postRunJobName,omitempty"`
 
+	// GateVerdict records the outcome of the response gate hook, if configured.
+	// One of: approved, rejected, rewritten, timeout, error, allowed-by-default.
+	// Empty when no gate hook is configured.
+	// +optional
+	GateVerdict string `json:"gateVerdict,omitempty"`
+
 	// Conditions represent the latest available observations.
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
@@ -332,6 +338,13 @@ type LifecycleHookContainer struct {
 	// Defaults to 5 minutes.
 	// +optional
 	Timeout *metav1.Duration `json:"timeout,omitempty"`
+
+	// Gate makes this hook a response gate. When true, agent output is held
+	// until this hook approves, rejects, or rewrites it by patching the
+	// annotation sympozium.ai/gate-verdict on the AgentRun CR.
+	// Only valid on PostRun hooks. At most one PostRun hook may set gate: true.
+	// +optional
+	Gate bool `json:"gate,omitempty"`
 }
 
 // LifecycleHooks defines pre and post run hooks for an agent.
@@ -356,6 +369,14 @@ type LifecycleHooks struct {
 	// or delete ConfigMaps, read Secrets).
 	// +optional
 	RBAC []RBACRule `json:"rbac,omitempty"`
+
+	// GateDefault controls what happens when a gate hook fails or times out.
+	// "allow" passes the original result through unchanged; "block" replaces
+	// it with a policy error message. Defaults to "block".
+	// +kubebuilder:validation:Enum=allow;block
+	// +kubebuilder:default="block"
+	// +optional
+	GateDefault string `json:"gateDefault,omitempty"`
 }
 
 // +kubebuilder:object:root=true

@@ -104,6 +104,7 @@ func (s *Server) buildMux(frontendFS fs.FS, token string) http.Handler {
 	mux.HandleFunc("GET /api/v1/runs/{name}/telemetry", s.getRunTelemetry)
 	mux.HandleFunc("POST /api/v1/runs", s.createRun)
 	mux.HandleFunc("DELETE /api/v1/runs/{name}", s.deleteRun)
+	mux.HandleFunc("POST /api/v1/runs/{name}/gate-verdict", s.patchRunGateVerdict)
 
 	// Observability endpoints
 	mux.HandleFunc("GET /api/v1/observability/metrics", s.getObservabilityMetrics)
@@ -308,8 +309,9 @@ func (s *Server) deleteInstance(w http.ResponseWriter, r *http.Request) {
 
 // PatchInstanceRequest is the request body for partially updating a SympoziumInstance.
 type PatchInstanceRequest struct {
-	WebEndpoint *PatchWebEndpoint                 `json:"webEndpoint,omitempty"`
-	Lifecycle   *sympoziumv1alpha1.LifecycleHooks `json:"lifecycle,omitempty"`
+	WebEndpoint     *PatchWebEndpoint                 `json:"webEndpoint,omitempty"`
+	Lifecycle       *sympoziumv1alpha1.LifecycleHooks `json:"lifecycle,omitempty"`
+	RequireApproval *bool                             `json:"requireApproval,omitempty"`
 }
 
 // PatchWebEndpoint is the web endpoint patch payload.
@@ -390,6 +392,12 @@ func (s *Server) patchInstance(w http.ResponseWriter, r *http.Request) {
 		} else {
 			inst.Spec.Agents.Default.Lifecycle = nil
 		}
+	}
+
+	// Apply requireApproval toggle. This adds or removes a built-in manual
+	// gate hook that sleeps until an operator approves via the UI or API.
+	if req.RequireApproval != nil {
+		applyRequireApproval(&inst, *req.RequireApproval)
 	}
 
 	if err := s.client.Update(r.Context(), &inst); err != nil {
@@ -487,6 +495,7 @@ type CreateInstanceRequest struct {
 	NodeSelector       map[string]string                           `json:"nodeSelector,omitempty"`
 	AgentSandbox       *sympoziumv1alpha1.AgentSandboxInstanceSpec `json:"agentSandbox,omitempty"`
 	RunTimeout         string                                      `json:"runTimeout,omitempty"`
+	RequireApproval    bool                                        `json:"requireApproval,omitempty"`
 }
 
 func (s *Server) createInstance(w http.ResponseWriter, r *http.Request) {
@@ -542,6 +551,9 @@ func (s *Server) createInstance(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.RunTimeout != "" {
 		inst.Spec.Agents.Default.RunTimeout = req.RunTimeout
+	}
+	if req.RequireApproval {
+		applyRequireApproval(inst, true)
 	}
 
 	// Bedrock: create a multi-key secret with AWS credentials.
@@ -872,6 +884,141 @@ func (s *Server) deleteRun(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+const manualGateHookName = "manual-approval-gate"
+
+// applyRequireApproval adds or removes a built-in manual approval gate hook
+// on the instance's lifecycle. When enabled, all runs from this instance will
+// pause in PostRunning until an operator approves via the UI or API.
+func applyRequireApproval(inst *sympoziumv1alpha1.SympoziumInstance, enable bool) {
+	lc := inst.Spec.Agents.Default.Lifecycle
+
+	if enable {
+		// Ensure lifecycle struct exists.
+		if lc == nil {
+			lc = &sympoziumv1alpha1.LifecycleHooks{}
+			inst.Spec.Agents.Default.Lifecycle = lc
+		}
+
+		// Check if already present.
+		for _, h := range lc.PostRun {
+			if h.Name == manualGateHookName {
+				return // already configured
+			}
+		}
+
+		lc.GateDefault = "block"
+		lc.PostRun = append(lc.PostRun, sympoziumv1alpha1.LifecycleHookContainer{
+			Name:    manualGateHookName,
+			Image:   "busybox:1.36",
+			Gate:    true,
+			Command: []string{"sh", "-c", "echo 'Waiting for manual approval...'; sleep 86400"},
+		})
+
+		// Ensure RBAC for patching agentruns (needed for API/UI approval).
+		hasAgentRunRBAC := false
+		for _, r := range lc.RBAC {
+			for _, res := range r.Resources {
+				if res == "agentruns" {
+					hasAgentRunRBAC = true
+					break
+				}
+			}
+		}
+		if !hasAgentRunRBAC {
+			lc.RBAC = append(lc.RBAC, sympoziumv1alpha1.RBACRule{
+				APIGroups: []string{"sympozium.ai"},
+				Resources: []string{"agentruns"},
+				Verbs:     []string{"get", "patch"},
+			})
+		}
+	} else {
+		// Remove the manual gate hook.
+		if lc == nil {
+			return
+		}
+		var filtered []sympoziumv1alpha1.LifecycleHookContainer
+		for _, h := range lc.PostRun {
+			if h.Name != manualGateHookName {
+				filtered = append(filtered, h)
+			}
+		}
+		lc.PostRun = filtered
+		if lc.GateDefault == "block" && !hasAnyGateHook(lc) {
+			lc.GateDefault = ""
+		}
+		// Clean up lifecycle if empty.
+		if len(lc.PreRun) == 0 && len(lc.PostRun) == 0 && len(lc.RBAC) == 0 {
+			inst.Spec.Agents.Default.Lifecycle = nil
+		}
+	}
+}
+
+func hasAnyGateHook(lc *sympoziumv1alpha1.LifecycleHooks) bool {
+	for _, h := range lc.PostRun {
+		if h.Gate {
+			return true
+		}
+	}
+	return false
+}
+
+// GateVerdictRequest is the request body for approving or rejecting a gated AgentRun.
+type GateVerdictRequest struct {
+	Action   string `json:"action"`             // approve, reject, rewrite
+	Response string `json:"response,omitempty"` // replacement text for reject/rewrite
+	Reason   string `json:"reason,omitempty"`   // audit trail
+}
+
+func (s *Server) patchRunGateVerdict(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	ns := r.URL.Query().Get("namespace")
+	if ns == "" {
+		ns = "default"
+	}
+
+	var req GateVerdictRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.Action != "approve" && req.Action != "reject" && req.Action != "rewrite" {
+		http.Error(w, `action must be "approve", "reject", or "rewrite"`, http.StatusBadRequest)
+		return
+	}
+	if (req.Action == "reject" || req.Action == "rewrite") && req.Response == "" {
+		http.Error(w, "response is required for reject/rewrite actions", http.StatusBadRequest)
+		return
+	}
+
+	var run sympoziumv1alpha1.AgentRun
+	if err := s.client.Get(r.Context(), types.NamespacedName{Name: name, Namespace: ns}, &run); err != nil {
+		if k8serrors.IsNotFound(err) {
+			http.Error(w, "agent run not found", http.StatusNotFound)
+		} else {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+		return
+	}
+
+	if run.Status.Phase != sympoziumv1alpha1.AgentRunPhasePostRunning {
+		http.Error(w, fmt.Sprintf("run is in phase %q, gate verdict can only be set during PostRunning", run.Status.Phase), http.StatusConflict)
+		return
+	}
+
+	if run.Annotations == nil {
+		run.Annotations = make(map[string]string)
+	}
+	verdictJSON, _ := json.Marshal(req)
+	run.Annotations["sympozium.ai/gate-verdict"] = string(verdictJSON)
+
+	if err := s.client.Update(r.Context(), &run); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, run)
 }
 
 // --- Policy handlers ---

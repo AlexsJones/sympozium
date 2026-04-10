@@ -34,21 +34,27 @@ describe("Run Notifications & Watermark", () => {
     });
 
     // ── Step 2: Create a run via API (after watermark is set) ──────
+    // Small delay ensures the run's creationTimestamp is strictly after
+    // the watermark, avoiding same-millisecond equality edge cases.
+    cy.wait(1000);
     cy.dispatchRun(INSTANCE, "Notification test run").then((name) => {
       RUN_NAME = name;
     });
 
     // ── Step 3: Wait for the 5s poll interval to pick up the new run ─
-    // The sidebar badge should appear within ~10s (poll + render).
-    cy.get("aside", { timeout: 15000 }).find(
-      "span.bg-blue-500, span.bg-red-500",
-    ).should("exist");
+    // The sidebar badge should appear within ~30s (poll + render).
+    // Use a single chained selector so Cypress retries the whole query.
+    cy.get("aside span.bg-blue-500, aside span.bg-red-500", {
+      timeout: 30000,
+    }).should("exist");
 
     // ── Step 4: Verify a toast notification appeared ──────────────
-    // Sonner renders toasts in an <ol> with [data-sonner-toaster].
+    // The toast could say "Run started" or "Run succeeded" depending on
+    // how fast the LLM completes relative to the 5s poll interval.
     cy.get("[data-sonner-toaster]", { timeout: 15000 })
       .should("exist")
-      .and("contain.text", "Run started");
+      .invoke("text")
+      .should("match", /Run (started|succeeded)/);
   });
 
   it("shows 'new' dot on the runs list page", () => {

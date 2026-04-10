@@ -6,6 +6,7 @@ import {
   useCreateRun,
   useInstances,
   useObservabilityMetrics,
+  useGateVerdict,
 } from "@/hooks/use-api";
 import { StatusBadge } from "@/components/status-badge";
 import {
@@ -36,10 +37,18 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Plus, Trash2, ExternalLink } from "lucide-react";
+import { Plus, Trash2, ExternalLink, ShieldAlert, Check, X } from "lucide-react";
 import { formatAge, truncate } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useRunsSeen } from "@/hooks/use-runs-seen";
+import type { AgentRun } from "@/lib/api";
+
+/** Returns true when a run is in PostRunning with a gate hook awaiting a verdict. */
+function isAwaitingGate(run: AgentRun): boolean {
+  if (run.status?.phase !== "PostRunning") return false;
+  if (run.status?.gateVerdict) return false; // already resolved
+  return !!run.spec.lifecycle?.postRun?.some((h) => h.gate);
+}
 
 export function RunsPage() {
   const { data, isLoading } = useRuns();
@@ -47,6 +56,7 @@ export function RunsPage() {
   const observability = useObservabilityMetrics();
   const deleteRun = useDeleteRun();
   const createRun = useCreateRun();
+  const gateVerdict = useGateVerdict();
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
   const { isUnseen, markAllSeen } = useRunsSeen();
@@ -315,7 +325,19 @@ export function RunsPage() {
                   {truncate(run.spec.task, 60)}
                 </TableCell>
                 <TableCell>
-                  <StatusBadge phase={run.status?.phase} />
+                  <div className="flex items-center gap-1.5">
+                    <StatusBadge phase={run.status?.phase} />
+                    {isAwaitingGate(run) && (
+                      <span
+                        data-testid="gate-pending-badge"
+                        className="inline-flex items-center gap-1 rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-400"
+                        title="Awaiting gate approval"
+                      >
+                        <ShieldAlert className="h-3 w-3" />
+                        Approval
+                      </span>
+                    )}
+                  </div>
                 </TableCell>
                 <TableCell className="text-xs text-muted-foreground">
                   {run.status?.tokenUsage
@@ -326,15 +348,55 @@ export function RunsPage() {
                   {formatAge(run.metadata.creationTimestamp)}
                 </TableCell>
                 <TableCell>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => deleteRun.mutate(run.metadata.name)}
-                    disabled={deleteRun.isPending}
-                    title="Delete"
-                  >
-                    <Trash2 className="h-4 w-4 text-destructive" />
-                  </Button>
+                  <div className="flex items-center gap-1">
+                    {isAwaitingGate(run) && (
+                      <>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          data-testid="gate-approve-btn"
+                          onClick={() =>
+                            gateVerdict.mutate({
+                              name: run.metadata.name,
+                              data: { action: "approve", reason: "manual-approval" },
+                            })
+                          }
+                          disabled={gateVerdict.isPending}
+                          title="Approve"
+                        >
+                          <Check className="h-4 w-4 text-green-400" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          data-testid="gate-reject-btn"
+                          onClick={() =>
+                            gateVerdict.mutate({
+                              name: run.metadata.name,
+                              data: {
+                                action: "reject",
+                                response: "Rejected by operator",
+                                reason: "manual-rejection",
+                              },
+                            })
+                          }
+                          disabled={gateVerdict.isPending}
+                          title="Reject"
+                        >
+                          <X className="h-4 w-4 text-red-400" />
+                        </Button>
+                      </>
+                    )}
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => deleteRun.mutate(run.metadata.name)}
+                      disabled={deleteRun.isPending}
+                      title="Delete"
+                    >
+                      <Trash2 className="h-4 w-4 text-destructive" />
+                    </Button>
+                  </div>
                 </TableCell>
               </TableRow>
             ))}

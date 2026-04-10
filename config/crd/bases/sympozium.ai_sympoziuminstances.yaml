@@ -114,6 +114,16 @@ spec:
                           Lifecycle defines pre and post run hooks for agent runs.
                           Propagated to AgentRunSpec.Lifecycle when runs are created.
                         properties:
+                          gateDefault:
+                            default: block
+                            description: |-
+                              GateDefault controls what happens when a gate hook fails or times out.
+                              "allow" passes the original result through unchanged; "block" replaces
+                              it with a policy error message. Defaults to "block".
+                            enum:
+                            - allow
+                            - block
+                            type: string
                           postRun:
                             description: |-
                               PostRun containers execute in a follow-up Job after the agent completes.
@@ -151,6 +161,13 @@ spec:
                                     - value
                                     type: object
                                   type: array
+                                gate:
+                                  description: |-
+                                    Gate makes this hook a response gate. When true, agent output is held
+                                    until this hook approves, rejects, or rewrites it by patching the
+                                    annotation sympozium.ai/gate-verdict on the AgentRun CR.
+                                    Only valid on PostRun hooks. At most one PostRun hook may set gate: true.
+                                  type: boolean
                                 image:
                                   description: Image is the container image.
                                   type: string
@@ -201,6 +218,13 @@ spec:
                                     - value
                                     type: object
                                   type: array
+                                gate:
+                                  description: |-
+                                    Gate makes this hook a response gate. When true, agent output is held
+                                    until this hook approves, rejects, or rewrites it by patching the
+                                    annotation sympozium.ai/gate-verdict on the AgentRun CR.
+                                    Only valid on PostRun hooks. At most one PostRun hook may set gate: true.
+                                  type: boolean
                                 image:
                                   description: Image is the container image.
                                   type: string

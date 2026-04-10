@@ -98,6 +98,7 @@ export function useRun(name: string) {
     queryKey: ["runs", name],
     queryFn: () => api.runs.get(name),
     enabled: !!name,
+    refetchInterval: 5000,
   });
 }
 
@@ -120,6 +121,20 @@ export function useDeleteRun() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["runs"] });
       toast.success("Run deleted");
+    },
+    onError: toastError,
+  });
+}
+
+export function useGateVerdict() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ name, data }: { name: string; data: Parameters<typeof api.runs.gateVerdict>[1] }) =>
+      api.runs.gateVerdict(name, data),
+    onSuccess: (_data, variables) => {
+      qc.invalidateQueries({ queryKey: ["runs"] });
+      qc.invalidateQueries({ queryKey: ["runs", variables.name] });
+      toast.success(`Run ${variables.data.action === "approve" ? "approved" : "rejected"}`);
     },
     onError: toastError,
   });

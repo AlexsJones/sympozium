@@ -165,6 +165,8 @@ export function InstanceDetailPage() {
               sandbox={inst.spec.agents?.default?.agentSandbox}
               capability={capabilities?.agentSandbox}
             />
+
+            <ResponseGateCard inst={inst} />
           </div>
         </TabsContent>
 
@@ -367,6 +369,51 @@ function AgentSandboxCard({
             )}
           </>
         )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function ResponseGateCard({ inst }: { inst: SympoziumInstance }) {
+  const patchInstance = usePatchInstance();
+  const enabled = inst.spec.agents?.default?.lifecycle?.postRun?.some((h) => h.gate) ?? false;
+
+  function toggle() {
+    patchInstance.mutate({
+      name: inst.metadata.name,
+      data: { requireApproval: !enabled },
+    });
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">Response Gate</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-sm font-medium">{enabled ? "Enabled" : "Disabled"}</p>
+            <p className="text-xs text-muted-foreground">
+              {enabled
+                ? "All runs require manual approval before the response reaches users."
+                : "Responses are delivered immediately after the agent completes."}
+            </p>
+          </div>
+          <Button
+            variant={enabled ? "destructive" : "default"}
+            size="sm"
+            data-testid="gate-toggle-btn"
+            onClick={toggle}
+            disabled={patchInstance.isPending}
+          >
+            {patchInstance.isPending
+              ? "Saving..."
+              : enabled
+                ? "Disable"
+                : "Enable"}
+          </Button>
+        </div>
       </CardContent>
     </Card>
   );

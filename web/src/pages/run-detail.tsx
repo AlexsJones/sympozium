@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { useParams, Link } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { useRun } from "@/hooks/use-api";
+import { useRun, useGateVerdict } from "@/hooks/use-api";
 import { StatusBadge } from "@/components/status-badge";
 import {
   Card,
@@ -14,7 +14,8 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { Clock, Cpu, Zap, AlertTriangle } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Clock, Cpu, Zap, AlertTriangle, ShieldCheck, ShieldX, Pencil, ShieldAlert, Check, X } from "lucide-react";
 import { Breadcrumbs } from "@/components/breadcrumbs";
 import { useRunsSeen } from "@/hooks/use-runs-seen";
 import { formatAge } from "@/lib/utils";
@@ -22,7 +23,13 @@ import { formatAge } from "@/lib/utils";
 export function RunDetailPage() {
   const { name } = useParams<{ name: string }>();
   const { data: run, isLoading } = useRun(name || "");
+  const gateVerdict = useGateVerdict();
   const { markSeenUpTo } = useRunsSeen();
+
+  const isAwaitingGate =
+    run?.status?.phase === "PostRunning" &&
+    !run?.status?.gateVerdict &&
+    run?.spec.lifecycle?.postRun?.some((h) => h.gate);
 
   // Mark this run as seen when viewing its detail page.
   useEffect(() => {
@@ -126,12 +133,102 @@ export function RunDetailPage() {
         </div>
       )}
 
+      {/* Gate approval action bar */}
+      {isAwaitingGate && (
+        <div
+          data-testid="gate-approval-bar"
+          className="flex items-center justify-between rounded-lg border border-amber-500/40 bg-amber-500/10 p-4"
+        >
+          <div className="flex items-center gap-2">
+            <ShieldAlert className="h-5 w-5 text-amber-400" />
+            <div>
+              <p className="text-sm font-medium text-amber-400">Approval required</p>
+              <p className="text-xs text-muted-foreground">
+                This run's response is being held by a gate hook. Review and approve or reject.
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              data-testid="gate-reject-detail-btn"
+              className="border-red-500/40 text-red-400 hover:bg-red-500/10"
+              onClick={() =>
+                gateVerdict.mutate({
+                  name: run.metadata.name,
+                  data: {
+                    action: "reject",
+                    response: "Rejected by operator",
+                    reason: "manual-rejection",
+                  },
+                })
+              }
+              disabled={gateVerdict.isPending}
+            >
+              <X className="mr-1 h-4 w-4" />
+              Reject
+            </Button>
+            <Button
+              size="sm"
+              data-testid="gate-approve-detail-btn"
+              className="bg-green-600 text-white hover:bg-green-700 border-0"
+              onClick={() =>
+                gateVerdict.mutate({
+                  name: run.metadata.name,
+                  data: { action: "approve", reason: "manual-approval" },
+                })
+              }
+              disabled={gateVerdict.isPending}
+            >
+              <Check className="mr-1 h-4 w-4" />
+              Approve
+            </Button>
+          </div>
+        </div>
+      )}
+
       {/* PostRunFailed condition */}
       {run.status?.conditions?.some(c => c.type === "PostRunFailed" && c.status === "True") && (
         <div className="flex items-center gap-2 rounded-lg border border-yellow-500/30 bg-yellow-500/5 p-3">
           <AlertTriangle className="h-4 w-4 text-yellow-500" />
           <span className="text-sm text-yellow-500">
             One or more post-run hooks failed (agent outcome unchanged)
+          </span>
+        </div>
+      )}
+
+      {/* Gate verdict banner */}
+      {run.status?.gateVerdict && (
+        <div
+          data-testid="gate-verdict-banner"
+          className={`flex items-center gap-2 rounded-lg border p-3 ${
+            run.status.gateVerdict === "approved" || run.status.gateVerdict === "allowed-by-default"
+              ? "border-green-500/30 bg-green-500/5"
+              : run.status.gateVerdict === "rewritten"
+                ? "border-blue-500/30 bg-blue-500/5"
+                : "border-red-500/30 bg-red-500/5"
+          }`}
+        >
+          {run.status.gateVerdict === "approved" || run.status.gateVerdict === "allowed-by-default" ? (
+            <ShieldCheck className="h-4 w-4 text-green-400" />
+          ) : run.status.gateVerdict === "rewritten" ? (
+            <Pencil className="h-4 w-4 text-blue-400" />
+          ) : run.status.gateVerdict === "rejected" ? (
+            <ShieldX className="h-4 w-4 text-red-400" />
+          ) : (
+            <ShieldAlert className="h-4 w-4 text-red-400" />
+          )}
+          <span
+            className={`text-sm ${
+              run.status.gateVerdict === "approved" || run.status.gateVerdict === "allowed-by-default"
+                ? "text-green-400"
+                : run.status.gateVerdict === "rewritten"
+                  ? "text-blue-400"
+                  : "text-red-400"
+            }`}
+          >
+            Response gate: {run.status.gateVerdict}
           </span>
         </div>
       )}

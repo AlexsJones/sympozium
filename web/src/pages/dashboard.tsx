@@ -20,6 +20,7 @@ import {
   useRuns,
   useClusterInfo,
   useObservabilityMetrics,
+  useGateVerdict,
 } from "@/hooks/use-api";
 import { useWebSocket } from "@/hooks/use-websocket";
 import { formatAge, truncate } from "@/lib/utils";
@@ -40,6 +41,9 @@ import {
   CheckCircle2,
   XCircle,
   Radio,
+  ShieldAlert,
+  Check,
+  X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -63,7 +67,8 @@ type PanelId =
   | "recentRuns"
   | "eventStream"
   | "runStatus"
-  | "recentErrors";
+  | "recentErrors"
+;
 
 const DEFAULT_LAYOUTS: ResponsiveLayouts = {
   lg: [
@@ -357,6 +362,19 @@ export function DashboardPage() {
     [runs.data]
   );
 
+  const gateVerdict = useGateVerdict();
+
+  const awaitingApproval = useMemo(
+    () =>
+      (runs.data || []).filter(
+        (r) =>
+          r.status?.phase === "PostRunning" &&
+          !r.status?.gateVerdict &&
+          r.spec.lifecycle?.postRun?.some((h) => h.gate),
+      ),
+    [runs.data],
+  );
+
   const activity = useMemo(
     () => buildActivityBuckets(runs.data || [], instances.data || [], range),
     [runs.data, instances.data, range]
@@ -574,6 +592,77 @@ export function DashboardPage() {
           </div>
         </div>
       </div>
+
+      {/* Awaiting approval alert */}
+      {awaitingApproval.length > 0 && (
+        <div data-testid="gate-approval-alert" className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-4 space-y-3">
+          <div className="flex items-center gap-2">
+            <ShieldAlert className="h-5 w-5 text-amber-400" />
+            <span className="text-sm font-medium text-amber-400">
+              {awaitingApproval.length} run{awaitingApproval.length > 1 ? "s" : ""} awaiting approval
+            </span>
+          </div>
+          <div className="space-y-2">
+            {awaitingApproval.map((run) => (
+              <div
+                key={run.metadata.name}
+                data-testid="gate-approval-card"
+                className="flex items-center justify-between rounded-md border border-amber-500/20 bg-background/50 px-3 py-2"
+              >
+                <div className="min-w-0 mr-3">
+                  <Link
+                    to={`/runs/${run.metadata.name}`}
+                    className="text-xs font-mono text-foreground truncate hover:text-primary block"
+                  >
+                    {truncate(run.metadata.name, 30)}
+                  </Link>
+                  <p className="text-[11px] text-muted-foreground truncate">
+                    {truncate(run.spec.task, 60)}
+                  </p>
+                </div>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    data-testid="gate-dash-approve-btn"
+                    className="h-6 px-2 text-xs text-green-400 hover:bg-green-500/10"
+                    onClick={() =>
+                      gateVerdict.mutate({
+                        name: run.metadata.name,
+                        data: { action: "approve", reason: "manual-approval" },
+                      })
+                    }
+                    disabled={gateVerdict.isPending}
+                  >
+                    <Check className="mr-1 h-3 w-3" />
+                    Approve
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    data-testid="gate-dash-reject-btn"
+                    className="h-6 px-2 text-xs text-red-400 hover:bg-red-500/10"
+                    onClick={() =>
+                      gateVerdict.mutate({
+                        name: run.metadata.name,
+                        data: {
+                          action: "reject",
+                          response: "Rejected by operator",
+                          reason: "manual-rejection",
+                        },
+                      })
+                    }
+                    disabled={gateVerdict.isPending}
+                  >
+                    <X className="mr-1 h-3 w-3" />
+                    Reject
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Stat tiles row */}
       <Card className="overflow-hidden">

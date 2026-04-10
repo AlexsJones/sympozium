@@ -58,6 +58,7 @@ export interface LifecycleHookContainer {
   args?: string[];
   env?: EnvVar[];
   timeout?: string;
+  gate?: boolean;
 }
 
 export interface RBACRule {
@@ -70,6 +71,13 @@ export interface LifecycleHooks {
   preRun?: LifecycleHookContainer[];
   postRun?: LifecycleHookContainer[];
   rbac?: RBACRule[];
+  gateDefault?: string;
+}
+
+export interface GateVerdictRequest {
+  action: "approve" | "reject" | "rewrite";
+  response?: string;
+  reason?: string;
 }
 
 export interface AgentConfig {
@@ -172,6 +180,7 @@ export interface AgentRunStatus {
   exitCode?: number;
   tokenUsage?: TokenUsage;
   postRunJobName?: string;
+  gateVerdict?: string;
   conditions?: Condition[];
 }
 
@@ -672,6 +681,7 @@ export const api = {
     patch: (name: string, data: {
       webEndpoint?: { enabled?: boolean; hostname?: string; rateLimit?: { requestsPerMinute?: number } };
       lifecycle?: LifecycleHooks | null;
+      requireApproval?: boolean;
     }) =>
       apiFetch<SympoziumInstance>(`/api/v1/instances/${name}`, {
         method: "PATCH",
@@ -695,6 +705,7 @@ export const api = {
       nodeSelector?: Record<string, string>;
       agentSandbox?: { enabled: boolean; runtimeClass?: string };
       runTimeout?: string;
+      requireApproval?: boolean;
     }) =>
       apiFetch<SympoziumInstance>("/api/v1/instances", {
         method: "POST",
@@ -717,6 +728,11 @@ export const api = {
       }),
     delete: (name: string) =>
       apiFetch<void>(`/api/v1/runs/${name}`, { method: "DELETE" }),
+    gateVerdict: (name: string, data: GateVerdictRequest) =>
+      apiFetch<AgentRun>(`/api/v1/runs/${name}/gate-verdict`, {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
   },
 
   policies: {

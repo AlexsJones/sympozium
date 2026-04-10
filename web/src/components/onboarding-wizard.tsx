@@ -114,6 +114,8 @@ export interface WizardResult {
   agentSandboxRuntimeClass?: string;
   /** Maximum duration per agent run (e.g., "30m", "1h"). Defaults to 10m cloud / 30m local. */
   runTimeout?: string;
+  /** Require manual approval before agent responses are delivered. */
+  requireApproval?: boolean;
 }
 
 interface OnboardingWizardProps {
@@ -328,6 +330,7 @@ export function OnboardingWizard({
     agentSandboxEnabled: defaults?.agentSandboxEnabled ?? false,
     agentSandboxRuntimeClass: defaults?.agentSandboxRuntimeClass || "gvisor",
     runTimeout: defaults?.runTimeout || "",
+    requireApproval: defaults?.requireApproval ?? false,
     awsRegion: defaults?.awsRegion || "",
     awsAccessKeyId: defaults?.awsAccessKeyId || "",
     awsSecretAccessKey: defaults?.awsSecretAccessKey || "",
@@ -1015,6 +1018,24 @@ export function OnboardingWizard({
                 </SelectContent>
               </Select>
             </div>
+
+            {/* Require Approval */}
+            <div className="rounded-md border border-border/50 p-3">
+              <label className="flex items-start gap-3 cursor-pointer" data-testid="require-approval-checkbox">
+                <input
+                  type="checkbox"
+                  className="mt-0.5 h-4 w-4 rounded border-border accent-amber-500"
+                  checked={form.requireApproval ?? false}
+                  onChange={(e) => setForm({ ...form, requireApproval: e.target.checked })}
+                />
+                <div>
+                  <p className="text-xs font-medium">Require manual approval</p>
+                  <p className="text-[10px] text-muted-foreground">
+                    Hold agent responses until an operator approves or rejects them via the UI or API.
+                  </p>
+                </div>
+              </label>
+            </div>
           </div>
           </ScrollArea>
         )}
@@ -1193,6 +1214,12 @@ export function OnboardingWizard({
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Run Timeout</span>
                   <span className="text-xs">{form.runTimeout}</span>
+                </div>
+              )}
+              {form.requireApproval && (
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Require Approval</span>
+                  <span className="text-xs text-amber-400">Enabled</span>
                 </div>
               )}
             </div>

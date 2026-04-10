@@ -16,7 +16,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Plus, Trash2, ExternalLink } from "lucide-react";
+import { Plus, Trash2, ExternalLink, ShieldAlert } from "lucide-react";
 import { formatAge } from "@/lib/utils";
 
 export function InstancesPage() {
@@ -71,6 +71,7 @@ export function InstancesPage() {
           ? { enabled: true, runtimeClass: result.agentSandboxRuntimeClass || "gvisor" }
           : undefined,
         runTimeout: result.runTimeout || undefined,
+        requireApproval: result.requireApproval || undefined,
       },
       {
         onSuccess: () => {
@@ -160,6 +161,16 @@ export function InstancesPage() {
                       <Badge variant="outline" className="text-[10px] px-1.5 py-0 text-blue-400 border-blue-500/30">
                         {inst.metadata.labels["sympozium.ai/persona-pack"]}
                       </Badge>
+                    )}
+                    {inst.spec.agents?.default?.lifecycle?.postRun?.some((h) => h.gate) && (
+                      <span
+                        data-testid="instance-gate-badge"
+                        className="inline-flex items-center gap-0.5 rounded-full border border-amber-500/30 bg-amber-500/10 px-1.5 py-0 text-[10px] font-medium text-amber-400"
+                        title="Requires manual approval"
+                      >
+                        <ShieldAlert className="h-2.5 w-2.5" />
+                        Gated
+                      </span>
                     )}
                   </div>
                 </TableCell>

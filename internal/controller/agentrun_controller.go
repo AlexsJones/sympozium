@@ -265,6 +265,11 @@ func (r *AgentRunReconciler) reconcilePending(ctx context.Context, log logr.Logg
 		return ctrl.Result{}, r.failRun(ctx, agentRun, fmt.Sprintf("policy validation failed: %v", err))
 	}
 
+	// Validate gate hook constraints.
+	if err := validateGateHooks(agentRun); err != nil {
+		return ctrl.Result{}, r.failRun(ctx, agentRun, fmt.Sprintf("gate hook validation failed: %v", err))
+	}
+
 	// Agent Sandbox mode — create Sandbox CR instead of Job.
 	if agentRun.Spec.AgentSandbox != nil && agentRun.Spec.AgentSandbox.Enabled {
 		return r.reconcilePendingAgentSandbox(ctx, log, agentRun)
@@ -1548,12 +1553,18 @@ func (r *AgentRunReconciler) buildContainers(
 					Drop: []corev1.Capability{"ALL"},
 				},
 			},
-			Env: []corev1.EnvVar{
-				{Name: "AGENT_RUN_ID", Value: agentRun.Name},
-				{Name: "INSTANCE_NAME", Value: agentRun.Spec.InstanceRef},
-				{Name: "AGENT_NAMESPACE", Value: agentRun.Namespace},
-				{Name: "EVENT_BUS_URL", Value: "nats://nats.sympozium-system.svc:4222"},
-			},
+			Env: func() []corev1.EnvVar {
+				env := []corev1.EnvVar{
+					{Name: "AGENT_RUN_ID", Value: agentRun.Name},
+					{Name: "INSTANCE_NAME", Value: agentRun.Spec.InstanceRef},
+					{Name: "AGENT_NAMESPACE", Value: agentRun.Namespace},
+					{Name: "EVENT_BUS_URL", Value: "nats://nats.sympozium-system.svc:4222"},
+				}
+				if hasResponseGateHook(agentRun) {
+					env = append(env, corev1.EnvVar{Name: "GATE_SUPPRESS_COMPLETION", Value: "true"})
+				}
+				return env
+			}(),
 			VolumeMounts: []corev1.VolumeMount{
 				{Name: "ipc", MountPath: "/ipc"},
 			},
@@ -3198,13 +3209,27 @@ func (r *AgentRunReconciler) buildPostRunJob(
 		baseEnv = append(baseEnv, corev1.EnvVar{Name: k, Value: agentRun.Spec.Env[k]})
 	}
 
-	// Each postRun hook becomes a sequential init container.
-	var initContainers []corev1.Container
+	// Each postRun hook becomes a sequential init container. Gate hooks are
+	// placed first so they always execute even if a later best-effort hook
+	// fails, and so the verdict is available as early as possible.
+	ordered := make([]sympoziumv1alpha1.LifecycleHookContainer, 0, len(agentRun.Spec.Lifecycle.PostRun))
 	for _, hook := range agentRun.Spec.Lifecycle.PostRun {
+		if hook.Gate {
+			ordered = append([]sympoziumv1alpha1.LifecycleHookContainer{hook}, ordered...)
+		} else {
+			ordered = append(ordered, hook)
+		}
+	}
+
+	var initContainers []corev1.Container
+	for _, hook := range ordered {
 		hookEnv := make([]corev1.EnvVar, len(baseEnv))
 		copy(hookEnv, baseEnv)
 		for _, e := range hook.Env {
 			hookEnv = append(hookEnv, corev1.EnvVar{Name: e.Name, Value: e.Value})
+		}
+		if hook.Gate {
+			hookEnv = append(hookEnv, corev1.EnvVar{Name: "GATE_MODE", Value: "true"})
 		}
 
 		hookContainer := corev1.Container{
@@ -3339,8 +3364,13 @@ func (r *AgentRunReconciler) reconcilePostRunning(ctx context.Context, log logr.
 	// Determine the original agent outcome from status.
 	agentSucceeded := agentRun.Status.ExitCode != nil && *agentRun.Status.ExitCode == 0
 
+	gated := hasResponseGateHook(agentRun)
+
 	if job.Status.Succeeded > 0 {
 		log.Info("PostRun hooks completed successfully")
+		if gated {
+			return r.resolveGate(ctx, log, agentRun, agentSucceeded, false)
+		}
 		if agentSucceeded {
 			return r.succeedRun(ctx, agentRun, agentRun.Status.Result, agentRun.Status.TokenUsage)
 		}
@@ -3360,13 +3390,29 @@ func (r *AgentRunReconciler) reconcilePostRunning(ctx context.Context, log logr.
 				Message:            "One or more postRun lifecycle hooks failed",
 			})
 		})
+		if gated {
+			return r.resolveGate(ctx, log, agentRun, agentSucceeded, true)
+		}
 		if agentSucceeded {
 			return r.succeedRun(ctx, agentRun, agentRun.Status.Result, agentRun.Status.TokenUsage)
 		}
 		return ctrl.Result{}, r.failRun(ctx, agentRun, agentRun.Status.Error)
 	}
 
-	// PostRun Job still running — check timeout.
+	// For gated runs, check if a verdict annotation was set while the Job is
+	// still running (e.g. manual approval via API/UI). If so, kill the Job
+	// and resolve the gate immediately.
+	if gated {
+		if err := r.Get(ctx, client.ObjectKeyFromObject(agentRun), agentRun); err == nil {
+			if _, hasVerdict := agentRun.Annotations["sympozium.ai/gate-verdict"]; hasVerdict {
+				log.Info("Gate verdict annotation found while postRun Job still running; terminating Job")
+				_ = r.Delete(ctx, &job, client.PropagationPolicy(metav1.DeletePropagationBackground))
+				return r.resolveGate(ctx, log, agentRun, agentSucceeded, false)
+			}
+		}
+	}
+
+	// PostRun Job still running -- check timeout.
 	if agentRun.Status.StartedAt != nil {
 		elapsed := time.Since(agentRun.Status.StartedAt.Time)
 		// PostRun gets 10 minutes by default.
@@ -3374,6 +3420,9 @@ func (r *AgentRunReconciler) reconcilePostRunning(ctx context.Context, log logr.
 		if elapsed > postRunTimeout {
 			log.Info("PostRun Job timed out", "elapsed", elapsed)
 			_ = r.Delete(ctx, &job, client.PropagationPolicy(metav1.DeletePropagationForeground))
+			if gated {
+				return r.resolveGate(ctx, log, agentRun, agentSucceeded, true)
+			}
 			if agentSucceeded {
 				return r.succeedRun(ctx, agentRun, agentRun.Status.Result, agentRun.Status.TokenUsage)
 			}
@@ -3382,6 +3431,160 @@ func (r *AgentRunReconciler) reconcilePostRunning(ctx context.Context, log logr.
 	}
 
 	return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+}
+
+// resolveGate reads the gate verdict annotation, applies the verdict to the
+// agent result, publishes the (possibly rewritten) completion event, and
+// transitions the run to its final phase.
+func (r *AgentRunReconciler) resolveGate(
+	ctx context.Context, log logr.Logger,
+	agentRun *sympoziumv1alpha1.AgentRun,
+	agentSucceeded bool, hookFailed bool,
+) (ctrl.Result, error) {
+	// Re-fetch to pick up any annotation the gate hook patched.
+	if err := r.Get(ctx, client.ObjectKeyFromObject(agentRun), agentRun); err != nil {
+		return ctrl.Result{}, fmt.Errorf("re-fetching AgentRun for gate verdict: %w", err)
+	}
+
+	verdict := parseGateVerdict(agentRun)
+	finalResult := agentRun.Status.Result
+	verdictLabel := ""
+
+	gateDefault := "block"
+	if agentRun.Spec.Lifecycle != nil && agentRun.Spec.Lifecycle.GateDefault != "" {
+		gateDefault = agentRun.Spec.Lifecycle.GateDefault
+	}
+
+	switch {
+	case verdict != nil && verdict.Action == "approve":
+		verdictLabel = "approved"
+		log.Info("Gate verdict: approved", "reason", verdict.Reason)
+	case verdict != nil && verdict.Action == "reject":
+		verdictLabel = "rejected"
+		if verdict.Response != "" {
+			finalResult = verdict.Response
+		} else {
+			finalResult = "Response blocked by policy"
+		}
+		log.Info("Gate verdict: rejected", "reason", verdict.Reason)
+	case verdict != nil && verdict.Action == "rewrite":
+		verdictLabel = "rewritten"
+		finalResult = verdict.Response
+		log.Info("Gate verdict: rewritten", "reason", verdict.Reason)
+	default:
+		// No valid verdict: hook failed, timed out, or wrote nothing.
+		if hookFailed {
+			verdictLabel = "error"
+		} else {
+			verdictLabel = "timeout"
+		}
+		if gateDefault == "block" {
+			finalResult = "Response blocked: gate hook did not return a verdict"
+			log.Info("Gate verdict missing, gateDefault=block")
+		} else {
+			verdictLabel = "allowed-by-default"
+			log.Info("Gate verdict missing, gateDefault=allow, passing original result")
+		}
+	}
+
+	// Persist gate verdict in status.
+	_ = r.updateStatusWithRetry(ctx, agentRun, func(ar *sympoziumv1alpha1.AgentRun) {
+		ar.Status.GateVerdict = verdictLabel
+	})
+
+	// Publish the completion event that the IPC bridge suppressed.
+	r.publishGatedCompletion(ctx, agentRun, finalResult)
+
+	if agentSucceeded {
+		return r.succeedRun(ctx, agentRun, finalResult, agentRun.Status.TokenUsage)
+	}
+	return ctrl.Result{}, r.failRun(ctx, agentRun, agentRun.Status.Error)
+}
+
+// validateGateHooks checks that at most one PostRun hook has gate: true and
+// that no PreRun hook uses it.
+func validateGateHooks(agentRun *sympoziumv1alpha1.AgentRun) error {
+	if agentRun.Spec.Lifecycle == nil {
+		return nil
+	}
+	for _, hook := range agentRun.Spec.Lifecycle.PreRun {
+		if hook.Gate {
+			return fmt.Errorf("gate: true is only valid on postRun hooks, not preRun (hook %q)", hook.Name)
+		}
+	}
+	gateCount := 0
+	for _, hook := range agentRun.Spec.Lifecycle.PostRun {
+		if hook.Gate {
+			gateCount++
+		}
+	}
+	if gateCount > 1 {
+		return fmt.Errorf("at most one postRun hook may set gate: true, found %d", gateCount)
+	}
+	return nil
+}
+
+// hasResponseGateHook returns true when the AgentRun has a postRun lifecycle
+// hook with gate: true, meaning agent output must be held until the gate resolves.
+func hasResponseGateHook(agentRun *sympoziumv1alpha1.AgentRun) bool {
+	if agentRun.Spec.Lifecycle == nil {
+		return false
+	}
+	for _, hook := range agentRun.Spec.Lifecycle.PostRun {
+		if hook.Gate {
+			return true
+		}
+	}
+	return false
+}
+
+// gateVerdict represents the JSON payload a gate hook writes to the
+// sympozium.ai/gate-verdict annotation on the AgentRun CR.
+type gateVerdict struct {
+	Action   string `json:"action"`            // approve, reject, rewrite
+	Response string `json:"response,omitempty"` // replacement text for reject/rewrite
+	Reason   string `json:"reason,omitempty"`   // audit trail
+}
+
+// parseGateVerdict extracts the gate verdict from the AgentRun's annotations.
+// Returns nil if the annotation is missing or malformed.
+func parseGateVerdict(agentRun *sympoziumv1alpha1.AgentRun) *gateVerdict {
+	raw, ok := agentRun.Annotations["sympozium.ai/gate-verdict"]
+	if !ok || raw == "" {
+		return nil
+	}
+	var v gateVerdict
+	if err := json.Unmarshal([]byte(raw), &v); err != nil {
+		return nil
+	}
+	if v.Action != "approve" && v.Action != "reject" && v.Action != "rewrite" {
+		return nil
+	}
+	return &v
+}
+
+// publishGatedCompletion publishes the TopicAgentRunCompleted event from the
+// controller for gated runs. Normally the IPC bridge publishes this, but when
+// gate suppression is active the controller takes over after the gate resolves.
+func (r *AgentRunReconciler) publishGatedCompletion(ctx context.Context, agentRun *sympoziumv1alpha1.AgentRun, result string) {
+	if r.EventBus == nil {
+		return
+	}
+	metadata := map[string]string{
+		"agentRunID":   agentRun.Name,
+		"instanceName": agentRun.Spec.InstanceRef,
+	}
+	data := map[string]string{
+		"status":   "success",
+		"response": result,
+	}
+	event, err := eventbus.NewEvent(eventbus.TopicAgentRunCompleted, metadata, data)
+	if err == nil {
+		if pubErr := r.EventBus.Publish(ctx, eventbus.TopicAgentRunCompleted, event); pubErr != nil {
+			slog.ErrorContext(ctx, "failed to publish gated completion event",
+				"agent_run", agentRun.Name, "error", pubErr)
+		}
+	}
 }
 
 // ensureWorkspacePVC creates a PersistentVolumeClaim for the workspace volume

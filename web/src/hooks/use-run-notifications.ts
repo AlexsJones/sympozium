@@ -52,7 +52,12 @@ export function useRunNotifications() {
       // Phase changed — update and notify.
       phasesRef.current.set(name, phase);
 
-      if (phase === "Succeeded") {
+      if (phase === "PostRunning" && run.spec.lifecycle?.postRun?.some((h) => h.gate)) {
+        toast.warning(`Approval required: ${shortName(name)}`, {
+          description: "A gate hook is holding this run's response. Review and approve or reject.",
+          duration: 10000,
+        });
+      } else if (phase === "Succeeded") {
         toast.success(`Run succeeded: ${shortName(name)}`, {
           description: truncateTask(run),
           duration: 5000,

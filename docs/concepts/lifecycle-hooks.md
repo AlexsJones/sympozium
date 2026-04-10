@@ -163,6 +163,127 @@ spec:
             command: ["sh", "-c", "curl -s $ALERTMANAGER_URL/api/v2/alerts > /workspace/context/alerts.json"]
 ```
 
+## Response Gate
+
+A **response gate** is a PostRun hook with `gate: true`. It holds the agent's output from reaching users until the gate explicitly approves, rejects, or rewrites it. This is useful for compliance checks, content filtering, PII scanning, or human-in-the-loop approval workflows.
+
+### How It Works
+
+Without a gate, the agent's response is published to channels (Slack, Telegram, web UI) the instant the agent finishes. With a gate:
+
+1. The IPC bridge suppresses the completion event
+2. The PostRun Job runs the gate hook container
+3. The gate hook inspects the agent's output (via `AGENT_RESULT` env var)
+4. The gate hook writes a verdict by patching an annotation on the AgentRun
+5. The controller reads the verdict, applies it, and publishes the (possibly rewritten) response
+
+If no verdict is written (hook fails, times out, or the hook is designed for manual approval), the `gateDefault` field controls behavior: `"block"` (default) replaces the output with an error, `"allow"` passes it through.
+
+### Declaring a Gated Instance
+
+Add `gate: true` to one PostRun hook in your instance's lifecycle config. At most one PostRun hook may be a gate. The gate hook needs RBAC permission to patch the AgentRun annotation:
+
+```yaml
+apiVersion: sympozium.ai/v1alpha1
+kind: SympoziumInstance
+metadata:
+  name: gated-agent
+spec:
+  agents:
+    default:
+      model: gpt-4o
+      lifecycle:
+        gateDefault: block   # or "allow"
+        rbac:
+          - apiGroups: ["sympozium.ai"]
+            resources: ["agentruns"]
+            verbs: ["get", "patch"]
+        postRun:
+          - name: content-filter
+            image: my-org/content-filter:latest
+            gate: true
+            command: ["sh", "-c"]
+            args:
+              - |
+                # Inspect $AGENT_RESULT, then patch the verdict:
+                kubectl patch agentrun $AGENT_RUN_ID -n $AGENT_NAMESPACE \
+                  --type=merge \
+                  -p "{\"metadata\":{\"annotations\":{\"sympozium.ai/gate-verdict\":\
+                  \"{\\\"action\\\":\\\"approve\\\"}\"}}}"
+```
+
+### Verdict Format
+
+The gate hook patches the annotation `sympozium.ai/gate-verdict` with a JSON object:
+
+| Action | Effect | Fields |
+|--------|--------|--------|
+| `approve` | Passes the original response through unchanged | `{"action":"approve"}` |
+| `reject` | Replaces the response with a custom message | `{"action":"reject","response":"Blocked by policy"}` |
+| `rewrite` | Replaces the response with a sanitized version | `{"action":"rewrite","response":"cleaned output"}` |
+
+All actions accept an optional `reason` field for audit logging.
+
+### Manual (Human-in-the-Loop) Approval
+
+If you want a human to approve or reject each response:
+
+1. Set the gate hook to sleep indefinitely (or for a long timeout)
+2. Set `gateDefault: block` so unapproved responses are blocked
+3. Use the web UI or API to approve or reject
+
+In the web UI, gated runs show an amber "Approval" badge on the runs list and an approval bar on the run detail page with Approve and Reject buttons. A warning toast fires when a run requires approval.
+
+Via the API:
+
+```bash
+# Approve
+curl -X POST http://localhost:9090/api/v1/runs/my-run/gate-verdict?namespace=default \
+  -H 'Content-Type: application/json' \
+  -d '{"action":"approve","reason":"reviewed by operator"}'
+
+# Reject
+curl -X POST http://localhost:9090/api/v1/runs/my-run/gate-verdict?namespace=default \
+  -H 'Content-Type: application/json' \
+  -d '{"action":"reject","response":"Content not approved","reason":"PII detected"}'
+```
+
+### Example: PII Scanner Gate
+
+```yaml
+spec:
+  lifecycle:
+    gateDefault: block
+    rbac:
+      - apiGroups: ["sympozium.ai"]
+        resources: ["agentruns"]
+        verbs: ["get", "patch"]
+    postRun:
+      - name: pii-scanner
+        image: my-org/pii-scanner:latest
+        gate: true
+        command: ["sh", "-c"]
+        args:
+          - |
+            if echo "$AGENT_RESULT" | pii-detect --strict; then
+              VERDICT='{"action":"reject","response":"Response blocked: PII detected","reason":"pii-scanner"}'
+            else
+              VERDICT='{"action":"approve","reason":"pii-scanner-clean"}'
+            fi
+            kubectl patch agentrun $AGENT_RUN_ID -n $AGENT_NAMESPACE --type=merge \
+              -p "{\"metadata\":{\"annotations\":{\"sympozium.ai/gate-verdict\":$(echo $VERDICT | jq -Rs .)}}}"
+```
+
+### Gate Status in the UI
+
+| State | Web UI Indicator |
+|-------|-----------------|
+| Awaiting approval | Amber "Approval" badge on runs list, amber approval bar on detail page |
+| Approved | Green "approved" banner on detail page |
+| Rejected | Red "rejected" banner on detail page |
+| Rewritten | Blue "rewritten" banner on detail page |
+| Timeout/error | Red "timeout" or "error" banner on detail page |
+
 ## Agent Sandbox Compatibility
 
 Lifecycle hooks work with both standard Job mode and [Agent Sandbox](agent-sandbox.md) mode:

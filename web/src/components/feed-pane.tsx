@@ -24,6 +24,7 @@ import {
   User,
   Loader2,
   Radio,
+  ShieldAlert,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -129,6 +130,18 @@ export function FeedPane({
           text: run.status.error,
           timestamp: run.status.completedAt || run.metadata.creationTimestamp || "",
           meta: "failed",
+        });
+      } else if (
+        run.status?.phase === "PostRunning" &&
+        !run.status?.gateVerdict &&
+        run.spec.lifecycle?.postRun?.some((h) => h.gate)
+      ) {
+        items.push({
+          id: `run-gate-${run.metadata.name}`,
+          type: "system",
+          text: "Awaiting approval — response held by gate",
+          timestamp: run.status?.startedAt || run.metadata.creationTimestamp || "",
+          meta: "gate-pending",
         });
       } else if (run.status?.phase === "Running") {
         items.push({
@@ -322,7 +335,7 @@ export function FeedPane({
 
 interface FeedItem {
   id: string;
-  type: "user" | "agent" | "error" | "thinking" | "stream";
+  type: "user" | "agent" | "error" | "thinking" | "stream" | "system";
   text: string;
   timestamp: string;
   meta?: string;
@@ -345,6 +358,8 @@ function FeedBubble({ item }: { item: FeedItem }) {
             ? "bg-red-500/20 text-red-400"
             : item.type === "thinking"
             ? "bg-amber-500/20 text-amber-400"
+            : item.type === "system"
+            ? "bg-amber-500/20 text-amber-400"
             : "bg-emerald-500/20 text-emerald-400"
         )}
       >
@@ -365,10 +380,17 @@ function FeedBubble({ item }: { item: FeedItem }) {
             ? "bg-red-500/10 text-red-300 border border-red-500/20"
             : item.type === "thinking"
             ? "bg-amber-500/10 text-amber-300 border border-amber-500/20"
+            : item.type === "system"
+            ? "bg-amber-500/10 text-amber-300 border border-amber-500/30"
             : "bg-muted/50 text-foreground border border-border/50"
         )}
       >
-        {item.type === "thinking" ? (
+        {item.type === "system" ? (
+          <span className="flex items-center gap-1.5">
+            <ShieldAlert className="h-3 w-3" />
+            {item.text}
+          </span>
+        ) : item.type === "thinking" ? (
           <span className="flex items-center gap-1.5">
             <Loader2 className="h-3 w-3 animate-spin" />
             {item.text}

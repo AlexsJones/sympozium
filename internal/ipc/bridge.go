@@ -38,19 +38,21 @@ type Bridge struct {
 	EventBus       eventbus.EventBus
 	Log            logr.Logger
 	Watcher        *Watcher
-	agentDone      chan struct{} // signalled when result.json is received
-	processedFiles sync.Map      // dedup fsnotify Create+Write for the same file
+	agentDone          chan struct{} // signalled when result.json is received
+	processedFiles     sync.Map      // dedup fsnotify Create+Write for the same file
+	SuppressCompletion bool          // when true, do not publish TopicAgentRunCompleted (gate mode)
 }
 
 // NewBridge creates a new IPC bridge.
 func NewBridge(basePath, agentRunID, instanceName string, bus eventbus.EventBus, log logr.Logger) *Bridge {
 	return &Bridge{
-		BasePath:     basePath,
-		AgentRunID:   agentRunID,
-		InstanceName: instanceName,
-		EventBus:     bus,
-		Log:          log,
-		agentDone:    make(chan struct{}),
+		BasePath:           basePath,
+		AgentRunID:         agentRunID,
+		InstanceName:       instanceName,
+		EventBus:           bus,
+		Log:                log,
+		agentDone:          make(chan struct{}),
+		SuppressCompletion: os.Getenv("GATE_SUPPRESS_COMPLETION") == "true",
 	}
 }
 
@@ -149,10 +151,16 @@ func (b *Bridge) handleOutputFile(ctx context.Context, fe FileEvent) {
 
 	switch {
 	case filename == "result.json":
-		// Final result
-		event, _ := eventbus.NewEvent(eventbus.TopicAgentRunCompleted, metadata, json.RawMessage(data))
-		if err := b.EventBus.Publish(ctx, eventbus.TopicAgentRunCompleted, event); err != nil {
-			b.Log.Error(err, "failed to publish completion event")
+		// Final result. When a response gate is configured the controller
+		// publishes the completion event after the gate resolves, so the
+		// bridge must suppress it here to prevent premature delivery.
+		if b.SuppressCompletion {
+			b.Log.Info("gate mode: suppressing completion event publication")
+		} else {
+			event, _ := eventbus.NewEvent(eventbus.TopicAgentRunCompleted, metadata, json.RawMessage(data))
+			if err := b.EventBus.Publish(ctx, eventbus.TopicAgentRunCompleted, event); err != nil {
+				b.Log.Error(err, "failed to publish completion event")
+			}
 		}
 		// Signal that the agent is done so the bridge can exit.
 		select {
@@ -168,10 +176,16 @@ func (b *Bridge) handleOutputFile(ctx context.Context, fe FileEvent) {
 		}
 
 	case len(filename) > 7 && filename[:7] == "stream-":
-		// Streaming chunk
-		event, _ := eventbus.NewEvent(eventbus.TopicAgentStreamChunk, metadata, json.RawMessage(data))
-		if err := b.EventBus.Publish(ctx, eventbus.TopicAgentStreamChunk, event); err != nil {
-			b.Log.Error(err, "failed to publish stream chunk")
+		// Streaming chunk. When a response gate is configured, suppress
+		// stream chunks to prevent the agent's output from leaking to the
+		// feed before the gate approves it.
+		if b.SuppressCompletion {
+			b.Log.V(1).Info("gate mode: suppressing stream chunk")
+		} else {
+			event, _ := eventbus.NewEvent(eventbus.TopicAgentStreamChunk, metadata, json.RawMessage(data))
+			if err := b.EventBus.Publish(ctx, eventbus.TopicAgentStreamChunk, event); err != nil {
+				b.Log.Error(err, "failed to publish stream chunk")
+			}
 		}
 	}
 }
