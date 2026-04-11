@@ -29,6 +29,7 @@ import (
 	"helm.sh/helm/v3/pkg/action"
 	"helm.sh/helm/v3/pkg/chart"
 	helmcli "helm.sh/helm/v3/pkg/cli"
+	"helm.sh/helm/v3/pkg/release"
 	"helm.sh/helm/v3/pkg/strvals"
 
 	corev1 "k8s.io/api/core/v1"
@@ -1339,22 +1340,42 @@ func runInstall(imageTag string, setValues []string) error {
 		return err
 	}
 
-	// Check if a release already exists.
+	// Check if a release already exists and in what state.
 	histClient := action.NewHistory(cfg)
 	histClient.Max = 1
-	_, err = histClient.Run(helmReleaseName)
+	history, histErr := histClient.Run(helmReleaseName)
 
-	if err != nil {
-		// No existing release — fresh install.
+	// A release is recoverable-by-install if history is missing, or if the
+	// most recent revision is in a non-deployed state (failed, pending-*,
+	// uninstalled). In those cases, upgrade will error with "has no deployed
+	// releases", so we uninstall and reinstall to recover cleanly.
+	needsFreshInstall := histErr != nil
+	if !needsFreshInstall && len(history) > 0 {
+		switch history[len(history)-1].Info.Status {
+		case release.StatusDeployed, release.StatusSuperseded:
+			// Healthy — upgrade path.
+		default:
+			fmt.Printf("  Found previous release in %q state, cleaning up...\n", history[len(history)-1].Info.Status)
+			uninstall := action.NewUninstall(cfg)
+			uninstall.Wait = true
+			uninstall.Timeout = 2 * time.Minute
+			if _, err := uninstall.Run(helmReleaseName); err != nil {
+				return fmt.Errorf("cleaning up failed release: %w", err)
+			}
+			needsFreshInstall = true
+		}
+	}
+
+	if needsFreshInstall {
 		fmt.Println("  Running Helm install...")
 		install := action.NewInstall(cfg)
 		install.ReleaseName = helmReleaseName
 		install.Namespace = helmNamespace
-		// Only ask Helm to create the namespace if it doesn't already exist.
-		// Helm v3.20 wraps the namespace-create error in a multierror, which
-		// defeats its own IsAlreadyExists check and makes the install fail
-		// when the namespace was created by a previous partial install.
-		install.CreateNamespace = kubectlQuiet("get", "namespace", helmNamespace) != nil
+		// Safe to always request namespace creation: Helm treats an existing
+		// namespace as a no-op, and the chart's own Namespace template is
+		// disabled via buildHelmValues (createNamespace=false), so there is
+		// no collision.
+		install.CreateNamespace = true
 		install.SkipCRDs = true // We applied CRDs above.
 		install.Wait = false    // Don't block — cert-manager certificate may need time.
 		install.Timeout = 5 * time.Minute
@@ -1363,7 +1384,7 @@ func runInstall(imageTag string, setValues []string) error {
 			return fmt.Errorf("helm install: %w", err)
 		}
 	} else {
-		// Existing release — upgrade.
+		// Existing deployed release — upgrade.
 		fmt.Println("  Running Helm upgrade...")
 		upgrade := action.NewUpgrade(cfg)
 		upgrade.Namespace = helmNamespace
