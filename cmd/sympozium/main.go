@@ -1240,6 +1240,10 @@ func newHelmConfig(ns string) (*action.Configuration, error) {
 // buildHelmValues constructs a Helm values map from CLI flags.
 func buildHelmValues(imageTag string, setValues []string) (map[string]interface{}, error) {
 	vals := make(map[string]interface{})
+	// The CLI manages namespace creation itself via Helm's install.CreateNamespace
+	// flag, so disable the chart's own Namespace template to avoid the two
+	// racing and producing an "already exists" error on install.
+	vals["createNamespace"] = false
 	if imageTag != "" {
 		vals["image"] = map[string]interface{}{
 			"tag": imageTag,
