@@ -31,9 +31,17 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
-import { ExternalLink, Sparkles, PowerOff, Download } from "lucide-react";
+import {
+  ExternalLink,
+  Sparkles,
+  PowerOff,
+  Download,
+  LayoutGrid,
+  Workflow,
+} from "lucide-react";
 import { formatAge } from "@/lib/utils";
 import type { PersonaPack } from "@/lib/api";
+import { GlobalPersonaCanvas } from "@/components/persona-canvas";
 
 export function PersonasPage() {
   const { data, isLoading } = usePersonaPacks();
@@ -41,6 +49,7 @@ export function PersonasPage() {
   const activatePack = useActivatePersonaPack();
   const installDefaults = useInstallDefaultPersonaPacks();
   const [search, setSearch] = useState("");
+  const [view, setView] = useState<"table" | "canvas">("table");
 
   // Wizard state
   const [wizardOpen, setWizardOpen] = useState(false);
@@ -140,15 +149,33 @@ export function PersonasPage() {
             memory automatically
           </p>
         </div>
-        <Button
-          variant="outline"
-          className="gap-2"
-          onClick={() => installDefaults.mutate()}
-          disabled={installDefaults.isPending}
-        >
-          <Download className="h-4 w-4" />
-          Install Default Packs
-        </Button>
+        <div className="flex items-center gap-2">
+          <div className="flex rounded-md border border-border/50 overflow-hidden">
+            <button
+              onClick={() => setView("table")}
+              className={`px-2.5 py-1.5 text-xs font-medium transition-colors ${view === "table" ? "bg-white/10 text-foreground" : "text-muted-foreground hover:text-foreground hover:bg-white/5"}`}
+              title="Table view"
+            >
+              <LayoutGrid className="h-3.5 w-3.5" />
+            </button>
+            <button
+              onClick={() => setView("canvas")}
+              className={`px-2.5 py-1.5 text-xs font-medium transition-colors border-l border-border/50 ${view === "canvas" ? "bg-white/10 text-foreground" : "text-muted-foreground hover:text-foreground hover:bg-white/5"}`}
+              title="Canvas view"
+            >
+              <Workflow className="h-3.5 w-3.5" />
+            </button>
+          </div>
+          <Button
+            variant="outline"
+            className="gap-2"
+            onClick={() => installDefaults.mutate()}
+            disabled={installDefaults.isPending}
+          >
+            <Download className="h-4 w-4" />
+            Install Default Packs
+          </Button>
+        </div>
       </div>
 
       <Input
@@ -158,13 +185,17 @@ export function PersonasPage() {
         className="max-w-sm"
       />
 
-      {isLoading ? (
+      {view === "canvas" && !isLoading && (
+        <GlobalPersonaCanvas />
+      )}
+
+      {view === "table" && isLoading ? (
         <div className="space-y-2">
           {Array.from({ length: 3 }).map((_, i) => (
             <Skeleton key={i} className="h-12 w-full" />
           ))}
         </div>
-      ) : filtered.length === 0 ? (
+      ) : view === "table" && filtered.length === 0 ? (
         <div className="py-12 text-center space-y-3">
           <p className="text-muted-foreground">
             {search
@@ -184,7 +215,7 @@ export function PersonasPage() {
             </p>
           )}
         </div>
-      ) : (
+      ) : view === "table" ? (
         <Table>
           <TableHeader>
             <TableRow>
@@ -276,7 +307,7 @@ export function PersonasPage() {
             ))}
           </TableBody>
         </Table>
-      )}
+      ) : null}
 
       {/* Shared onboarding wizard */}
       <OnboardingWizard

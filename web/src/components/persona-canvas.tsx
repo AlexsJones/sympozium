@@ -18,95 +18,162 @@ import {
 import "@xyflow/react/dist/style.css";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { useRuns, usePatchPersonaPackRelationships } from "@/hooks/use-api";
+import {
+  useRuns,
+  usePersonaPacks,
+  usePatchPersonaPackRelationships,
+} from "@/hooks/use-api";
 import { Save, Plus, Trash2 } from "lucide-react";
 import type {
   PersonaPack,
   PersonaSpec,
   PersonaRelationship,
+  AgentRun,
 } from "@/lib/api";
 
-// ── Node data ───────────────────────────────────────────────────────────────
+// ── Shared node data ────────────────────────────────────────────────────────
 
-interface PersonaNodeData {
+export interface PersonaNodeData {
   persona: PersonaSpec;
+  packName?: string;
   instanceName?: string;
   runPhase?: string;
+  runTask?: string;
   label: string;
   [key: string]: unknown;
 }
 
-// ── Custom node ─────────────────────────────────────────────────────────────
+// ── Phase styling ───────────────────────────────────────────────────────────
+
+const phaseBorder: Record<string, string> = {
+  Running: "ring-2 ring-blue-500/70 shadow-[0_0_12px_rgba(59,130,246,0.3)]",
+  Succeeded: "ring-1 ring-green-500/40",
+  Failed: "ring-2 ring-red-500/60 shadow-[0_0_12px_rgba(239,68,68,0.3)]",
+  Pending: "ring-1 ring-yellow-500/40",
+  Serving:
+    "ring-2 ring-violet-500/60 shadow-[0_0_12px_rgba(139,92,246,0.3)]",
+  AwaitingDelegate:
+    "ring-2 ring-amber-500/60 shadow-[0_0_12px_rgba(245,158,11,0.3)]",
+};
+
+const phaseDot: Record<string, string> = {
+  Running: "bg-blue-500 animate-pulse",
+  Succeeded: "bg-green-500",
+  Failed: "bg-red-500",
+  Pending: "bg-yellow-500 animate-pulse",
+  Serving: "bg-violet-500 animate-pulse",
+  AwaitingDelegate: "bg-amber-500 animate-pulse",
+};
+
+const phaseLabel: Record<string, string> = {
+  Running: "Running",
+  Succeeded: "Done",
+  Failed: "Failed",
+  Pending: "Pending",
+  Serving: "Serving",
+  AwaitingDelegate: "Awaiting",
+};
+
+// ── Custom persona node ─────────────────────────────────────────────────────
 
 function PersonaNode({ data }: NodeProps<Node<PersonaNodeData>>) {
-  const { persona, instanceName, runPhase } = data;
+  const { persona, packName, instanceName, runPhase, runTask } = data;
 
-  const phaseColor: Record<string, string> = {
-    Running: "bg-blue-500",
-    Succeeded: "bg-green-500",
-    Failed: "bg-red-500",
-    Pending: "bg-yellow-500",
-    Serving: "bg-violet-500",
-    AwaitingDelegate: "bg-amber-500",
-  };
+  const borderClass = runPhase ? phaseBorder[runPhase] || "" : "";
+  const dotClass = runPhase ? phaseDot[runPhase] || "bg-muted-foreground" : "";
 
   return (
-    <div className="rounded-lg border border-border/60 bg-card shadow-md px-4 py-3 min-w-[180px]">
-      <Handle type="target" position={Position.Top} className="!bg-muted-foreground !w-2 !h-2" />
+    <div
+      className={`rounded-lg border border-border/60 bg-card shadow-md px-4 py-3 min-w-[180px] max-w-[220px] transition-shadow duration-300 ${borderClass}`}
+    >
+      <Handle
+        type="target"
+        position={Position.Top}
+        className="!bg-muted-foreground !w-2 !h-2"
+      />
 
-      <div className="flex items-center justify-between gap-2 mb-1.5">
+      {/* Pack name label (for global canvas) */}
+      {packName && (
+        <p className="text-[9px] text-muted-foreground/50 font-mono mb-1 -mt-0.5 truncate">
+          {packName}
+        </p>
+      )}
+
+      <div className="flex items-center justify-between gap-2 mb-1">
         <span className="font-semibold text-sm truncate">
           {persona.displayName || persona.name}
         </span>
         {runPhase && (
-          <span
-            className={`h-2 w-2 rounded-full shrink-0 ${phaseColor[runPhase] || "bg-muted-foreground"}`}
-            title={runPhase}
-          />
+          <div className="flex items-center gap-1 shrink-0" title={runPhase}>
+            <span className={`h-2 w-2 rounded-full ${dotClass}`} />
+            <span className="text-[9px] text-muted-foreground">
+              {phaseLabel[runPhase] || runPhase}
+            </span>
+          </div>
         )}
       </div>
 
-      <p className="text-[10px] text-muted-foreground font-mono mb-2 truncate">
+      <p className="text-[10px] text-muted-foreground font-mono mb-1.5 truncate">
         {persona.name}
       </p>
 
       {persona.model && (
-        <Badge variant="outline" className="text-[10px] font-mono mb-1.5 block w-fit">
+        <Badge
+          variant="outline"
+          className="text-[10px] font-mono mb-1.5 block w-fit"
+        >
           {persona.model}
         </Badge>
       )}
 
       <div className="flex flex-wrap gap-0.5">
-        {persona.skills?.slice(0, 4).map((sk) => (
+        {persona.skills?.slice(0, 3).map((sk) => (
           <Badge key={sk} variant="secondary" className="text-[9px] px-1 py-0">
             {sk}
           </Badge>
         ))}
-        {(persona.skills?.length ?? 0) > 4 && (
+        {(persona.skills?.length ?? 0) > 3 && (
           <Badge variant="secondary" className="text-[9px] px-1 py-0">
-            +{(persona.skills?.length ?? 0) - 4}
+            +{(persona.skills?.length ?? 0) - 3}
           </Badge>
         )}
       </div>
 
-      {instanceName && (
+      {/* Running task preview */}
+      {runTask && runPhase === "Running" && (
+        <p
+          className="text-[9px] text-blue-400/80 mt-1.5 truncate italic"
+          title={runTask}
+        >
+          {runTask}
+        </p>
+      )}
+
+      {instanceName && !runTask && (
         <p className="text-[9px] text-muted-foreground/60 mt-1.5 truncate">
           {instanceName}
         </p>
       )}
 
-      <Handle type="source" position={Position.Bottom} className="!bg-muted-foreground !w-2 !h-2" />
+      <Handle
+        type="source"
+        position={Position.Bottom}
+        className="!bg-muted-foreground !w-2 !h-2"
+      />
     </div>
   );
 }
 
 const nodeTypes = { persona: PersonaNode };
 
-// ── Edge styling ────────────────────────────────────────────────────────────
+// ── Shared edge styling ─────────────────────────────────────────────────────
 
 const EDGE_TYPES = ["delegation", "sequential", "supervision"] as const;
 
-const edgeStyles: Record<string, { stroke: string; strokeDasharray?: string }> = {
+const edgeStyles: Record<
+  string,
+  { stroke: string; strokeDasharray?: string }
+> = {
   delegation: { stroke: "#3b82f6" },
   sequential: { stroke: "#f59e0b", strokeDasharray: "6 3" },
   supervision: { stroke: "#6b7280", strokeDasharray: "2 4" },
@@ -117,38 +184,6 @@ const edgeLabels: Record<string, string> = {
   sequential: "then",
   supervision: "supervises",
 };
-
-// ── Layout helper ───────────────────────────────────────────────────────────
-
-function layoutNodes(personas: PersonaSpec[], relationships: PersonaRelationship[]): Node<PersonaNodeData>[] {
-  const outDegree = new Map<string, number>();
-  const inDegree = new Map<string, number>();
-  for (const r of relationships) {
-    outDegree.set(r.source, (outDegree.get(r.source) || 0) + 1);
-    inDegree.set(r.target, (inDegree.get(r.target) || 0) + 1);
-  }
-
-  const sorted = [...personas].sort((a, b) => {
-    const aScore = (outDegree.get(a.name) || 0) - (inDegree.get(a.name) || 0);
-    const bScore = (outDegree.get(b.name) || 0) - (inDegree.get(b.name) || 0);
-    if (bScore !== aScore) return bScore - aScore;
-    return a.name.localeCompare(b.name);
-  });
-
-  const cols = Math.max(2, Math.ceil(Math.sqrt(sorted.length)));
-  const xGap = 260;
-  const yGap = 200;
-
-  return sorted.map((persona, i) => ({
-    id: persona.name,
-    type: "persona",
-    position: {
-      x: (i % cols) * xGap,
-      y: Math.floor(i / cols) * yGap,
-    },
-    data: { persona, label: persona.displayName || persona.name },
-  }));
-}
 
 function styledEdge(
   id: string,
@@ -173,22 +208,123 @@ function styledEdge(
   };
 }
 
-function buildEdges(relationships: PersonaRelationship[]): Edge[] {
+// ── Shared helpers ──────────────────────────────────────────────────────────
+
+/** Build a run-phase map from runs: persona name → { phase, task } */
+function buildRunPhaseMap(
+  runs: AgentRun[] | undefined,
+  installedPersonas: Array<{ name: string; instanceName: string }> | undefined,
+): Map<string, { phase: string; task?: string }> {
+  const map = new Map<string, { phase: string; task?: string }>();
+  if (!runs || !installedPersonas) return map;
+  for (const ip of installedPersonas) {
+    const instanceRuns = runs
+      .filter((r) => r.spec.instanceRef === ip.instanceName)
+      .sort(
+        (a, b) =>
+          new Date(b.metadata.creationTimestamp || 0).getTime() -
+          new Date(a.metadata.creationTimestamp || 0).getTime(),
+      );
+    if (instanceRuns.length > 0 && instanceRuns[0].status?.phase) {
+      map.set(ip.name, {
+        phase: instanceRuns[0].status.phase,
+        task: instanceRuns[0].spec.task,
+      });
+    }
+  }
+  return map;
+}
+
+function layoutNodes(
+  personas: PersonaSpec[],
+  relationships: PersonaRelationship[],
+  offsetX = 0,
+  offsetY = 0,
+  prefix = "",
+): Node<PersonaNodeData>[] {
+  const outDegree = new Map<string, number>();
+  const inDegree = new Map<string, number>();
+  for (const r of relationships) {
+    outDegree.set(r.source, (outDegree.get(r.source) || 0) + 1);
+    inDegree.set(r.target, (inDegree.get(r.target) || 0) + 1);
+  }
+
+  const sorted = [...personas].sort((a, b) => {
+    const aScore =
+      (outDegree.get(a.name) || 0) - (inDegree.get(a.name) || 0);
+    const bScore =
+      (outDegree.get(b.name) || 0) - (inDegree.get(b.name) || 0);
+    if (bScore !== aScore) return bScore - aScore;
+    return a.name.localeCompare(b.name);
+  });
+
+  const cols = Math.max(2, Math.ceil(Math.sqrt(sorted.length)));
+  const xGap = 260;
+  const yGap = 200;
+
+  return sorted.map((persona, i) => ({
+    id: prefix ? `${prefix}/${persona.name}` : persona.name,
+    type: "persona",
+    position: {
+      x: offsetX + (i % cols) * xGap,
+      y: offsetY + Math.floor(i / cols) * yGap,
+    },
+    data: { persona, label: persona.displayName || persona.name },
+  }));
+}
+
+function buildEdges(
+  relationships: PersonaRelationship[],
+  prefix = "",
+): Edge[] {
   return relationships.map((rel, i) =>
-    styledEdge(`e-${i}-${rel.source}-${rel.target}`, rel.source, rel.target, rel.type),
+    styledEdge(
+      `e-${prefix}-${i}-${rel.source}-${rel.target}`,
+      prefix ? `${prefix}/${rel.source}` : rel.source,
+      prefix ? `${prefix}/${rel.target}` : rel.target,
+      rel.type,
+    ),
   );
 }
 
-/** Convert ReactFlow edges back to PersonaRelationship[] for the CRD. */
 function edgesToRelationships(edges: Edge[]): PersonaRelationship[] {
   return edges.map((e) => ({
-    source: e.source,
-    target: e.target,
+    source: e.source.includes("/") ? e.source.split("/")[1] : e.source,
+    target: e.target.includes("/") ? e.target.split("/")[1] : e.target,
     type: (e.data?.relType as PersonaRelationship["type"]) || "delegation",
   }));
 }
 
-// ── Edge type picker (inline popover) ───────────────────────────────────────
+// ── Shared ReactFlow wrapper ────────────────────────────────────────────────
+
+const rfDefaults = {
+  fitView: true,
+  fitViewOptions: { padding: 0.3 },
+  minZoom: 0.2,
+  maxZoom: 1.5,
+  proOptions: { hideAttribution: true },
+  colorMode: "dark" as const,
+};
+
+function CanvasShell({ children }: { children: React.ReactNode }) {
+  return (
+    <>
+      <Background gap={20} size={1} color="#ffffff08" />
+      <Controls
+        showInteractive={false}
+        className="!bg-card !border-border/40 !shadow-md [&>button]:!bg-card [&>button]:!border-border/40 [&>button]:!text-muted-foreground [&>button:hover]:!bg-white/5"
+      />
+      <MiniMap
+        nodeColor="#3b82f6"
+        maskColor="rgba(0,0,0,0.7)"
+        className="!bg-card !border-border/40"
+      />
+      {children}
+    </>
+  );
+}
+
+// ── Edge type picker ────────────────────────────────────────────────────────
 
 function EdgeTypePicker({
   onSelect,
@@ -231,7 +367,31 @@ function EdgeTypePicker({
   );
 }
 
-// ── Main component ──────────────────────────────────────────────────────────
+// ── Status legend ───────────────────────────────────────────────────────────
+
+function StatusLegend() {
+  const items = [
+    { phase: "Running", dot: "bg-blue-500 animate-pulse" },
+    { phase: "Serving", dot: "bg-violet-500 animate-pulse" },
+    { phase: "AwaitingDelegate", dot: "bg-amber-500 animate-pulse", label: "Awaiting" },
+    { phase: "Succeeded", dot: "bg-green-500" },
+    { phase: "Failed", dot: "bg-red-500" },
+  ];
+  return (
+    <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
+      {items.map((it) => (
+        <span key={it.phase} className="flex items-center gap-1">
+          <span className={`h-1.5 w-1.5 rounded-full ${it.dot}`} />
+          {it.label || it.phase}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Per-pack canvas (used on persona detail Workflow tab)
+// ══════════════════════════════════════════════════════════════════════════════
 
 interface PersonaCanvasProps {
   pack: PersonaPack;
@@ -243,92 +403,59 @@ export function PersonaCanvas({ pack }: PersonaCanvasProps) {
   const relationships = pack.spec.relationships || [];
   const personas = pack.spec.personas || [];
 
-  // Pending connection awaiting type selection
   const [pendingConnection, setPendingConnection] = useState<Connection | null>(
     null,
   );
-  // Track unsaved changes
   const [dirty, setDirty] = useState(false);
-  // Selected edge for deletion
   const [selectedEdge, setSelectedEdge] = useState<string | null>(null);
 
-  // Map persona name → latest run phase
-  const runPhaseMap = useMemo(() => {
-    const map = new Map<string, string>();
-    if (!runs || !pack.status?.installedPersonas) return map;
-    for (const ip of pack.status.installedPersonas) {
-      const instanceRuns = runs
-        .filter((r) => r.spec.instanceRef === ip.instanceName)
-        .sort(
-          (a, b) =>
-            new Date(b.metadata.creationTimestamp || 0).getTime() -
-            new Date(a.metadata.creationTimestamp || 0).getTime(),
-        );
-      if (instanceRuns.length > 0 && instanceRuns[0].status?.phase) {
-        map.set(ip.name, instanceRuns[0].status.phase);
-      }
-    }
-    return map;
-  }, [runs, pack.status?.installedPersonas]);
+  const runPhaseMap = useMemo(
+    () => buildRunPhaseMap(runs, pack.status?.installedPersonas),
+    [runs, pack.status?.installedPersonas],
+  );
 
-  // Build nodes with run status overlay
   const initialNodes = useMemo(() => {
     const nodes = layoutNodes(personas, relationships);
     for (const node of nodes) {
       const ip = pack.status?.installedPersonas?.find(
         (p) => p.name === node.id,
       );
-      if (ip) {
-        node.data.instanceName = ip.instanceName;
+      if (ip) node.data.instanceName = ip.instanceName;
+      const status = runPhaseMap.get(node.id);
+      if (status) {
+        node.data.runPhase = status.phase;
+        node.data.runTask = status.task;
       }
-      node.data.runPhase = runPhaseMap.get(node.id);
     }
     return nodes;
   }, [personas, relationships, pack.status?.installedPersonas, runPhaseMap]);
 
-  const initialEdges = useMemo(
-    () => buildEdges(relationships),
-    [relationships],
-  );
+  const initialEdges = useMemo(() => buildEdges(relationships), [relationships]);
 
   const [nodes, , onNodesChange] = useNodesState(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
 
-  // When user drags a connection between two nodes, show type picker
   const onConnect = useCallback(
     (connection: Connection) => {
       if (!connection.source || !connection.target) return;
       if (connection.source === connection.target) return;
-      // Check for duplicate
-      const exists = edges.some(
-        (e) =>
-          e.source === connection.source && e.target === connection.target,
-      );
-      if (exists) return;
+      if (edges.some((e) => e.source === connection.source && e.target === connection.target)) return;
       setPendingConnection(connection);
     },
     [edges],
   );
 
-  // User picks an edge type from the picker
   const handleEdgeTypeSelect = useCallback(
     (relType: string) => {
       if (!pendingConnection?.source || !pendingConnection?.target) return;
       const id = `e-new-${pendingConnection.source}-${pendingConnection.target}-${Date.now()}`;
-      const newEdge = styledEdge(
-        id,
-        pendingConnection.source,
-        pendingConnection.target,
-        relType,
-      );
-      setEdges((eds) => addEdge(newEdge, eds));
+      setEdges((eds) => addEdge(styledEdge(id, pendingConnection.source!, pendingConnection.target!, relType), eds));
       setPendingConnection(null);
       setDirty(true);
     },
     [pendingConnection, setEdges],
   );
 
-  // Delete selected edge
   const handleDeleteSelected = useCallback(() => {
     if (!selectedEdge) return;
     setEdges((eds) => eds.filter((e) => e.id !== selectedEdge));
@@ -336,26 +463,20 @@ export function PersonaCanvas({ pack }: PersonaCanvasProps) {
     setDirty(true);
   }, [selectedEdge, setEdges]);
 
-  // Save relationships to the CRD
   const handleSave = useCallback(() => {
-    const newRelationships = edgesToRelationships(edges);
     patchMutation.mutate(
-      { name: pack.metadata.name, relationships: newRelationships },
+      { name: pack.metadata.name, relationships: edgesToRelationships(edges) },
       { onSuccess: () => setDirty(false) },
     );
   }, [edges, pack.metadata.name, patchMutation]);
 
-  // Track edge selection
   const onEdgeClick = useCallback((_: React.MouseEvent, edge: Edge) => {
     setSelectedEdge((prev) => (prev === edge.id ? null : edge.id));
   }, []);
 
-  // Handle keyboard delete
   const onKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
-      if ((e.key === "Delete" || e.key === "Backspace") && selectedEdge) {
-        handleDeleteSelected();
-      }
+      if ((e.key === "Delete" || e.key === "Backspace") && selectedEdge) handleDeleteSelected();
     },
     [selectedEdge, handleDeleteSelected],
   );
@@ -370,77 +491,151 @@ export function PersonaCanvas({ pack }: PersonaCanvasProps) {
 
   return (
     <div className="space-y-3">
-      {/* Toolbar */}
       <div className="flex items-center justify-between">
-        <p className="text-xs text-muted-foreground">
-          <Plus className="h-3 w-3 inline mr-1" />
-          Drag from one persona to another to create a relationship.
-          {selectedEdge && " Press Delete to remove selected edge."}
-        </p>
+        <div className="flex items-center gap-4">
+          <p className="text-xs text-muted-foreground">
+            <Plus className="h-3 w-3 inline mr-1" />
+            Drag from one persona to another to create a relationship.
+            {selectedEdge && " Press Delete to remove selected edge."}
+          </p>
+          <StatusLegend />
+        </div>
         <div className="flex items-center gap-2">
           {selectedEdge && (
-            <Button
-              variant="destructive"
-              size="sm"
-              onClick={handleDeleteSelected}
-              type="button"
-            >
+            <Button variant="destructive" size="sm" onClick={handleDeleteSelected} type="button">
               <Trash2 className="h-3.5 w-3.5 mr-1" />
               Delete Edge
             </Button>
           )}
-          <Button
-            size="sm"
-            onClick={handleSave}
-            disabled={!dirty || patchMutation.isPending}
-            type="button"
-          >
+          <Button size="sm" onClick={handleSave} disabled={!dirty || patchMutation.isPending} type="button">
             <Save className="h-3.5 w-3.5 mr-1" />
             {patchMutation.isPending ? "Saving..." : "Save"}
           </Button>
         </div>
       </div>
 
-      {/* Canvas */}
-      <div
-        className="h-[500px] w-full rounded-lg border border-border/40 bg-background relative"
-        onKeyDown={onKeyDown}
-        tabIndex={0}
-      >
+      <div className="h-[500px] w-full rounded-lg border border-border/40 bg-background relative" onKeyDown={onKeyDown} tabIndex={0}>
         {pendingConnection && (
-          <EdgeTypePicker
-            onSelect={handleEdgeTypeSelect}
-            onCancel={() => setPendingConnection(null)}
-          />
+          <EdgeTypePicker onSelect={handleEdgeTypeSelect} onCancel={() => setPendingConnection(null)} />
         )}
         <ReactFlow
           nodes={nodes}
-          edges={edges.map((e) => ({
-            ...e,
-            selected: e.id === selectedEdge,
-          }))}
+          edges={edges.map((e) => ({ ...e, selected: e.id === selectedEdge }))}
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
           onEdgeClick={onEdgeClick}
           nodeTypes={nodeTypes}
-          fitView
-          fitViewOptions={{ padding: 0.3 }}
-          minZoom={0.3}
-          maxZoom={1.5}
-          proOptions={{ hideAttribution: true }}
-          colorMode="dark"
+          {...rfDefaults}
         >
-          <Background gap={20} size={1} color="#ffffff08" />
-          <Controls
-            showInteractive={false}
-            className="!bg-card !border-border/40 !shadow-md [&>button]:!bg-card [&>button]:!border-border/40 [&>button]:!text-muted-foreground [&>button:hover]:!bg-white/5"
-          />
-          <MiniMap
-            nodeColor="#3b82f6"
-            maskColor="rgba(0,0,0,0.7)"
-            className="!bg-card !border-border/40"
-          />
+          <CanvasShell>{null}</CanvasShell>
+        </ReactFlow>
+      </div>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Global canvas (used on the persona packs list page)
+// Shows all enabled packs together with live run status.
+// ══════════════════════════════════════════════════════════════════════════════
+
+export function GlobalPersonaCanvas() {
+  const { data: packs } = usePersonaPacks();
+  const { data: runs } = useRuns();
+
+  const enabledPacks = useMemo(
+    () => (packs || []).filter((p) => p.spec.enabled),
+    [packs],
+  );
+
+  // Build combined nodes and edges from all enabled packs
+  const { allNodes, allEdges } = useMemo(() => {
+    const nodes: Node<PersonaNodeData>[] = [];
+    const edges: Edge[] = [];
+
+    // Layout each pack as a cluster, offset horizontally
+    const packGapX = 50;
+    let currentX = 0;
+
+    for (const pack of enabledPacks) {
+      const personas = pack.spec.personas || [];
+      const relationships = pack.spec.relationships || [];
+      const prefix = pack.metadata.name;
+
+      const runPhaseMap = buildRunPhaseMap(
+        runs,
+        pack.status?.installedPersonas,
+      );
+
+      const packNodes = layoutNodes(
+        personas,
+        relationships,
+        currentX,
+        0,
+        prefix,
+      );
+
+      // Annotate nodes with pack name and status
+      for (const node of packNodes) {
+        node.data.packName = pack.metadata.name;
+        const personaName = node.id.split("/")[1] || node.id;
+        const ip = pack.status?.installedPersonas?.find(
+          (p) => p.name === personaName,
+        );
+        if (ip) node.data.instanceName = ip.instanceName;
+        const status = runPhaseMap.get(personaName);
+        if (status) {
+          node.data.runPhase = status.phase;
+          node.data.runTask = status.task;
+        }
+      }
+
+      nodes.push(...packNodes);
+      edges.push(...buildEdges(relationships, prefix));
+
+      // Calculate width of this pack's cluster for offset
+      const cols = Math.max(2, Math.ceil(Math.sqrt(personas.length)));
+      currentX += cols * 260 + packGapX;
+    }
+
+    return { allNodes: nodes, allEdges: edges };
+  }, [enabledPacks, runs]);
+
+  const [nodes, , onNodesChange] = useNodesState(allNodes);
+  const [edges, , onEdgesChange] = useEdgesState(allEdges);
+
+  if (enabledPacks.length === 0) {
+    return (
+      <div className="flex items-center justify-center h-[500px] text-sm text-muted-foreground">
+        No enabled persona packs. Enable a pack to see it on the canvas.
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-4">
+          <p className="text-xs text-muted-foreground">
+            {enabledPacks.length} active pack{enabledPacks.length !== 1 ? "s" : ""} &middot;{" "}
+            {allNodes.length} personas
+          </p>
+          <StatusLegend />
+        </div>
+      </div>
+      <div className="h-[600px] w-full rounded-lg border border-border/40 bg-background">
+        <ReactFlow
+          nodes={nodes}
+          edges={edges}
+          onNodesChange={onNodesChange}
+          onEdgesChange={onEdgesChange}
+          nodeTypes={nodeTypes}
+          nodesDraggable
+          nodesConnectable={false}
+          {...rfDefaults}
+        >
+          <CanvasShell>{null}</CanvasShell>
         </ReactFlow>
       </div>
     </div>
