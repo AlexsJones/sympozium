@@ -52,7 +52,7 @@ import "react-grid-layout/css/styles.css";
 // Layout persistence
 // ---------------------------------------------------------------------------
 
-const LAYOUT_KEY = "sympozium-dashboard-layout";
+const LAYOUT_KEY = "sympozium-dashboard-layout-v2";
 const LAYOUT_LOCKED_KEY = "sympozium-dashboard-locked";
 
 type PanelId =
@@ -73,31 +73,32 @@ const DEFAULT_LAYOUTS: ResponsiveLayouts = {
     // Right column: recent runs + tool invocations
     { i: "recentRuns", x: 6, y: 0, w: 6, h: 7, minW: 4, minH: 4 },
     { i: "topTools", x: 6, y: 7, w: 6, h: 4, minW: 4, minH: 3 },
-    // Full-width bottom row
-    { i: "eventStream", x: 0, y: 11, w: 6, h: 6, minW: 4, minH: 4 },
-    { i: "runStatus", x: 6, y: 11, w: 3, h: 5, minW: 3, minH: 4 },
-    { i: "recentErrors", x: 9, y: 11, w: 3, h: 5, minW: 3, minH: 4 },
-    { i: "teamCanvas", x: 0, y: 16, w: 12, h: 8, minW: 6, minH: 5 },
+    // Team canvas (large) + run status (sidebar) — same row
+    { i: "teamCanvas", x: 0, y: 11, w: 9, h: 8, minW: 6, minH: 5 },
+    { i: "runStatus", x: 9, y: 11, w: 3, h: 8, minW: 3, minH: 4 },
+    // Bottom row
+    { i: "eventStream", x: 0, y: 19, w: 9, h: 6, minW: 4, minH: 4 },
+    { i: "recentErrors", x: 9, y: 19, w: 3, h: 6, minW: 3, minH: 4 },
   ],
   md: [
     { i: "activity", x: 0, y: 0, w: 5, h: 7, minW: 4, minH: 3 },
     { i: "tokensByModel", x: 0, y: 7, w: 5, h: 4, minW: 4, minH: 3 },
     { i: "recentRuns", x: 5, y: 0, w: 5, h: 7, minW: 4, minH: 4 },
     { i: "topTools", x: 5, y: 7, w: 5, h: 4, minW: 4, minH: 3 },
-    { i: "eventStream", x: 0, y: 11, w: 5, h: 6, minW: 4, minH: 4 },
-    { i: "runStatus", x: 5, y: 11, w: 5, h: 5, minW: 3, minH: 4 },
-    { i: "recentErrors", x: 0, y: 16, w: 10, h: 5, minW: 4, minH: 4 },
-    { i: "teamCanvas", x: 0, y: 21, w: 10, h: 8, minW: 6, minH: 5 },
+    { i: "teamCanvas", x: 0, y: 11, w: 7, h: 8, minW: 5, minH: 5 },
+    { i: "runStatus", x: 7, y: 11, w: 3, h: 8, minW: 3, minH: 4 },
+    { i: "eventStream", x: 0, y: 19, w: 7, h: 6, minW: 4, minH: 4 },
+    { i: "recentErrors", x: 7, y: 19, w: 3, h: 6, minW: 3, minH: 4 },
   ],
   sm: [
     { i: "activity", x: 0, y: 0, w: 6, h: 7, minW: 4, minH: 3 },
     { i: "recentRuns", x: 0, y: 7, w: 6, h: 6, minW: 4, minH: 4 },
     { i: "tokensByModel", x: 0, y: 13, w: 6, h: 4, minW: 4, minH: 3 },
     { i: "topTools", x: 0, y: 17, w: 6, h: 5, minW: 4, minH: 3 },
-    { i: "eventStream", x: 0, y: 22, w: 6, h: 6, minW: 4, minH: 4 },
-    { i: "runStatus", x: 0, y: 28, w: 6, h: 5, minW: 3, minH: 4 },
-    { i: "recentErrors", x: 0, y: 33, w: 6, h: 5, minW: 4, minH: 4 },
-    { i: "teamCanvas", x: 0, y: 38, w: 6, h: 8, minW: 4, minH: 5 },
+    { i: "teamCanvas", x: 0, y: 22, w: 6, h: 8, minW: 4, minH: 5 },
+    { i: "runStatus", x: 0, y: 30, w: 6, h: 5, minW: 3, minH: 4 },
+    { i: "eventStream", x: 0, y: 35, w: 6, h: 6, minW: 4, minH: 4 },
+    { i: "recentErrors", x: 0, y: 41, w: 6, h: 5, minW: 4, minH: 4 },
   ],
 };
 
