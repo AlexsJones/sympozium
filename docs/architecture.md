@@ -69,11 +69,18 @@ graph LR
 
     subgraph MEM["Persistent Memory"]
         MSCAR["Memory Sidecar<br/><small>SQLite + FTS5</small>"]
-        PVC[("PersistentVolume")]
+        PVC[("PersistentVolume<br/><small>per-instance</small>")]
+    end
+
+    subgraph SMEM["Shared Workflow Memory"]
+        SMSRV["Shared Memory Server<br/><small>SQLite + FTS5</small>"]
+        SPVC[("PersistentVolume<br/><small>per-pack</small>")]
     end
 
     A1 -. "memory_search<br/>memory_store" .- MSCAR
     MSCAR -- "reads / writes" --> PVC
+    A1 -. "workflow_memory_search<br/>workflow_memory_store" .- SMSRV
+    SMSRV -- "reads / writes" --> SPVC
 
     subgraph SEC["Skill & Lifecycle RBAC"]
         SR["Role + RoleBinding<br/><small>namespace-scoped</small>"]
@@ -216,6 +223,7 @@ Agents in a PersonaPack can delegate tasks to other personas using the `delegate
 | **NetworkPolicy isolation** | NetworkPolicy | Agent pods get deny-all egress; only the IPC bridge connects to the event bus — agents cannot reach the internet or other pods |
 | **Policy-as-CRD** | Admission Webhook | `SympoziumPolicy` resources gate tools, sandboxes, and features — enforced at admission time, not at runtime |
 | **Memory-as-SQLite** | PersistentVolume + sidecar | Persistent agent memory uses SQLite with FTS5 full-text search on a PVC — supports semantic search via `memory_search`, tagging via `memory_store`, and is upgradeable to vector search. Legacy ConfigMap fallback preserved for migration |
+| **Shared Workflow Memory** | PVC + Deployment + Service per PersonaPack | Pack-level shared memory pool enables cross-persona knowledge sharing. Same `skill-memory` binary, separate PVC. Per-persona access control (read-write / read-only) enforced client-side. Auto-tagged with source persona for attribution |
 | **Schedule-as-CRD** | CronJob analogy | `SympoziumSchedule` resources define recurring tasks with cron expressions — the controller creates AgentRuns, not the user |
 | **Skills-as-ConfigMap** | ConfigMap volume | SkillPacks generate ConfigMaps mounted into agent pods — portable, versionable, namespace-scoped |
 | **Skill sidecars with auto-RBAC** | Role / ClusterRole | SkillPacks can declare sidecar containers with RBAC rules — the controller injects the container and provisions ephemeral, least-privilege RBAC per run |

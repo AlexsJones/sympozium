@@ -29,6 +29,7 @@ import {
   X,
   Check,
   Workflow,
+  Database,
 } from "lucide-react";
 import { Breadcrumbs } from "@/components/breadcrumbs";
 import { formatAge } from "@/lib/utils";
@@ -232,6 +233,70 @@ export function PersonaDetailPage() {
               </CardContent>
             </Card>
           )}
+
+          {/* Shared Memory */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base flex items-center gap-2">
+                <Database className="h-4 w-4" />
+                Shared Workflow Memory
+              </CardTitle>
+              <CardDescription>
+                {pack.spec.sharedMemory?.enabled
+                  ? "Shared memory pool active — all personas can access team knowledge."
+                  : "Enable shared memory to let personas share knowledge across runs."}
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {pack.spec.sharedMemory?.enabled ? (
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2 text-sm">
+                    <Badge variant="default" className="text-xs">Enabled</Badge>
+                    {pack.status?.sharedMemoryReady && (
+                      <Badge variant="secondary" className="text-xs">Ready</Badge>
+                    )}
+                    {pack.spec.sharedMemory.storageSize && (
+                      <span className="text-muted-foreground">
+                        Storage: {pack.spec.sharedMemory.storageSize}
+                      </span>
+                    )}
+                  </div>
+                  {pack.spec.sharedMemory.accessRules &&
+                    pack.spec.sharedMemory.accessRules.length > 0 && (
+                      <div className="space-y-1">
+                        <p className="text-xs font-medium text-muted-foreground">
+                          Access Rules
+                        </p>
+                        {pack.spec.sharedMemory.accessRules.map((rule) => (
+                          <div
+                            key={rule.persona}
+                            className="flex items-center gap-2 text-sm"
+                          >
+                            <Badge variant="outline" className="font-mono text-xs">
+                              {rule.persona}
+                            </Badge>
+                            <Badge
+                              variant={
+                                rule.access === "read-write"
+                                  ? "default"
+                                  : "secondary"
+                              }
+                              className="text-xs"
+                            >
+                              {rule.access}
+                            </Badge>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  Shared memory is not configured for this pack.
+                </p>
+              )}
+            </CardContent>
+          </Card>
         </TabsContent>
 
         <TabsContent value="overview" className="mt-4 space-y-6">

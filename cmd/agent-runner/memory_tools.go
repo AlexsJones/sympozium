@@ -375,3 +375,288 @@ func initMemoryTools() []ToolDef {
 	log.Printf("Memory server configured: %s", memoryServerURL)
 	return memoryToolDefs()
 }
+
+// --- Workflow (shared) memory tools ---
+
+// Workflow memory tool name constants.
+const (
+	ToolWorkflowMemorySearch = "workflow_memory_search"
+	ToolWorkflowMemoryStore  = "workflow_memory_store"
+	ToolWorkflowMemoryList   = "workflow_memory_list"
+)
+
+// workflowMemoryToolNames contains all workflow memory tool names for lookup.
+var workflowMemoryToolNames = map[string]bool{
+	ToolWorkflowMemorySearch: true,
+	ToolWorkflowMemoryStore:  true,
+	ToolWorkflowMemoryList:   true,
+}
+
+// isWorkflowMemoryTool returns true if the tool name is a workflow memory tool.
+func isWorkflowMemoryTool(name string) bool {
+	return workflowMemoryToolNames[name]
+}
+
+// workflowMemoryServerURL is the HTTP endpoint of the shared pack-level memory server.
+var workflowMemoryServerURL string
+
+// workflowMemoryAccess is the access mode for this persona ("read-write" or "read-only").
+var workflowMemoryAccess string
+
+// workflowMemoryToolDefs returns tool definitions for the shared workflow memory.
+func workflowMemoryToolDefs() []ToolDef {
+	defs := []ToolDef{
+		{
+			Name:        ToolWorkflowMemorySearch,
+			Description: "Search the shared team memory for knowledge contributed by any persona in the workflow. Use this to find context from other team members' investigations and findings.",
+			Parameters: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"query": map[string]any{
+						"type":        "string",
+						"description": "Natural language search query across all team knowledge.",
+					},
+					"top_k": map[string]any{
+						"type":        "integer",
+						"description": "Maximum number of results to return (default: 5).",
+					},
+				},
+				"required": []string{"query"},
+			},
+		},
+		{
+			Name:        ToolWorkflowMemoryList,
+			Description: "List recent entries in the shared team memory, optionally filtered by tag or source persona. Use this to browse what the team has learned.",
+			Parameters: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"tags": map[string]any{
+						"type":        "string",
+						"description": "Filter by tag (e.g., 'kafka' or a persona name like 'researcher').",
+					},
+					"limit": map[string]any{
+						"type":        "integer",
+						"description": "Maximum number of entries to return (default: 20).",
+					},
+				},
+			},
+		},
+	}
+
+	// Only include the store tool for read-write personas.
+	if workflowMemoryAccess != "read-only" {
+		defs = append(defs, ToolDef{
+			Name:        ToolWorkflowMemoryStore,
+			Description: "Store a finding in the shared team memory so other personas in the workflow can access it. Entries are automatically tagged with your persona name for attribution.",
+			Parameters: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"content": map[string]any{
+						"type":        "string",
+						"description": "The content to share with the team. Be specific: include findings, root causes, service names, and relevant details.",
+					},
+					"tags": map[string]any{
+						"type":        "array",
+						"items":       map[string]any{"type": "string"},
+						"description": "Tags for categorization (e.g., ['kafka', 'consumer-lag']). Your persona name is added automatically.",
+					},
+				},
+				"required": []string{"content"},
+			},
+		})
+	}
+
+	return defs
+}
+
+// executeWorkflowMemoryTool dispatches a workflow memory tool call to the shared memory server.
+func executeWorkflowMemoryTool(ctx context.Context, toolName string, argsJSON string) string {
+	if workflowMemoryServerURL == "" {
+		return "Error: shared workflow memory not configured (WORKFLOW_MEMORY_SERVER_URL not set)"
+	}
+
+	if toolName == ToolWorkflowMemoryStore && workflowMemoryAccess == "read-only" {
+		return "Error: this persona has read-only access to shared workflow memory"
+	}
+
+	var args map[string]any
+	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+		return fmt.Sprintf("Error parsing arguments: %v", err)
+	}
+
+	// Auto-tag store calls with the source persona name for attribution.
+	if toolName == ToolWorkflowMemoryStore {
+		instanceName := os.Getenv("INSTANCE_NAME")
+		if instanceName != "" {
+			tags, _ := args["tags"].([]any)
+			tags = append(tags, instanceName)
+			args["tags"] = tags
+		}
+	}
+
+	var resp *http.Response
+	var err error
+
+	for attempt := 0; attempt <= memoryMaxRetries; attempt++ {
+		if attempt > 0 {
+			backoff := memoryBaseBackoff * time.Duration(1<<(attempt-1))
+			log.Printf("workflow memory tool retry %d/%d after %v", attempt, memoryMaxRetries, backoff)
+			select {
+			case <-time.After(backoff):
+			case <-ctx.Done():
+				return fmt.Sprintf("Workflow memory server error: %v", ctx.Err())
+			}
+		}
+
+		switch toolName {
+		case ToolWorkflowMemorySearch:
+			resp, err = workflowMemoryPost(ctx, "/search", args)
+		case ToolWorkflowMemoryStore:
+			resp, err = workflowMemoryPost(ctx, "/store", args)
+		case ToolWorkflowMemoryList:
+			resp, err = workflowMemoryGet(ctx, "/list", args)
+		default:
+			return fmt.Sprintf("Unknown workflow memory tool: %s", toolName)
+		}
+
+		if err == nil {
+			break
+		}
+		log.Printf("workflow memory server call failed (attempt %d/%d): %v", attempt+1, memoryMaxRetries+1, err)
+	}
+
+	if err != nil {
+		return fmt.Sprintf("Workflow memory server error after %d attempts: %v", memoryMaxRetries+1, err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+	if err != nil {
+		return fmt.Sprintf("Error reading workflow memory server response: %v", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Sprintf("Workflow memory server returned %d: %s", resp.StatusCode, string(body))
+	}
+
+	var apiResp memoryAPIResponse
+	if err := json.Unmarshal(body, &apiResp); err != nil {
+		return string(body)
+	}
+
+	if !apiResp.Success {
+		return fmt.Sprintf("Workflow memory error: %s", apiResp.Error)
+	}
+
+	return formatMemoryContent(apiResp.Content)
+}
+
+func workflowMemoryPost(ctx context.Context, path string, body any) (*http.Response, error) {
+	data, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, "POST", workflowMemoryServerURL+path, bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	return memoryHTTPClient.Do(req)
+}
+
+func workflowMemoryGet(ctx context.Context, path string, args map[string]any) (*http.Response, error) {
+	url := workflowMemoryServerURL + path
+	sep := "?"
+	if tags, ok := args["tags"].(string); ok && tags != "" {
+		url += sep + "tags=" + tags
+		sep = "&"
+	}
+	if limit, ok := args["limit"].(float64); ok && limit > 0 {
+		url += sep + "limit=" + fmt.Sprintf("%d", int(limit))
+	}
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	return memoryHTTPClient.Do(req)
+}
+
+// workflowMemoryContextMaxChars caps shared memory auto-injection.
+const workflowMemoryContextMaxChars = 800
+
+// queryWorkflowMemoryContext queries the shared workflow memory server for
+// entries relevant to the current task. Returns pre-formatted context or empty string.
+func queryWorkflowMemoryContext(task string, maxResults int) string {
+	if workflowMemoryServerURL == "" {
+		return ""
+	}
+
+	query := task
+	if len(query) > 200 {
+		query = query[:200]
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	body, _ := json.Marshal(map[string]any{
+		"query": query,
+		"top_k": maxResults,
+	})
+
+	req, err := http.NewRequestWithContext(ctx, "POST", workflowMemoryServerURL+"/search", bytes.NewReader(body))
+	if err != nil {
+		log.Printf("workflow memory context: failed to build request: %v", err)
+		return ""
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := memoryHTTPClient.Do(req)
+	if err != nil {
+		log.Printf("workflow memory context: server unreachable: %v", err)
+		return ""
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("workflow memory context: server returned %d", resp.StatusCode)
+		return ""
+	}
+
+	var apiResp memoryAPIResponse
+	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil || !apiResp.Success {
+		return ""
+	}
+
+	formatted := formatMemoryContent(apiResp.Content)
+	if formatted == "(no results)" || formatted == "[]" {
+		return ""
+	}
+
+	if len(formatted) > workflowMemoryContextMaxChars {
+		cut := strings.LastIndex(formatted[:workflowMemoryContextMaxChars], "\n---\n")
+		if cut > 0 {
+			formatted = formatted[:cut]
+		} else {
+			formatted = formatted[:workflowMemoryContextMaxChars]
+		}
+	}
+
+	return formatted
+}
+
+// initWorkflowMemoryTools initializes the shared workflow memory tools.
+func initWorkflowMemoryTools() []ToolDef {
+	workflowMemoryServerURL = os.Getenv("WORKFLOW_MEMORY_SERVER_URL")
+	if workflowMemoryServerURL == "" {
+		return nil
+	}
+	workflowMemoryServerURL = strings.TrimRight(workflowMemoryServerURL, "/")
+	workflowMemoryAccess = os.Getenv("WORKFLOW_MEMORY_ACCESS")
+	if workflowMemoryAccess == "" {
+		workflowMemoryAccess = "read-write"
+	}
+
+	log.Printf("Workflow memory server configured: %s (access: %s)", workflowMemoryServerURL, workflowMemoryAccess)
+	return workflowMemoryToolDefs()
+}

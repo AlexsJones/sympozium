@@ -9,10 +9,14 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -179,10 +183,16 @@ func (r *PersonaPackReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 			}
 		}
 
+		// Clean up shared memory infrastructure when pack is disabled.
+		if err := r.cleanupSharedMemory(ctx, log, pack); err != nil {
+			log.Error(err, "Failed to clean up shared memory for disabled pack")
+		}
+
 		pack.Status.Phase = "Inactive"
 		pack.Status.PersonaCount = len(pack.Spec.Personas)
 		pack.Status.InstalledCount = 0
 		pack.Status.InstalledPersonas = nil
+		pack.Status.SharedMemoryReady = false
 		if err := r.Status().Update(ctx, pack); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -207,6 +217,12 @@ func (r *PersonaPackReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 			continue
 		}
 		installed = append(installed, ip)
+	}
+
+	// Reconcile shared memory infrastructure for the pack.
+	if err := r.reconcileSharedMemory(ctx, log, pack); err != nil {
+		log.Error(err, "Failed to reconcile shared memory")
+		installErr = err
 	}
 
 	// Update status
@@ -710,6 +726,11 @@ func (r *PersonaPackReconciler) reconcileDelete(
 ) (ctrl.Result, error) {
 	log.Info("Reconciling PersonaPack deletion")
 
+	// Clean up shared memory infrastructure.
+	if err := r.cleanupSharedMemory(ctx, log, pack); err != nil {
+		log.Error(err, "Failed to clean up shared memory during deletion")
+	}
+
 	// Owner references handle cascade deletion of instances and schedules,
 	// but we clean up memory ConfigMaps explicitly since they may not
 	// have owner references.
@@ -755,6 +776,246 @@ func channelSetsEqual(a, b map[string]bool) bool {
 		}
 	}
 	return true
+}
+
+// reconcileSharedMemory ensures PVC, Deployment, and Service exist for the
+// pack-level shared memory server when SharedMemory is enabled.
+func (r *PersonaPackReconciler) reconcileSharedMemory(ctx context.Context, log logr.Logger, pack *sympoziumv1alpha1.PersonaPack) error {
+	if pack.Spec.SharedMemory == nil || !pack.Spec.SharedMemory.Enabled {
+		// Shared memory not requested — clean up any existing resources.
+		if pack.Status.SharedMemoryReady {
+			return r.cleanupSharedMemory(ctx, log, pack)
+		}
+		return nil
+	}
+
+	packName := pack.Name
+	ns := pack.Namespace
+
+	pvcName := packName + "-shared-memory-db"
+	deployName := packName + "-shared-memory"
+
+	storageSize := pack.Spec.SharedMemory.StorageSize
+	if storageSize == "" {
+		storageSize = "1Gi"
+	}
+
+	tag := os.Getenv("SYMPOZIUM_IMAGE_TAG")
+	if tag == "" {
+		tag = "latest"
+	}
+	registry := os.Getenv("SYMPOZIUM_IMAGE_REGISTRY")
+	if registry == "" {
+		registry = "ghcr.io/sympozium-ai/sympozium"
+	}
+	image := fmt.Sprintf("%s/skill-memory:%s", registry, tag)
+
+	sharedLabels := map[string]string{
+		"sympozium.ai/component":    "shared-memory",
+		"sympozium.ai/persona-pack": packName,
+	}
+
+	// --- PVC ---
+	var existingPVC corev1.PersistentVolumeClaim
+	if err := r.Get(ctx, types.NamespacedName{Name: pvcName, Namespace: ns}, &existingPVC); err != nil {
+		if !errors.IsNotFound(err) {
+			return err
+		}
+		pvc := corev1.PersistentVolumeClaim{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      pvcName,
+				Namespace: ns,
+				Labels:    sharedLabels,
+			},
+			Spec: corev1.PersistentVolumeClaimSpec{
+				AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+				Resources: corev1.VolumeResourceRequirements{
+					Requests: corev1.ResourceList{
+						corev1.ResourceStorage: resource.MustParse(storageSize),
+					},
+				},
+			},
+		}
+		if err := controllerutil.SetControllerReference(pack, &pvc, r.Scheme); err != nil {
+			return err
+		}
+		log.Info("Creating shared memory PVC", "name", pvcName)
+		if err := r.Create(ctx, &pvc); err != nil {
+			return err
+		}
+	}
+
+	// --- Deployment ---
+	var existingDeploy appsv1.Deployment
+	if err := r.Get(ctx, types.NamespacedName{Name: deployName, Namespace: ns}, &existingDeploy); err != nil {
+		if !errors.IsNotFound(err) {
+			return err
+		}
+
+		replicas := int32(1)
+		fsGroup := int64(1000)
+		deploy := &appsv1.Deployment{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      deployName,
+				Namespace: ns,
+				Labels:    sharedLabels,
+			},
+			Spec: appsv1.DeploymentSpec{
+				Replicas: &replicas,
+				Strategy: appsv1.DeploymentStrategy{
+					Type: appsv1.RecreateDeploymentStrategyType,
+				},
+				Selector: &metav1.LabelSelector{
+					MatchLabels: sharedLabels,
+				},
+				Template: corev1.PodTemplateSpec{
+					ObjectMeta: metav1.ObjectMeta{
+						Labels: sharedLabels,
+					},
+					Spec: corev1.PodSpec{
+						Containers: []corev1.Container{
+							{
+								Name:            "memory-server",
+								Image:           image,
+								ImagePullPolicy: corev1.PullIfNotPresent,
+								Ports: []corev1.ContainerPort{
+									{Name: "http", ContainerPort: 8080, Protocol: corev1.ProtocolTCP},
+								},
+								Env: []corev1.EnvVar{
+									{Name: "MEMORY_DB_PATH", Value: "/data/memory.db"},
+									{Name: "MEMORY_PORT", Value: "8080"},
+								},
+								VolumeMounts: []corev1.VolumeMount{
+									{Name: "memory-db", MountPath: "/data"},
+								},
+								StartupProbe: &corev1.Probe{
+									ProbeHandler: corev1.ProbeHandler{
+										HTTPGet: &corev1.HTTPGetAction{
+											Path: "/health",
+											Port: intstr.FromInt32(8080),
+										},
+									},
+									PeriodSeconds:    2,
+									FailureThreshold: 30,
+								},
+								ReadinessProbe: &corev1.Probe{
+									ProbeHandler: corev1.ProbeHandler{
+										HTTPGet: &corev1.HTTPGetAction{
+											Path: "/health",
+											Port: intstr.FromInt32(8080),
+										},
+									},
+									PeriodSeconds: 10,
+								},
+								LivenessProbe: &corev1.Probe{
+									ProbeHandler: corev1.ProbeHandler{
+										HTTPGet: &corev1.HTTPGetAction{
+											Path: "/health",
+											Port: intstr.FromInt32(8080),
+										},
+									},
+									InitialDelaySeconds: 5,
+									PeriodSeconds:       30,
+								},
+								Resources: corev1.ResourceRequirements{
+									Requests: corev1.ResourceList{
+										corev1.ResourceCPU:    resource.MustParse("50m"),
+										corev1.ResourceMemory: resource.MustParse("64Mi"),
+									},
+									Limits: corev1.ResourceList{
+										corev1.ResourceCPU:    resource.MustParse("200m"),
+										corev1.ResourceMemory: resource.MustParse("128Mi"),
+									},
+								},
+							},
+						},
+						Volumes: []corev1.Volume{
+							{
+								Name: "memory-db",
+								VolumeSource: corev1.VolumeSource{
+									PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+										ClaimName: pvcName,
+									},
+								},
+							},
+						},
+						SecurityContext: &corev1.PodSecurityContext{
+							FSGroup: &fsGroup,
+						},
+					},
+				},
+			},
+		}
+
+		if err := controllerutil.SetControllerReference(pack, deploy, r.Scheme); err != nil {
+			return err
+		}
+		log.Info("Creating shared memory Deployment", "name", deployName)
+		if err := r.Create(ctx, deploy); err != nil {
+			return err
+		}
+	}
+
+	// --- Service ---
+	var existingSvc corev1.Service
+	if err := r.Get(ctx, types.NamespacedName{Name: deployName, Namespace: ns}, &existingSvc); err != nil {
+		if !errors.IsNotFound(err) {
+			return err
+		}
+		svc := &corev1.Service{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      deployName,
+				Namespace: ns,
+				Labels:    sharedLabels,
+			},
+			Spec: corev1.ServiceSpec{
+				Selector: sharedLabels,
+				Ports: []corev1.ServicePort{
+					{Name: "http", Port: 8080, TargetPort: intstr.FromInt32(8080), Protocol: corev1.ProtocolTCP},
+				},
+			},
+		}
+		if err := controllerutil.SetControllerReference(pack, svc, r.Scheme); err != nil {
+			return err
+		}
+		log.Info("Creating shared memory Service", "name", deployName)
+		if err := r.Create(ctx, svc); err != nil {
+			return err
+		}
+	}
+
+	pack.Status.SharedMemoryReady = true
+	return nil
+}
+
+// cleanupSharedMemory deletes the PVC, Deployment, and Service for shared memory.
+func (r *PersonaPackReconciler) cleanupSharedMemory(ctx context.Context, log logr.Logger, pack *sympoziumv1alpha1.PersonaPack) error {
+	packName := pack.Name
+	ns := pack.Namespace
+	deployName := packName + "-shared-memory"
+	pvcName := packName + "-shared-memory-db"
+
+	// Delete Service
+	svc := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: deployName, Namespace: ns}}
+	if err := r.Delete(ctx, svc); err != nil && !errors.IsNotFound(err) {
+		return fmt.Errorf("delete shared memory service: %w", err)
+	}
+
+	// Delete Deployment
+	deploy := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: deployName, Namespace: ns}}
+	if err := r.Delete(ctx, deploy); err != nil && !errors.IsNotFound(err) {
+		return fmt.Errorf("delete shared memory deployment: %w", err)
+	}
+
+	// Delete PVC
+	pvc := &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: pvcName, Namespace: ns}}
+	if err := r.Delete(ctx, pvc); err != nil && !errors.IsNotFound(err) {
+		return fmt.Errorf("delete shared memory pvc: %w", err)
+	}
+
+	log.Info("Cleaned up shared memory resources", "pack", packName)
+	pack.Status.SharedMemoryReady = false
+	return nil
 }
 
 // SetupWithManager registers the controller.

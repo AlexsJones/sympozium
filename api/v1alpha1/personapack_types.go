@@ -82,6 +82,12 @@ type PersonaPackSpec struct {
 	// +optional
 	AgentSandbox *AgentSandboxInstanceSpec `json:"agentSandbox,omitempty"`
 
+	// SharedMemory configures a shared memory pool accessible to all personas
+	// in this pack. Each persona retains its private memory; the shared pool
+	// provides cross-persona knowledge sharing within the workflow.
+	// +optional
+	SharedMemory *SharedMemorySpec `json:"sharedMemory,omitempty"`
+
 	// Relationships defines directed edges between personas in the pack,
 	// enabling coordination patterns like delegation, sequential pipelines,
 	// and supervision.
@@ -198,6 +204,35 @@ type PersonaMemory struct {
 	Seeds []string `json:"seeds,omitempty"`
 }
 
+// SharedMemorySpec configures a shared memory pool for all personas in a pack.
+type SharedMemorySpec struct {
+	// Enabled activates the shared memory server for this pack.
+	// +kubebuilder:default=false
+	Enabled bool `json:"enabled"`
+
+	// StorageSize is the PVC storage request for the shared memory database.
+	// Defaults to "1Gi".
+	// +kubebuilder:default="1Gi"
+	// +optional
+	StorageSize string `json:"storageSize,omitempty"`
+
+	// AccessRules defines per-persona access controls for the shared memory.
+	// If empty, all personas get read-write access.
+	// +optional
+	AccessRules []SharedMemoryAccessRule `json:"accessRules,omitempty"`
+}
+
+// SharedMemoryAccessRule defines access control for a specific persona.
+type SharedMemoryAccessRule struct {
+	// Persona is the persona name this rule applies to.
+	Persona string `json:"persona"`
+
+	// Access is the access level: "read-write" or "read-only".
+	// +kubebuilder:validation:Enum="read-write";"read-only"
+	// +kubebuilder:default="read-write"
+	Access string `json:"access"`
+}
+
 // PersonaRelationship defines a directed edge between two personas in a pack.
 type PersonaRelationship struct {
 	// Source is the persona name that initiates the interaction.
@@ -258,6 +293,10 @@ type PersonaPackStatus struct {
 	// InstalledPersonas lists the resources created for each persona.
 	// +optional
 	InstalledPersonas []InstalledPersona `json:"installedPersonas,omitempty"`
+
+	// SharedMemoryReady indicates the shared memory infrastructure is provisioned.
+	// +optional
+	SharedMemoryReady bool `json:"sharedMemoryReady,omitempty"`
 
 	// Conditions represent the latest available observations.
 	// +optional

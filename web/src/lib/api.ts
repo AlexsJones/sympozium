@@ -451,6 +451,17 @@ export interface InstalledPersona {
   scheduleName?: string;
 }
 
+export interface SharedMemoryAccessRule {
+  persona: string;
+  access: "read-write" | "read-only";
+}
+
+export interface SharedMemorySpec {
+  enabled: boolean;
+  storageSize?: string;
+  accessRules?: SharedMemoryAccessRule[];
+}
+
 export interface PersonaRelationship {
   source: string;
   target: string;
@@ -474,6 +485,7 @@ export interface PersonaPackSpec {
   taskOverride?: string;
   relationships?: PersonaRelationship[];
   workflowType?: "autonomous" | "pipeline" | "delegation";
+  sharedMemory?: SharedMemorySpec;
 }
 
 export interface PersonaPackStatus {
@@ -481,6 +493,7 @@ export interface PersonaPackStatus {
   personaCount?: number;
   installedCount?: number;
   installedPersonas?: InstalledPersona[];
+  sharedMemoryReady?: boolean;
   conditions?: Condition[];
 }
 
@@ -844,12 +857,22 @@ export const api = {
         agentSandbox?: { enabled: boolean; runtimeClass?: string };
         relationships?: PersonaRelationship[];
         workflowType?: string;
+        sharedMemory?: SharedMemorySpec;
       },
     ) =>
       apiFetch<PersonaPack>(`/api/v1/personapacks/${name}`, {
         method: "PATCH",
         body: JSON.stringify(data),
       }),
+    listSharedMemory: (name: string, opts?: { tags?: string; limit?: number }) => {
+      const params = new URLSearchParams();
+      if (opts?.tags) params.set("tags", opts.tags);
+      if (opts?.limit) params.set("limit", String(opts.limit));
+      const qs = params.toString();
+      return apiFetch<unknown>(
+        `/api/v1/personapacks/${name}/shared-memory${qs ? `?${qs}` : ""}`,
+      );
+    },
     installDefaults: () =>
       apiFetch<InstallDefaultPersonaPacksResponse>(
         "/api/v1/personapacks/install-defaults",

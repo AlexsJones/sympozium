@@ -133,6 +133,7 @@ func (s *Server) buildMux(frontendFS fs.FS, token string) http.Handler {
 	mux.HandleFunc("GET /api/v1/personapacks/{name}", s.getPersonaPack)
 	mux.HandleFunc("PATCH /api/v1/personapacks/{name}", s.patchPersonaPack)
 	mux.HandleFunc("DELETE /api/v1/personapacks/{name}", s.deletePersonaPack)
+	mux.HandleFunc("GET /api/v1/personapacks/{name}/shared-memory", s.listSharedMemory)
 
 	// MCP Server endpoints
 	mux.HandleFunc("GET /api/v1/mcpservers", s.listMCPServers)
@@ -1454,6 +1455,7 @@ type PatchPersonaPackRequest struct {
 	AgentSandbox         *sympoziumv1alpha1.AgentSandboxInstanceSpec        `json:"agentSandbox,omitempty"`
 	Relationships        []sympoziumv1alpha1.PersonaRelationship            `json:"relationships,omitempty"`
 	WorkflowType         string                                             `json:"workflowType,omitempty"`
+	SharedMemory         *sympoziumv1alpha1.SharedMemorySpec                `json:"sharedMemory,omitempty"`
 }
 
 // PersonaPatchSpec allows partial updates to individual personas by name.
@@ -1647,6 +1649,10 @@ func (s *Server) patchPersonaPack(w http.ResponseWriter, r *http.Request) {
 		pp.Spec.WorkflowType = req.WorkflowType
 	}
 
+	if req.SharedMemory != nil {
+		pp.Spec.SharedMemory = req.SharedMemory
+	}
+
 	// Store GitHub token as a cluster secret when provided inline.
 	if req.GithubToken != "" {
 		if err := s.writeGithubTokenSecret(req.GithubToken); err != nil {
@@ -1679,6 +1685,66 @@ func (s *Server) deletePersonaPack(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// listSharedMemory proxies to the pack's shared memory server to list entries.
+func (s *Server) listSharedMemory(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	ns := r.URL.Query().Get("namespace")
+	if ns == "" {
+		ns = "default"
+	}
+
+	// Verify the pack exists and has shared memory enabled.
+	pp := &sympoziumv1alpha1.PersonaPack{}
+	if err := s.client.Get(r.Context(), client.ObjectKey{Name: name, Namespace: ns}, pp); err != nil {
+		if k8serrors.IsNotFound(err) {
+			http.Error(w, "PersonaPack not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if pp.Spec.SharedMemory == nil || !pp.Spec.SharedMemory.Enabled {
+		http.Error(w, "shared memory not enabled for this pack", http.StatusNotFound)
+		return
+	}
+
+	// Proxy to the shared memory server's /list endpoint.
+	sharedMemoryURL := fmt.Sprintf("http://%s-shared-memory.%s.svc:8080/list", name, ns)
+
+	// Forward query params.
+	if tags := r.URL.Query().Get("tags"); tags != "" {
+		sharedMemoryURL += "?tags=" + tags
+	}
+	if limit := r.URL.Query().Get("limit"); limit != "" {
+		sep := "?"
+		if strings.Contains(sharedMemoryURL, "?") {
+			sep = "&"
+		}
+		sharedMemoryURL += sep + "limit=" + limit
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, "GET", sharedMemoryURL, nil)
+	if err != nil {
+		http.Error(w, "failed to create proxy request", http.StatusInternalServerError)
+		return
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		http.Error(w, "shared memory server unreachable", http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	io.Copy(w, resp.Body)
 }
 
 // --- WebSocket streaming ---

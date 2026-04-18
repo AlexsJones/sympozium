@@ -41,6 +41,7 @@ spec:
 | `version` | No | Semantic version of the pack |
 | `policyRef` | No | Default SympoziumPolicy for all generated instances |
 | `baseURL` | No | Override provider API endpoint (for Ollama, LM Studio, etc.) |
+| `sharedMemory` | No | Shared memory pool for cross-persona knowledge sharing (see Step 5) |
 | `personas` | Yes | List of agent personas (see below) |
 
 ### Persona fields
@@ -204,7 +205,44 @@ The agent can update its own memory across runs.
 
 ---
 
-## Step 5: Bind channels (optional)
+## Step 5: Enable shared memory (optional)
+
+If your personas need to share knowledge — for example, a researcher's findings
+feeding into a writer's reports — enable **shared workflow memory**:
+
+```yaml
+spec:
+  sharedMemory:
+    enabled: true
+    storageSize: "1Gi"
+    accessRules:
+      - persona: pipeline-monitor
+        access: read-write
+      - persona: schema-auditor
+        access: read-only
+```
+
+This provisions a pack-level SQLite database that all personas can query. Each
+persona retains its own private memory alongside the shared pool.
+
+### Access rules
+
+- `read-write`: persona can search, list, and store entries (default if no rules specified)
+- `read-only`: persona can search and list, but cannot store
+
+Entries stored via `workflow_memory_store` are automatically tagged with the
+source persona's name, so other agents can filter by contributor.
+
+### When to use shared memory
+
+- **Research teams**: researcher stores findings, writer reads them
+- **Incident response**: first responder logs context, escalation agent reads it
+- **Pipeline monitoring**: multiple monitors share a common knowledge base
+- **Any team where one persona's output informs another's work**
+
+---
+
+## Step 6: Bind channels (optional)
 
 If you want personas to respond to messages from Slack, Telegram, Discord, or
 WhatsApp, list the channel types:
@@ -224,7 +262,7 @@ by setting `channelConfigs` on the pack spec).
 
 ---
 
-## Step 6: Expose as HTTP API (optional)
+## Step 7: Expose as HTTP API (optional)
 
 To expose a persona as an OpenAI-compatible HTTP endpoint:
 

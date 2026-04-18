@@ -23,7 +23,7 @@ import {
   usePersonaPacks,
   usePatchPersonaPackRelationships,
 } from "@/hooks/use-api";
-import { Save, Plus, Trash2 } from "lucide-react";
+import { Save, Plus, Trash2, Database } from "lucide-react";
 import type {
   PersonaPack,
   PersonaSpec,
@@ -39,6 +39,7 @@ export interface PersonaNodeData {
   instanceName?: string;
   runPhase?: string;
   runTask?: string;
+  hasSharedMemory?: boolean;
   label: string;
   [key: string]: unknown;
 }
@@ -77,7 +78,7 @@ const phaseLabel: Record<string, string> = {
 // ── Custom persona node ─────────────────────────────────────────────────────
 
 function PersonaNode({ data }: NodeProps<Node<PersonaNodeData>>) {
-  const { persona, packName, instanceName, runPhase, runTask } = data;
+  const { persona, packName, instanceName, runPhase, runTask, hasSharedMemory } = data;
 
   const borderClass = runPhase ? phaseBorder[runPhase] || "" : "";
   const dotClass = runPhase ? phaseDot[runPhase] || "bg-muted-foreground" : "";
@@ -123,6 +124,13 @@ function PersonaNode({ data }: NodeProps<Node<PersonaNodeData>>) {
           className="text-[10px] font-mono mb-1.5 block w-fit"
         >
           {persona.model}
+        </Badge>
+      )}
+
+      {hasSharedMemory && (
+        <Badge variant="outline" className="text-[9px] px-1 py-0 mb-1 gap-0.5 w-fit" title="Shared workflow memory">
+          <Database className="h-2.5 w-2.5" />
+          shared memory
         </Badge>
       )}
 
@@ -416,7 +424,9 @@ export function PersonaCanvas({ pack }: PersonaCanvasProps) {
 
   const initialNodes = useMemo(() => {
     const nodes = layoutNodes(personas, relationships);
+    const sharedMemEnabled = pack.spec.sharedMemory?.enabled ?? false;
     for (const node of nodes) {
+      node.data.hasSharedMemory = sharedMemEnabled;
       const ip = pack.status?.installedPersonas?.find(
         (p) => p.name === node.id,
       );
@@ -428,7 +438,7 @@ export function PersonaCanvas({ pack }: PersonaCanvasProps) {
       }
     }
     return nodes;
-  }, [personas, relationships, pack.status?.installedPersonas, runPhaseMap]);
+  }, [personas, relationships, pack.spec.sharedMemory?.enabled, pack.status?.installedPersonas, runPhaseMap]);
 
   const initialEdges = useMemo(() => buildEdges(relationships), [relationships]);
 
@@ -576,9 +586,11 @@ export function GlobalPersonaCanvas() {
         prefix,
       );
 
-      // Annotate nodes with pack name and status
+      // Annotate nodes with pack name, status, and shared memory
+      const sharedMemoryEnabled = pack.spec.sharedMemory?.enabled ?? false;
       for (const node of packNodes) {
         node.data.packName = pack.metadata.name;
+        node.data.hasSharedMemory = sharedMemoryEnabled;
         const personaName = node.id.split("/")[1] || node.id;
         const ip = pack.status?.installedPersonas?.find(
           (p) => p.name === personaName,
@@ -672,8 +684,10 @@ export function DashboardPersonaCanvas() {
       const runPhaseMap = buildRunPhaseMap(runs, pack.status?.installedPersonas);
 
       const packNodes = layoutNodes(personas, relationships, currentX, 0, prefix);
+      const sharedMemEnabled = pack.spec.sharedMemory?.enabled ?? false;
       for (const node of packNodes) {
         node.data.packName = visiblePacks.length > 1 ? pack.metadata.name : undefined;
+        node.data.hasSharedMemory = sharedMemEnabled;
         const personaName = node.id.split("/")[1] || node.id;
         const ip = pack.status?.installedPersonas?.find((p) => p.name === personaName);
         if (ip) node.data.instanceName = ip.instanceName;

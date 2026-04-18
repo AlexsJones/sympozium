@@ -21,9 +21,14 @@ PersonaPack "platform-team" (3 personas)
       ├── SympoziumInstance: platform-team-sre-watchdog
       │   ├── SympoziumSchedule: ...sre-watchdog-schedule (every 5m)
       │   └── ConfigMap: ...sre-watchdog-memory (seeded)
-      └── SympoziumInstance: platform-team-platform-engineer
-          ├── SympoziumSchedule: ...platform-engineer-schedule (weekdays 9am)
-          └── ConfigMap: ...platform-engineer-memory (seeded)
+      ├── SympoziumInstance: platform-team-platform-engineer
+      │   ├── SympoziumSchedule: ...platform-engineer-schedule (weekdays 9am)
+      │   └── ConfigMap: ...platform-engineer-memory (seeded)
+      │
+      └── (if sharedMemory.enabled):
+          ├── PVC: platform-team-shared-memory-db
+          ├── Deployment: platform-team-shared-memory
+          └── Service: platform-team-shared-memory
 ```
 
 All generated resources have `ownerReferences` pointing back to the PersonaPack — delete the pack and everything gets garbage-collected.
@@ -77,6 +82,72 @@ spec:
       type: sequential
       timeout: "5m"
 ```
+
+## Shared Workflow Memory
+
+By default, each persona in a PersonaPack has its own **private memory** — an isolated SQLite database that only that persona can access. Shared Workflow Memory adds a second, **pack-level memory pool** that all personas can read from (and optionally write to), enabling cross-persona knowledge sharing.
+
+### Enabling Shared Memory
+
+```yaml
+apiVersion: sympozium.ai/v1alpha1
+kind: PersonaPack
+metadata:
+  name: research-team
+spec:
+  sharedMemory:
+    enabled: true
+    storageSize: "1Gi"
+    accessRules:
+      - persona: lead
+        access: read-write
+      - persona: researcher
+        access: read-write
+      - persona: writer
+        access: read-write
+      - persona: reviewer
+        access: read-only
+```
+
+### How It Works
+
+When shared memory is enabled, the PersonaPack controller provisions:
+
+- **PVC**: `<pack>-shared-memory-db` — persistent storage for the shared SQLite database
+- **Deployment**: `<pack>-shared-memory` — the same `skill-memory` server image used for private memory
+- **Service**: `<pack>-shared-memory` — ClusterIP service on port 8080
+
+All resources have `ownerReferences` to the PersonaPack and are cleaned up on deletion.
+
+### Agent Tools
+
+Agents in the pack receive three additional tools alongside their private memory tools:
+
+| Tool | Description | Access |
+|------|-------------|--------|
+| `workflow_memory_search` | Search shared team knowledge contributed by any persona | All |
+| `workflow_memory_store` | Store findings for other personas (auto-tagged with source persona) | read-write only |
+| `workflow_memory_list` | List shared entries, filterable by persona or tag | All |
+
+### Access Control
+
+Each persona can be granted `read-write` or `read-only` access via `accessRules`. If no rules are specified, all personas default to `read-write`.
+
+- **read-write**: Can search, list, and store entries
+- **read-only**: Can search and list, but cannot store (the `workflow_memory_store` tool is not registered)
+
+Access control is enforced client-side in the agent runner — sufficient because the memory server is in-cluster behind a ClusterIP with no untrusted clients.
+
+### Auto-Context Injection
+
+When an agent starts, the runner automatically queries both private and shared memory for task-relevant context. The system prompt includes two sections:
+
+- **Your Past Findings (Private Memory)** — from the persona's own memory
+- **Team Knowledge (Shared Workflow Memory)** — from the pack's shared pool
+
+### Attribution
+
+Entries stored via `workflow_memory_store` are automatically tagged with the source persona's instance name. This enables filtering by persona (e.g., "show me what the researcher found") without relying on agents to self-tag correctly.
 
 ### delegate_to_persona Tool
 

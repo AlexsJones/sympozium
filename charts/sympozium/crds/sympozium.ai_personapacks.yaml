@@ -531,6 +531,51 @@ spec:
                   - type
                   type: object
                 type: array
+              sharedMemory:
+                description: |-
+                  SharedMemory configures a shared memory pool accessible to all personas
+                  in this pack. Each persona retains its private memory; the shared pool
+                  provides cross-persona knowledge sharing within the workflow.
+                properties:
+                  accessRules:
+                    description: |-
+                      AccessRules defines per-persona access controls for the shared memory.
+                      If empty, all personas get read-write access.
+                    items:
+                      description: SharedMemoryAccessRule defines access control for
+                        a specific persona.
+                      properties:
+                        access:
+                          default: read-write
+                          description: 'Access is the access level: "read-write" or
+                            "read-only".'
+                          enum:
+                          - read-write
+                          - read-only
+                          type: string
+                        persona:
+                          description: Persona is the persona name this rule applies
+                            to.
+                          type: string
+                      required:
+                      - access
+                      - persona
+                      type: object
+                    type: array
+                  enabled:
+                    default: false
+                    description: Enabled activates the shared memory server for this
+                      pack.
+                    type: boolean
+                  storageSize:
+                    default: 1Gi
+                    description: |-
+                      StorageSize is the PVC storage request for the shared memory database.
+                      Defaults to "1Gi".
+                    type: string
+                required:
+                - enabled
+                type: object
               skillParams:
                 additionalProperties:
                   additionalProperties:
@@ -660,6 +705,10 @@ spec:
               phase:
                 description: Phase is the current phase (Pending, Ready, Error).
                 type: string
+              sharedMemoryReady:
+                description: SharedMemoryReady indicates the shared memory infrastructure
+                  is provisioned.
+                type: boolean
             type: object
         type: object
     served: true

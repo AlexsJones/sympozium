@@ -14,6 +14,19 @@ spec:
   version: "1.0.0"
   workflowType: delegation
 
+  sharedMemory:
+    enabled: true
+    storageSize: "1Gi"
+    accessRules:
+      - persona: lead
+        access: read-write
+      - persona: researcher
+        access: read-write
+      - persona: writer
+        access: read-write
+      - persona: reviewer
+        access: read-only
+
   relationships:
     - source: researcher
       target: writer

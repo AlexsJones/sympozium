@@ -91,6 +91,89 @@ Or query the database directly by exec-ing into the memory sidecar during a run:
 kubectl exec <pod> -c memory-server -- sqlite3 /data/memory.db "SELECT content, tags FROM memories ORDER BY created_at DESC LIMIT 10;"
 ```
 
+## Shared Workflow Memory
+
+When agents work together in a **PersonaPack**, each persona has its own private memory by default. **Shared Workflow Memory** adds a pack-level memory pool that all personas can access, enabling team knowledge accumulation.
+
+### Private vs Shared Memory
+
+| Aspect | Private Memory | Shared Workflow Memory |
+|--------|---------------|----------------------|
+| **Scope** | One instance | All personas in a PersonaPack |
+| **Storage** | `<instance>-memory-db` PVC | `<pack>-shared-memory-db` PVC |
+| **Tools** | `memory_search`, `memory_store`, `memory_list` | `workflow_memory_search`, `workflow_memory_store`, `workflow_memory_list` |
+| **Access** | Always read-write | Per-persona: `read-write` or `read-only` |
+| **Attribution** | N/A (single owner) | Auto-tagged with source persona name |
+| **Auto-context** | Top 3 results injected as "Your Past Findings" | Top 3 results injected as "Team Knowledge" |
+
+### Enabling
+
+Add `sharedMemory` to the PersonaPack spec:
+
+```yaml
+apiVersion: sympozium.ai/v1alpha1
+kind: PersonaPack
+metadata:
+  name: research-team
+spec:
+  sharedMemory:
+    enabled: true
+    storageSize: "1Gi"
+    accessRules:
+      - persona: researcher
+        access: read-write
+      - persona: reviewer
+        access: read-only
+```
+
+### Infrastructure
+
+The PersonaPack controller provisions three Kubernetes resources:
+
+```mermaid
+graph LR
+    A1["Agent Pod<br/>(researcher)"] -- "WORKFLOW_MEMORY_SERVER_URL" --> SM["Shared Memory Server"]
+    A2["Agent Pod<br/>(writer)"] -- "WORKFLOW_MEMORY_SERVER_URL" --> SM
+    A3["Agent Pod<br/>(reviewer)"] -- "WORKFLOW_MEMORY_SERVER_URL<br/>(read-only)" --> SM
+    SM -- "reads / writes" --> DB[("SQLite + FTS5<br/>on shared PVC")]
+```
+
+- **PVC**: `<pack>-shared-memory-db` — `ReadWriteOnce`, single replica
+- **Deployment**: `<pack>-shared-memory` — same `skill-memory` image, `Recreate` strategy
+- **Service**: `<pack>-shared-memory` — ClusterIP on port 8080
+
+Agent pods receive two env vars:
+- `WORKFLOW_MEMORY_SERVER_URL` — points to the shared memory service
+- `WORKFLOW_MEMORY_ACCESS` — `read-write` or `read-only` (from access rules)
+
+A `wait-for-shared-memory` init container ensures the server is ready before the agent starts.
+
+### Tools
+
+| Tool | Description |
+|------|-------------|
+| `workflow_memory_search(query, top_k?)` | Full-text search across all team knowledge |
+| `workflow_memory_store(content, tags?)` | Store findings for other personas (auto-tagged with source persona) |
+| `workflow_memory_list(tags?, limit?)` | List entries, filterable by tag or persona |
+
+The `workflow_memory_store` tool is only available to personas with `read-write` access. The source persona name is automatically added as a tag for attribution.
+
+### Viewing Shared Memory
+
+Query the shared memory via the API:
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" \
+  http://localhost:9090/api/v1/personapacks/research-team/shared-memory
+```
+
+Or exec into the shared memory pod:
+
+```bash
+kubectl exec deploy/research-team-shared-memory -c memory-server -- \
+  sqlite3 /data/memory.db "SELECT content, tags FROM memories ORDER BY created_at DESC LIMIT 10;"
+```
+
 ## Migration from ConfigMap Memory (Legacy)
 
 The previous ConfigMap-based memory system (`<instance>-memory` ConfigMap with `MEMORY.md`) is preserved as a **legacy fallback**. If an instance has `spec.memory.enabled: true` but does not include the `memory` SkillPack, the controller falls back to the ConfigMap approach.

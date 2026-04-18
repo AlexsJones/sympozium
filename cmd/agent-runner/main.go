@@ -255,6 +255,33 @@ func main() {
 		}
 	}
 
+	// Load shared workflow memory tools if configured (pack-level shared memory).
+	if wfMemTools := initWorkflowMemoryTools(); len(wfMemTools) > 0 {
+		tools = append(tools, wfMemTools...)
+
+		// Auto-inject shared team memory context alongside private memory.
+		if wfMemCtx := queryWorkflowMemoryContext(task, 3); wfMemCtx != "" {
+			systemPrompt += "\n\n## Team Knowledge (Shared Workflow Memory)\n\n" +
+				"The following shared memories were contributed by other personas in your team:\n\n" +
+				wfMemCtx + "\n\n" +
+				"Use `workflow_memory_search` for additional team knowledge lookups.\n"
+			log.Printf("auto-injected %d bytes of shared workflow memory context", len(wfMemCtx))
+		}
+
+		systemPrompt += "\n\n## Shared Workflow Memory\n\n" +
+			"You have access to shared team memory tools (`workflow_memory_search`, `workflow_memory_list`"
+		if workflowMemoryAccess != "read-only" {
+			systemPrompt += ", `workflow_memory_store`"
+		}
+		systemPrompt += ") that are shared across all personas in your team.\n"
+		if workflowMemoryAccess != "read-only" {
+			systemPrompt += "**After completing your task**, use `workflow_memory_store` to share key findings " +
+				"with other team members. Your persona name is automatically attached for attribution.\n"
+		}
+
+		log.Printf("workflow memory tools loaded: %d tool(s) (access: %s)", len(wfMemTools), workflowMemoryAccess)
+	}
+
 	apiKey := firstNonEmpty(
 		os.Getenv("API_KEY"),
 		os.Getenv("OPENAI_API_KEY"),

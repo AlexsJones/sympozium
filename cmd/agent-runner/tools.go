@@ -247,6 +247,10 @@ func executeToolCall(ctx context.Context, name string, argsJSON string) string {
 		if isMemoryTool(name) {
 			return executeMemoryTool(ctx, name, argsJSON)
 		}
+		// Check if this is a shared workflow memory tool.
+		if isWorkflowMemoryTool(name) {
+			return executeWorkflowMemoryTool(ctx, name, argsJSON)
+		}
 		// Check if this is an MCP tool from the manifest
 		if mcpTool, ok := lookupMCPTool(name); ok {
 			return executeMCPTool(ctx, mcpTool, argsJSON)

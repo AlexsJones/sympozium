@@ -450,6 +450,10 @@ func (r *AgentRunReconciler) reconcilePending(ctx context.Context, log logr.Logg
 
 	// Build and create the Job
 	job := r.buildJob(agentRun, memoryEnabled, observability, sidecars, mcpServers)
+
+	// Inject shared workflow memory env vars and init container if the pack has shared memory.
+	r.injectSharedMemory(ctx, agentRun, job)
+
 	if err := controllerutil.SetControllerReference(agentRun, job, r.Scheme); err != nil {
 		return ctrl.Result{}, fmt.Errorf("setting owner reference: %w", err)
 	}
@@ -2041,6 +2045,79 @@ func buildObservabilityEnv(agentRun *sympoziumv1alpha1.AgentRun, obs *sympoziumv
 	}
 
 	return env
+}
+
+// injectSharedMemory adds WORKFLOW_MEMORY_SERVER_URL, WORKFLOW_MEMORY_ACCESS env vars
+// and a wait-for-shared-memory init container to the Job's pod template if the
+// AgentRun belongs to a PersonaPack with shared memory enabled.
+func (r *AgentRunReconciler) injectSharedMemory(ctx context.Context, agentRun *sympoziumv1alpha1.AgentRun, job *batchv1.Job) {
+	packName := agentRun.Labels["sympozium.ai/persona-pack"]
+	if packName == "" {
+		return
+	}
+
+	var pack sympoziumv1alpha1.PersonaPack
+	if err := r.Get(ctx, types.NamespacedName{Name: packName, Namespace: agentRun.Namespace}, &pack); err != nil {
+		return
+	}
+	if pack.Spec.SharedMemory == nil || !pack.Spec.SharedMemory.Enabled {
+		return
+	}
+
+	sharedMemoryURL := fmt.Sprintf("http://%s-shared-memory.%s.svc:8080", packName, agentRun.Namespace)
+
+	// Resolve access mode for this persona from the instance's label.
+	accessMode := "read-write"
+	if agentRun.Spec.InstanceRef != "" {
+		var inst sympoziumv1alpha1.SympoziumInstance
+		if err := r.Get(ctx, types.NamespacedName{Name: agentRun.Spec.InstanceRef, Namespace: agentRun.Namespace}, &inst); err == nil {
+			personaName := inst.Labels["sympozium.ai/persona"]
+			for _, rule := range pack.Spec.SharedMemory.AccessRules {
+				if rule.Persona == personaName {
+					accessMode = rule.Access
+					break
+				}
+			}
+		}
+	}
+
+	// Inject env vars into the agent container (first container).
+	podSpec := &job.Spec.Template.Spec
+	if len(podSpec.Containers) > 0 {
+		podSpec.Containers[0].Env = append(podSpec.Containers[0].Env,
+			corev1.EnvVar{Name: "WORKFLOW_MEMORY_SERVER_URL", Value: sharedMemoryURL},
+			corev1.EnvVar{Name: "WORKFLOW_MEMORY_ACCESS", Value: accessMode},
+		)
+	}
+
+	// Add wait-for-shared-memory init container.
+	readOnly := true
+	noPrivEsc := false
+	podSpec.InitContainers = append(podSpec.InitContainers, corev1.Container{
+		Name:            "wait-for-shared-memory",
+		Image:           "busybox:1.36",
+		ImagePullPolicy: corev1.PullIfNotPresent,
+		SecurityContext: &corev1.SecurityContext{
+			ReadOnlyRootFilesystem:   &readOnly,
+			AllowPrivilegeEscalation: &noPrivEsc,
+			Capabilities: &corev1.Capabilities{
+				Drop: []corev1.Capability{"ALL"},
+			},
+		},
+		Command: []string{"sh", "-c",
+			fmt.Sprintf("elapsed=0; until wget -q --spider --timeout=2 %s/health; do echo 'waiting for shared memory server...'; sleep 2; elapsed=$((elapsed+2)); if [ $elapsed -ge 120 ]; then echo 'ERROR: shared memory server not ready after 120s'; exit 1; fi; done", sharedMemoryURL),
+		},
+		Resources: corev1.ResourceRequirements{
+			Requests: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("50m"),
+				corev1.ResourceMemory: resource.MustParse("32Mi"),
+			},
+			Limits: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("100m"),
+				corev1.ResourceMemory: resource.MustParse("64Mi"),
+			},
+		},
+	})
 }
 
 // buildVolumes constructs the volume list for an agent pod.

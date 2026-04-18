@@ -82,14 +82,16 @@ Sympozium serves **two powerful use cases** on one Kubernetes-native platform:
 
 | | |
 |---|---|
-| **PersonaPacks** | Helm-like bundles for AI agents — activate a pack and the controller stamps out a full agent team |
+| **PersonaPacks** | Helm-like bundles for AI agent teams — activate a pack and the controller stamps out instances, schedules, and memory |
+| **Agent Workflows** | Delegation, sequential pipelines, and supervision relationships between personas — visualised on an interactive canvas |
+| **Shared Workflow Memory** | Pack-level SQLite memory pool for cross-persona knowledge sharing with per-persona access control |
 | **Skill Sidecars** | Every skill runs in its own sidecar with ephemeral least-privilege RBAC, garbage-collected on completion |
 | **Multi-Channel** | Telegram, Slack, Discord, WhatsApp — each channel is a dedicated Deployment backed by NATS JetStream |
 | **Persistent Memory** | SQLite + FTS5 on a PersistentVolume — memories survive across ephemeral pod runs |
 | **Scheduled Heartbeats** | Cron-based recurring agent runs for health checks, alert triage, and resource right-sizing |
 | **Agent Sandbox** | Kernel-level isolation via [kubernetes-sigs/agent-sandbox](https://deploy.sympozium.ai/docs/concepts/agent-sandbox/) — gVisor or Kata with warm pools for instant starts |
 | **MCP Servers** | External tool providers via Model Context Protocol with auto-discovery and allow/deny filtering |
-| **TUI & Web UI** | Terminal and browser dashboards, or skip the UI entirely with Helm and kubectl |
+| **TUI & Web UI** | Terminal and browser dashboards with live workflow canvas, or skip the UI entirely with Helm and kubectl |
 | **Any AI Provider** | OpenAI, Anthropic, Azure, Ollama, or any compatible endpoint — no vendor lock-in |
 
 ---
