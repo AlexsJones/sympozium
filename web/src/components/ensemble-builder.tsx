@@ -10,7 +10,7 @@
  * selector can show provider-specific model lists.
  */
 
-import { useCallback, useState, useMemo } from "react";
+import { useCallback, useEffect, useRef, useState, useMemo } from "react";
 import {
   ReactFlow,
   Background,
@@ -32,7 +32,17 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Plus, Settings, Save, ArrowRight, Database } from "lucide-react";
+import {
+  Plus,
+  Settings,
+  Save,
+  ArrowRight,
+  Database,
+  Server,
+  Cpu,
+  Loader2,
+  Check,
+} from "lucide-react";
 import type {
   PersonaSpec,
   PersonaRelationship,
@@ -45,6 +55,9 @@ import {
 } from "@/components/ensemble-settings-panel";
 import { PROVIDERS } from "@/components/onboarding-wizard";
 import { useCreateEnsemble } from "@/hooks/use-api";
+import { useProviderNodes } from "@/hooks/use-provider-nodes";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { cn } from "@/lib/utils";
 import { useNavigate } from "react-router-dom";
 
 // ── Provider context shared with PersonaConfigPanel ────────────────────────
@@ -156,6 +169,9 @@ function ProviderSetup({
   const [provider, setProvider] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [baseURL, setBaseURL] = useState("");
+  const [inferenceMode, setInferenceMode] = useState<"workload" | "node">(
+    "workload",
+  );
 
   const selectedProvider = PROVIDERS.find((p) => p.value === provider);
   const isLocal =
@@ -164,6 +180,42 @@ function ProviderSetup({
     provider === "llama-server" ||
     provider === "unsloth";
   const needsKey = !isLocal && provider !== "custom" && provider !== "";
+
+  const nodeProviderMatches = (probeName: string) => {
+    if (provider === "custom") return true;
+    if (provider === "unsloth")
+      return (
+        probeName === "unsloth" ||
+        probeName === "llama-cpp" ||
+        probeName === "vllm"
+      );
+    if (provider === "llama-server") return probeName === "llama-cpp";
+    return probeName === provider;
+  };
+
+  const { data: providerNodes, isLoading: nodesLoading } = useProviderNodes(
+    isLocal || provider === "custom",
+  );
+
+  // Auto-switch to "node" mode when matching providers are discovered.
+  const userOverrodeInferenceMode = useRef(false);
+  useEffect(() => {
+    if (
+      !isLocal ||
+      nodesLoading ||
+      !providerNodes ||
+      userOverrodeInferenceMode.current
+    )
+      return;
+    const hasMatch = providerNodes.some((n) =>
+      n.providers.some((p) => nodeProviderMatches(p.name)),
+    );
+    if (hasMatch) setInferenceMode("node");
+  }, [providerNodes, nodesLoading, provider]);
+  useEffect(() => {
+    userOverrodeInferenceMode.current = false;
+  }, [provider]);
+
   const canContinue =
     provider !== "" &&
     (!needsKey || apiKey !== "") &&
@@ -219,16 +271,139 @@ function ProviderSetup({
           </div>
         )}
 
-        {/* Base URL (for local providers) */}
+        {/* Inference source toggle for local providers */}
         {(isLocal || provider === "custom") && (
+          <div className="space-y-2">
+            <Label className="text-xs">Inference Source</Label>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  userOverrodeInferenceMode.current = true;
+                  setInferenceMode("workload");
+                }}
+                className={cn(
+                  "flex-1 flex items-center justify-center gap-1.5 rounded-md border px-3 py-2 text-xs transition-colors",
+                  inferenceMode === "workload"
+                    ? "border-blue-500/40 bg-blue-500/15 text-blue-300"
+                    : "border-border/50 hover:bg-white/5",
+                )}
+              >
+                <Server className="h-3.5 w-3.5" /> In-cluster service
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  userOverrodeInferenceMode.current = true;
+                  setInferenceMode("node");
+                }}
+                className={cn(
+                  "flex-1 flex items-center justify-center gap-1.5 rounded-md border px-3 py-2 text-xs transition-colors",
+                  inferenceMode === "node"
+                    ? "border-blue-500/40 bg-blue-500/15 text-blue-300"
+                    : "border-border/50 hover:bg-white/5",
+                )}
+              >
+                <Cpu className="h-3.5 w-3.5" /> Installed on node
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* In-cluster service: manual Base URL input */}
+        {(isLocal || provider === "custom") && inferenceMode === "workload" && (
           <div className="space-y-1.5">
             <Label className="text-xs">Base URL</Label>
             <Input
               value={baseURL}
               onChange={(e) => setBaseURL(e.target.value)}
-              placeholder="http://localhost:1234/v1"
+              placeholder={
+                provider === "ollama"
+                  ? "http://ollama.default.svc:11434/v1"
+                  : provider === "lm-studio"
+                    ? "http://localhost:1234/v1"
+                    : "http://localhost:8080/v1"
+              }
               className="h-8 text-sm font-mono"
             />
+          </div>
+        )}
+
+        {/* Node-based: discover and select a node */}
+        {(isLocal || provider === "custom") && inferenceMode === "node" && (
+          <div className="space-y-1.5">
+            <Label className="text-xs">Select Node</Label>
+            {nodesLoading ? (
+              <div className="flex items-center gap-2 py-4 text-xs text-muted-foreground justify-center">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                Discovering nodes...
+              </div>
+            ) : !providerNodes ||
+              providerNodes.filter((n) =>
+                n.providers.some((p) => nodeProviderMatches(p.name)),
+              ).length === 0 ? (
+              <div className="rounded-md border border-border/50 bg-muted/20 px-3 py-3 text-xs text-muted-foreground">
+                {providerNodes && providerNodes.length > 0
+                  ? `No nodes with ${provider} detected. Found other providers on ${providerNodes.length} node${providerNodes.length === 1 ? "" : "s"}.`
+                  : "No nodes with inference providers detected. Is the node-probe DaemonSet enabled?"}
+              </div>
+            ) : (
+              <ScrollArea className="h-40 rounded-md border border-border/50">
+                <div className="p-1 space-y-0.5">
+                  {providerNodes
+                    .filter((node) =>
+                      node.providers.some((p) => nodeProviderMatches(p.name)),
+                    )
+                    .map((node) => {
+                      const providerInfo =
+                        node.providers.find((p) =>
+                          nodeProviderMatches(p.name),
+                        ) || node.providers[0];
+                      const nodeBase = providerInfo
+                        ? providerInfo.proxyPort
+                          ? `http://${node.nodeIP}:${providerInfo.proxyPort}/proxy/${providerInfo.name}/v1`
+                          : `http://${node.nodeIP}:${providerInfo.port}/v1`
+                        : "";
+                      const isSelected = baseURL === nodeBase;
+                      const nodeProviders = node.providers
+                        .filter((p) => nodeProviderMatches(p.name))
+                        .map((p) => p.name);
+                      const nodeModels = node.providers
+                        .filter((p) => nodeProviderMatches(p.name))
+                        .flatMap((p) => p.models);
+
+                      return (
+                        <button
+                          key={node.nodeName}
+                          type="button"
+                          onClick={() => setBaseURL(nodeBase)}
+                          className={cn(
+                            "flex w-full items-start gap-2 rounded-md px-2.5 py-2 text-left text-xs transition-colors",
+                            isSelected
+                              ? "bg-blue-500/15 text-blue-400 border border-blue-500/30"
+                              : "text-foreground hover:bg-white/5 border border-transparent",
+                          )}
+                        >
+                          <Cpu className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                          <div className="min-w-0">
+                            <div className="font-mono truncate">
+                              {node.nodeName}
+                            </div>
+                            <div className="text-[10px] text-muted-foreground">
+                              {node.nodeIP} &middot; {nodeProviders.join(", ")}
+                              {nodeModels.length > 0 &&
+                                ` · ${nodeModels.length} model${nodeModels.length === 1 ? "" : "s"}`}
+                            </div>
+                          </div>
+                          {isSelected && (
+                            <Check className="h-3 w-3 shrink-0 mt-0.5 ml-auto" />
+                          )}
+                        </button>
+                      );
+                    })}
+                </div>
+              </ScrollArea>
+            )}
           </div>
         )}
 
