@@ -436,6 +436,44 @@ func TestExtractLikelyProviderErrorFromLogs_Quota(t *testing.T) {
 	}
 }
 
+func TestParseAgentResultFromLogs_MarkerBeyondOldTailLimit(t *testing.T) {
+	var b strings.Builder
+	for i := 0; i < 200; i++ {
+		fmt.Fprintf(&b, "tool_call [%d]: read_file id=call-%d\n", i, i)
+	}
+	b.WriteString("__SYMPOZIUM_RESULT__")
+	b.WriteString(`{"status":"success","response":"the final report","metrics":{"durationMs":5000,"inputTokens":100,"outputTokens":50,"toolCalls":200}}`)
+	b.WriteString("__SYMPOZIUM_END__\n")
+
+	result, errMsg, usage := parseAgentResultFromLogs(b.String(), logr.Discard())
+	if errMsg != "" {
+		t.Fatalf("unexpected error: %s", errMsg)
+	}
+	if result != "the final report" {
+		t.Fatalf("result = %q, want %q", result, "the final report")
+	}
+	if usage == nil || usage.ToolCalls != 200 {
+		t.Fatalf("expected 200 tool calls in usage, got %+v", usage)
+	}
+}
+
+func TestParseAgentResultFromLogs_LongMultilineResponse(t *testing.T) {
+	longResponse := strings.Repeat("line of report text\n", 500)
+	payload := fmt.Sprintf(`{"status":"success","response":%q,"metrics":{"durationMs":3000,"inputTokens":50,"outputTokens":100,"toolCalls":5}}`, longResponse)
+	logs := "__SYMPOZIUM_RESULT__" + payload + "__SYMPOZIUM_END__\n"
+
+	result, errMsg, _ := parseAgentResultFromLogs(logs, logr.Discard())
+	if errMsg != "" {
+		t.Fatalf("unexpected error: %s", errMsg)
+	}
+	if !strings.Contains(result, "line of report text") {
+		t.Fatal("expected full response content")
+	}
+	if len(result) != len(longResponse) {
+		t.Fatalf("response length = %d, want %d", len(result), len(longResponse))
+	}
+}
+
 func containsIgnoreCase(s, sub string) bool {
 	return strings.Contains(strings.ToLower(s), strings.ToLower(sub))
 }

@@ -143,6 +143,28 @@ func TestCheckChannelAccess(t *testing.T) {
 			wantDeny:    "",
 		},
 		{
+			name: "discord channel ID routing via AllowedChats - denied",
+			channels: []sympoziumv1alpha1.ChannelSpec{{
+				Type: "discord",
+				AccessControl: &sympoziumv1alpha1.ChannelAccessControl{
+					AllowedChats: []string{"1234567890123456789"},
+				},
+			}},
+			msg:         channel.InboundMessage{Channel: "discord", SenderID: "user1", ChatID: "9999999999999999999"},
+			wantAllowed: false,
+		},
+		{
+			name: "discord channel ID routing via AllowedChats - allowed",
+			channels: []sympoziumv1alpha1.ChannelSpec{{
+				Type: "discord",
+				AccessControl: &sympoziumv1alpha1.ChannelAccessControl{
+					AllowedChats: []string{"1234567890123456789"},
+				},
+			}},
+			msg:         channel.InboundMessage{Channel: "discord", SenderID: "user1", ChatID: "1234567890123456789"},
+			wantAllowed: true,
+		},
+		{
 			name: "all checks pass",
 			channels: []sympoziumv1alpha1.ChannelSpec{{
 				Type: "telegram",

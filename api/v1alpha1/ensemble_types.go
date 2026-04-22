@@ -150,6 +150,13 @@ type PersonaSpec struct {
 	// Propagated to the generated SympoziumInstance's AgentConfig.
 	// +optional
 	Lifecycle *LifecycleHooks `json:"lifecycle,omitempty"`
+
+	// ChannelAccessControl maps channel types to per-persona access control
+	// overrides. When set, these take priority over ensemble-level
+	// ChannelAccessControl for this persona. Use AllowedChats with Discord
+	// channel IDs to route specific Discord channels to this persona.
+	// +optional
+	ChannelAccessControl map[string]*ChannelAccessControl `json:"channelAccessControl,omitempty"`
 }
 
 // PersonaWebEndpoint configures the web endpoint for a persona.

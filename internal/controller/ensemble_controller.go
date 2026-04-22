@@ -506,8 +506,13 @@ func (r *EnsembleReconciler) buildInstance(
 				}
 			}
 		}
-		// Apply channel access control from the pack if configured.
-		if pack.Spec.ChannelAccessControl != nil {
+		// Apply channel access control: persona-level overrides take
+		// priority over ensemble-level defaults.
+		if persona.ChannelAccessControl != nil {
+			if ac, ok := persona.ChannelAccessControl[ch]; ok {
+				cs.AccessControl = ac
+			}
+		} else if pack.Spec.ChannelAccessControl != nil {
 			if ac, ok := pack.Spec.ChannelAccessControl[ch]; ok {
 				cs.AccessControl = ac
 			}

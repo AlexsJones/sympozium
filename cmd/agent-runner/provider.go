@@ -122,9 +122,10 @@ func runAgentLoop(ctx context.Context, p LLMProvider) (string, int, int, int, er
 				return res.Text, totalInputTokens, totalOutputTokens, totalToolCalls, nil
 			}
 			if accumulated.Len() > 0 {
-				log.Printf("WARNING: terminal turn had empty text; falling back to accumulated reasoning (%d chars)",
-					accumulated.Len())
-				return accumulated.String(), totalInputTokens, totalOutputTokens, totalToolCalls, nil
+				log.Printf("WARNING: terminal turn had empty text after %d tool iterations; "+
+					"discarding %d chars of intermediate reasoning", i, accumulated.Len())
+				return "(Agent completed its task via tool calls but did not produce a final text summary.)",
+					totalInputTokens, totalOutputTokens, totalToolCalls, nil
 			}
 			log.Printf("WARNING: terminal turn had empty text and no prior reasoning to fall back on")
 			return "", totalInputTokens, totalOutputTokens, totalToolCalls, nil

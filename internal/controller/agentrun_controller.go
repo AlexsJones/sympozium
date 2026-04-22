@@ -2569,7 +2569,7 @@ func (r *AgentRunReconciler) extractResultFromPod(ctx context.Context, log logr.
 		return "", "", nil
 	}
 
-	tailLines := int64(80)
+	tailLines := int64(500)
 	opts := &corev1.PodLogOptions{
 		Container: "agent",
 		TailLines: &tailLines,

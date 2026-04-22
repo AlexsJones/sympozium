@@ -730,10 +730,11 @@ func TestCallOpenAI_EmptyTerminalTurnFallsBack(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if text == "" {
-		t.Fatal("response is EMPTY — accumulated-reasoning fallback did not kick in (REGRESSION)")
+		t.Fatal("response is EMPTY — fallback did not kick in (REGRESSION)")
 	}
-	if !strings.Contains(text, "I'll scan the cluster now") {
-		t.Errorf("response should contain turn-1 reasoning preamble, got: %q", text)
+	wantSynthetic := "(Agent completed its task via tool calls but did not produce a final text summary.)"
+	if text != wantSynthetic {
+		t.Errorf("response should be synthetic message, got: %q", text)
 	}
 	if callCount != 2 {
 		t.Errorf("callCount = %d, want 2 (tool-call turn + terminal turn)", callCount)
@@ -1101,9 +1102,10 @@ func TestCallAnthropic_EmptyTerminalTurnFallsBack(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if text == "" {
-		t.Fatal("response is EMPTY — accumulated-reasoning fallback did not kick in (REGRESSION)")
+		t.Fatal("response is EMPTY — fallback did not kick in (REGRESSION)")
 	}
-	if !strings.Contains(text, "Let me check that file") {
-		t.Errorf("response should contain turn-1 reasoning text, got: %q", text)
+	wantSynthetic := "(Agent completed its task via tool calls but did not produce a final text summary.)"
+	if text != wantSynthetic {
+		t.Errorf("response should be synthetic message, got: %q", text)
 	}
 }

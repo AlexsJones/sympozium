@@ -187,10 +187,11 @@ func TestRunAgentLoop_EmptyTerminalFallsBackToAccumulated(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if text == "" {
-		t.Fatal("response is EMPTY — fallback to accumulated reasoning did not kick in")
+		t.Fatal("response is EMPTY — fallback did not kick in")
 	}
-	if !strings.Contains(text, "I'll scan the cluster now.") {
-		t.Errorf("fallback text = %q, want it to contain the preamble reasoning", text)
+	wantSynthetic := "(Agent completed its task via tool calls but did not produce a final text summary.)"
+	if text != wantSynthetic {
+		t.Errorf("fallback text = %q, want synthetic message %q", text, wantSynthetic)
 	}
 	if in != 300 || out != 292 {
 		t.Errorf("tokens = (%d,%d), want (300,292) accumulated across turns", in, out)
