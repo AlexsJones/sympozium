@@ -92,7 +92,8 @@ Sympozium serves **two powerful use cases** on one Kubernetes-native platform:
 | **Agent Sandbox** | Kernel-level isolation via [kubernetes-sigs/agent-sandbox](https://deploy.sympozium.ai/docs/concepts/agent-sandbox/) — gVisor or Kata with warm pools for instant starts |
 | **MCP Servers** | External tool providers via Model Context Protocol with auto-discovery and allow/deny filtering |
 | **TUI & Web UI** | Terminal and browser dashboards with live workflow canvas, or skip the UI entirely with Helm and kubectl |
-| **Any AI Provider** | OpenAI, Anthropic, Azure, Ollama, or any compatible endpoint — no vendor lock-in |
+| **Local Model Inference** | Deploy GGUF models as Kubernetes resources — the controller downloads weights, runs llama-server, and exposes an OpenAI-compatible endpoint. No API keys required |
+| **Any AI Provider** | OpenAI, Anthropic, Azure, AWS Bedrock, Ollama, or any compatible endpoint — no vendor lock-in |
 
 ---
 
@@ -111,6 +112,7 @@ Sympozium serves **two powerful use cases** on one Kubernetes-native platform:
 | Security | [deploy.sympozium.ai/docs/concepts/security](https://deploy.sympozium.ai/docs/concepts/security/) |
 | CLI & TUI Reference | [deploy.sympozium.ai/docs/reference/cli](https://deploy.sympozium.ai/docs/reference/cli/) |
 | Helm Chart | [deploy.sympozium.ai/docs/reference/helm](https://deploy.sympozium.ai/docs/reference/helm/) |
+| Local Model Inference | [deploy.sympozium.ai/docs/guides/local-models](https://deploy.sympozium.ai/docs/guides/local-models/) |
 | Ollama & Local Inference | [deploy.sympozium.ai/docs/guides/ollama](https://deploy.sympozium.ai/docs/guides/ollama/) |
 | Writing Skills | [deploy.sympozium.ai/docs/guides/writing-skills](https://deploy.sympozium.ai/docs/guides/writing-skills/) |
 | Writing Tools | [deploy.sympozium.ai/docs/guides/writing-tools](https://deploy.sympozium.ai/docs/guides/writing-tools/) |
