@@ -326,12 +326,13 @@ models:
   #     filename: "model.gguf"
   #     storageSize: "10Gi"
   #     storageClass: ""
-  #     gpu: 1
+  #     gpu: 0              # 0 = CPU-only (default), 1+ = nvidia.com/gpu
   #     memory: "16Gi"
   #     cpu: "4"
+  #     contextSize: 8192   # max context window in tokens
   #     nodeSelector: {}
   #     tolerations: []
-  #     args: []  # extra llama-server flags
+  #     args: []             # extra llama-server flags
 
 # -- ServiceMonitor for Prometheus (requires prometheus-operator)
 serviceMonitor:

@@ -19,16 +19,19 @@ spec:
     storageClass: {{ .storageClass | quote }}
     {{- end }}
   resources:
-    gpu: {{ .gpu | default 1 }}
+    gpu: {{ .gpu | default 0 }}
     memory: {{ .memory | default "16Gi" | quote }}
     cpu: {{ .cpu | default "4" | quote }}
-  {{- if .args }}
   inference:
+    {{- if .contextSize }}
+    contextSize: {{ .contextSize }}
+    {{- end }}
+    {{- if .args }}
     args:
     {{- range .args }}
       - {{ . | quote }}
     {{- end }}
-  {{- end }}
+    {{- end }}
   {{- if .nodeSelector }}
   nodeSelector:
     {{- toYaml .nodeSelector | nindent 4 }}

@@ -26,7 +26,6 @@ import (
 )
 
 const (
-	modelFinalizer   = "sympozium.ai/model-finalizer"
 	modelMountPath   = "/models"
 	downloadJobImage = "curlimages/curl:8.7.1"
 )

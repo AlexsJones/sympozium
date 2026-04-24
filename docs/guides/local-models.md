@@ -214,8 +214,8 @@ Larger contexts require more memory. If the inference server OOMs, reduce `conte
 Sympozium ships with a default ensemble designed for local models:
 
 **Personas:**
-- **Local Assistant** — general Q&A with persistent memory
-- **Local Coder** — writes code with software-dev tools, delegates from assistant
+- **Local Assistant** — general Q&A with persistent memory, can delegate to the coder
+- **Local Coder** — writes code with software-dev tools
 
 **Prerequisites:** Deploy a Model named `qwen3-8b-q4`. The ensemble references it via `modelRef` and waits for it to be Ready.
 

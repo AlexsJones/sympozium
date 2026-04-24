@@ -41,7 +41,7 @@ spec:
 | `version` | No | Semantic version of the pack |
 | `policyRef` | No | Default SympoziumPolicy for all generated instances |
 | `baseURL` | No | Override provider API endpoint (for Ollama, LM Studio, etc.) |
-| `modelRef` | No | Reference a [cluster-local Model](./local-models.md) — all personas use this model, no API key needed |
+| `modelRef` | No | Reference a [cluster-local Model](./local-models.md) — all personas use this model, no API key needed. Takes precedence over `authRefs` and `baseURL` |
 | `sharedMemory` | No | Shared memory pool for cross-persona knowledge sharing (see Step 5) |
 | `personas` | Yes | List of agent personas (see below) |
 

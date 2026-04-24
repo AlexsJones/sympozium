@@ -163,7 +163,7 @@ Configured per-agent via `ModelSpec` — just set `provider`, `model`, and point
 ### Cluster-Local Model Inference
 The **`Model` CRD** makes local inference declarative — apply a Model and the controller handles everything:
 - Downloads GGUF weights to a PVC
-- Deploys a llama-server with GPU resources
+- Deploys a llama-server (CPU by default, optional GPU)
 - Exposes an OpenAI-compatible endpoint as a ClusterIP Service
 - AgentRuns reference models via `modelRef` — no API key needed
 
