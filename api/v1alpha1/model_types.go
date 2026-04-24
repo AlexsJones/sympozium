@@ -143,8 +143,8 @@ type Model struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec   ModelCRDSpec   `json:"spec,omitempty"`
-	Status ModelStatus `json:"status,omitempty"`
+	Spec   ModelCRDSpec `json:"spec,omitempty"`
+	Status ModelStatus  `json:"status,omitempty"`
 }
 
 // +kubebuilder:object:root=true
