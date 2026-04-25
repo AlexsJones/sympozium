@@ -127,6 +127,7 @@ func (s *Server) buildMux(frontendFS fs.FS, token string) http.Handler {
 	mux.HandleFunc("GET /api/v1/schedules", s.listSchedules)
 	mux.HandleFunc("GET /api/v1/schedules/{name}", s.getSchedule)
 	mux.HandleFunc("POST /api/v1/schedules", s.createSchedule)
+	mux.HandleFunc("PATCH /api/v1/schedules/{name}", s.patchSchedule)
 	mux.HandleFunc("DELETE /api/v1/schedules/{name}", s.deleteSchedule)
 
 	// Ensemble endpoints
@@ -1410,6 +1411,58 @@ func (s *Server) deleteSchedule(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// PatchScheduleRequest is the request body for updating an existing SympoziumSchedule.
+type PatchScheduleRequest struct {
+	Schedule          *string `json:"schedule,omitempty"`
+	Task              *string `json:"task,omitempty"`
+	Type              *string `json:"type,omitempty"`
+	Suspend           *bool   `json:"suspend,omitempty"`
+	ConcurrencyPolicy *string `json:"concurrencyPolicy,omitempty"`
+}
+
+func (s *Server) patchSchedule(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	ns := r.URL.Query().Get("namespace")
+	if ns == "" {
+		ns = "default"
+	}
+
+	var req PatchScheduleRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	var sched sympoziumv1alpha1.SympoziumSchedule
+	if err := s.client.Get(r.Context(), types.NamespacedName{Name: name, Namespace: ns}, &sched); err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+
+	if req.Schedule != nil {
+		sched.Spec.Schedule = *req.Schedule
+	}
+	if req.Task != nil {
+		sched.Spec.Task = *req.Task
+	}
+	if req.Type != nil {
+		sched.Spec.Type = *req.Type
+	}
+	if req.Suspend != nil {
+		sched.Spec.Suspend = *req.Suspend
+	}
+	if req.ConcurrencyPolicy != nil {
+		sched.Spec.ConcurrencyPolicy = *req.ConcurrencyPolicy
+	}
+
+	if err := s.client.Update(r.Context(), &sched); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, sched)
 }
 
 // --- Ensemble handlers ---

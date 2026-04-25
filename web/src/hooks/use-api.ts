@@ -246,6 +246,28 @@ export function useCreateSchedule() {
   });
 }
 
+export function useUpdateSchedule() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      name,
+      ...data
+    }: {
+      name: string;
+      schedule?: string;
+      task?: string;
+      type?: string;
+      suspend?: boolean;
+      concurrencyPolicy?: string;
+    }) => api.schedules.patch(name, data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["schedules"] });
+      toast.success("Schedule updated");
+    },
+    onError: toastError,
+  });
+}
+
 export function useDeleteSchedule() {
   const qc = useQueryClient();
   return useMutation({

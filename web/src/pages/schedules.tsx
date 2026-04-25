@@ -3,8 +3,10 @@ import {
   useSchedules,
   useDeleteSchedule,
   useCreateSchedule,
+  useUpdateSchedule,
   useInstances,
 } from "@/hooks/use-api";
+import type { SympoziumSchedule } from "@/lib/api";
 import { StatusBadge } from "@/components/status-badge";
 import {
   Table,
@@ -35,7 +37,7 @@ import {
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Plus, Trash2 } from "lucide-react";
+import { Pencil, Plus, Trash2 } from "lucide-react";
 import { formatAge } from "@/lib/utils";
 
 export function SchedulesPage() {
@@ -43,7 +45,15 @@ export function SchedulesPage() {
   const instances = useInstances();
   const deleteSchedule = useDeleteSchedule();
   const createSchedule = useCreateSchedule();
+  const updateSchedule = useUpdateSchedule();
   const [open, setOpen] = useState(false);
+  const [editing, setEditing] = useState<SympoziumSchedule | null>(null);
+  const [editForm, setEditForm] = useState({
+    schedule: "",
+    type: "",
+    task: "",
+    suspend: false,
+  });
   const [search, setSearch] = useState("");
   const [form, setForm] = useState({
     name: "",
@@ -72,6 +82,24 @@ export function SchedulesPage() {
         });
       },
     });
+  };
+
+  const openEdit = (sched: SympoziumSchedule) => {
+    setEditForm({
+      schedule: sched.spec.schedule,
+      type: sched.spec.type || "scheduled",
+      task: sched.spec.task,
+      suspend: sched.spec.suspend ?? false,
+    });
+    setEditing(sched);
+  };
+
+  const handleUpdate = () => {
+    if (!editing) return;
+    updateSchedule.mutate(
+      { name: editing.metadata.name, ...editForm },
+      { onSuccess: () => setEditing(null) },
+    );
   };
 
   return (
@@ -243,7 +271,15 @@ export function SchedulesPage() {
                 <TableCell className="text-sm text-muted-foreground">
                   {formatAge(sched.metadata.creationTimestamp)}
                 </TableCell>
-                <TableCell>
+                <TableCell className="flex gap-1">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => openEdit(sched)}
+                    title="Edit"
+                  >
+                    <Pencil className="h-4 w-4" />
+                  </Button>
                   <Button
                     variant="ghost"
                     size="icon"
@@ -259,6 +295,70 @@ export function SchedulesPage() {
           </TableBody>
         </Table>
       )}
+
+      <Dialog open={editing !== null} onOpenChange={(v) => !v && setEditing(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit Schedule</DialogTitle>
+            <DialogDescription>
+              Update the schedule configuration for{" "}
+              <span className="font-mono">{editing?.metadata.name}</span>.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 pt-2">
+            <div className="space-y-2">
+              <Label>Instance</Label>
+              <Input value={editing?.spec.instanceRef ?? ""} disabled />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Type</Label>
+                <Select
+                  value={editForm.type}
+                  onValueChange={(v) => setEditForm({ ...editForm, type: v })}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="heartbeat">Heartbeat</SelectItem>
+                    <SelectItem value="scheduled">Scheduled</SelectItem>
+                    <SelectItem value="sweep">Sweep</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Cron</Label>
+                <Input
+                  value={editForm.schedule}
+                  onChange={(e) =>
+                    setEditForm({ ...editForm, schedule: e.target.value })
+                  }
+                  placeholder="*/5 * * * *"
+                />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label>Task</Label>
+              <Textarea
+                value={editForm.task}
+                onChange={(e) =>
+                  setEditForm({ ...editForm, task: e.target.value })
+                }
+                placeholder="Task for the scheduled run…"
+                rows={3}
+              />
+            </div>
+            <Button
+              className="w-full"
+              onClick={handleUpdate}
+              disabled={!editForm.schedule || updateSchedule.isPending}
+            >
+              {updateSchedule.isPending ? "Saving…" : "Save Changes"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
