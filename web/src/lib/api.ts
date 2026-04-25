@@ -881,6 +881,20 @@ export const api = {
       }),
     delete: (name: string) =>
       apiFetch<void>(`/api/v1/schedules/${name}`, { method: "DELETE" }),
+    patch: (
+      name: string,
+      data: {
+        schedule?: string;
+        task?: string;
+        type?: string;
+        suspend?: boolean;
+        concurrencyPolicy?: string;
+      },
+    ) =>
+      apiFetch<SympoziumSchedule>(`/api/v1/schedules/${name}`, {
+        method: "PATCH",
+        body: JSON.stringify(data),
+      }),
   },
 
   ensembles: {
