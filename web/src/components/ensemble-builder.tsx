@@ -718,14 +718,17 @@ function BuilderCanvas({
   function addPersona() {
     const idx = personas.length + 1;
     const name = `persona-${idx}`;
-    const defaultModel =
-      PROVIDERS.find((p) => p.value === providerCtx.provider)?.defaultModel ||
-      "";
+    // When using a local model via modelRef, don't set a per-persona model —
+    // the controller resolves the endpoint from the ensemble-level modelRef.
+    const defaultModel = providerCtx.modelRef
+      ? ""
+      : PROVIDERS.find((p) => p.value === providerCtx.provider)?.defaultModel ||
+        "";
     const newPersona: PersonaSpec = {
       name,
       displayName: "",
       systemPrompt: "",
-      model: defaultModel,
+      model: defaultModel || undefined,
       skills: ["memory"],
     };
     setPersonas((prev) => [...prev, newPersona]);

@@ -1768,6 +1768,7 @@ type CreateEnsembleRequest struct {
 	Personas      []sympoziumv1alpha1.PersonaSpec         `json:"personas"`
 	Relationships []sympoziumv1alpha1.PersonaRelationship `json:"relationships,omitempty"`
 	SharedMemory  *sympoziumv1alpha1.SharedMemorySpec     `json:"sharedMemory,omitempty"`
+	ModelRef      string                                  `json:"modelRef,omitempty"`
 }
 
 func (s *Server) createEnsemble(w http.ResponseWriter, r *http.Request) {
@@ -1803,6 +1804,7 @@ func (s *Server) createEnsemble(w http.ResponseWriter, r *http.Request) {
 			Personas:      req.Personas,
 			Relationships: req.Relationships,
 			SharedMemory:  req.SharedMemory,
+			ModelRef:      req.ModelRef,
 		},
 	}
 
