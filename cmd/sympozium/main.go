@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"context"
 	cryptoRand "crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10964,10 +10965,9 @@ the login URL.`,
 			}
 			var token string
 			if len(tokenBytes) > 0 {
-				decoded, decErr := exec.Command("sh", "-c",
-					fmt.Sprintf("echo %s | base64 -d", string(tokenBytes))).CombinedOutput()
+				decoded, decErr := base64.StdEncoding.DecodeString(strings.TrimSpace(string(tokenBytes)))
 				if decErr == nil {
-					token = strings.TrimSpace(string(decoded))
+					token = string(decoded)
 				}
 			}
 

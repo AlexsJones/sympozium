@@ -13,6 +13,8 @@ spec:
       app.kubernetes.io/component: apiserver
   template:
     metadata:
+      annotations:
+        checksum/ui-token: {{ include (print $.Template.BasePath "/apiserver-ui-secret.yaml") . | sha256sum }}
       labels:
         app.kubernetes.io/component: apiserver
     spec:
