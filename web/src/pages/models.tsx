@@ -5,6 +5,7 @@ import {
   useDeleteModel,
   useCreateModel,
   useClusterNodes,
+  useNamespaces,
 } from "@/hooks/use-api";
 import { StatusBadge } from "@/components/status-badge";
 import {
@@ -83,6 +84,7 @@ export function ModelsPage() {
   const deleteModel = useDeleteModel();
   const createModel = useCreateModel();
   const { data: clusterNodes } = useClusterNodes();
+  const { data: namespaces } = useNamespaces();
   const [search, setSearch] = useState("");
   const [showCreate, setShowCreate] = useState(false);
   const [form, setForm] = useState({
@@ -311,13 +313,21 @@ export function ModelsPage() {
               </div>
               <div className="space-y-2">
                 <Label>Namespace</Label>
-                <Input
-                  placeholder="sympozium-system"
+                <Select
                   value={form.namespace}
-                  onChange={(e) =>
-                    setForm({ ...form, namespace: e.target.value })
-                  }
-                />
+                  onValueChange={(v) => setForm({ ...form, namespace: v })}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(namespaces || []).map((ns) => (
+                      <SelectItem key={ns} value={ns}>
+                        {ns}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
             </div>
             <div className="space-y-2">

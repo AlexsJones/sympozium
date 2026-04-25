@@ -245,18 +245,18 @@ describe("Model Namespace Awareness", () => {
     cy.contains(CUSTOM_NS).should("be.visible");
   });
 
-  it("deploy dialog has namespace field defaulting to sympozium-system", () => {
+  it("deploy dialog has namespace dropdown defaulting to sympozium-system", () => {
     cy.visit("/models");
 
     cy.contains("button", "Deploy Model", { timeout: 15000 }).click();
     cy.get("[role='dialog']").should("be.visible");
 
-    // Namespace input should be present with default value
+    // Namespace dropdown should show sympozium-system as default
     cy.get("[role='dialog']")
       .contains("label", "Namespace")
       .parent()
-      .find("input")
-      .should("have.value", "sympozium-system");
+      .find("button[role='combobox']")
+      .should("contain.text", "sympozium-system");
 
     // Close dialog
     cy.get("[role='dialog']")
@@ -264,7 +264,7 @@ describe("Model Namespace Awareness", () => {
       .click({ force: true });
   });
 
-  it("deploy dialog allows changing namespace", () => {
+  it("deploy dialog allows changing namespace via dropdown", () => {
     cy.visit("/models");
 
     cy.contains("button", "Deploy Model", { timeout: 15000 }).click();
@@ -281,13 +281,15 @@ describe("Model Namespace Awareness", () => {
       .clear()
       .type("https://example.com/fake-model.gguf", { delay: 0 });
 
-    // Change namespace
+    // Change namespace via dropdown
     dialog()
       .contains("label", "Namespace")
       .parent()
-      .find("input")
-      .clear()
-      .type(CUSTOM_NS);
+      .find("button[role='combobox']")
+      .click();
+    cy.get("[data-radix-popper-content-wrapper]", { timeout: 5000 })
+      .contains(CUSTOM_NS)
+      .click();
 
     // Deploy
     dialog()
