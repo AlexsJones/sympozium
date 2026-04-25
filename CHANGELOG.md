@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.4](https://github.com/sympozium-ai/sympozium/compare/v0.9.3...v0.9.4) (2026-04-25)
+
+
+### Features
+
+* auto node placement via llmfit, namespace-aware models, and ModelPolicy groundwork ([2c13faf](https://github.com/sympozium-ai/sympozium/commit/2c13faf67c0139e6bd44b839cc736b4af8245c07))
+
 ## [0.9.3](https://github.com/sympozium-ai/sympozium/compare/v0.9.2...v0.9.3) (2026-04-25)
 
 
