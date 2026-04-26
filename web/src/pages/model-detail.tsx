@@ -1,4 +1,4 @@
-import { useParams, Link, useNavigate } from "react-router-dom";
+import { useParams, Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useModel, useDeleteModel } from "@/hooks/use-api";
 import { StatusBadge } from "@/components/status-badge";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
@@ -46,7 +46,9 @@ function CopyableValue({ value }: { value: string }) {
 
 export function ModelDetailPage() {
   const { name } = useParams<{ name: string }>();
-  const { data: model, isLoading } = useModel(name || "");
+  const [searchParams] = useSearchParams();
+  const namespace = searchParams.get("namespace") || undefined;
+  const { data: model, isLoading } = useModel(name || "", namespace);
   const deleteModel = useDeleteModel();
   const navigate = useNavigate();
 

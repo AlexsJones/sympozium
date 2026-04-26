@@ -219,7 +219,7 @@ export function ModelsPage() {
               <TableRow key={model.metadata.name}>
                 <TableCell className="font-mono text-sm">
                   <Link
-                    to={`/models/${model.metadata.name}`}
+                    to={`/models/${model.metadata.name}?namespace=${model.metadata.namespace}`}
                     className="hover:text-primary flex items-center gap-1"
                   >
                     {model.metadata.name}

@@ -537,10 +537,10 @@ export function useModels() {
   });
 }
 
-export function useModel(name: string) {
+export function useModel(name: string, namespace?: string) {
   return useQuery({
-    queryKey: ["models", name],
-    queryFn: () => api.models.get(name),
+    queryKey: ["models", name, namespace],
+    queryFn: () => api.models.get(name, namespace),
     enabled: !!name,
     refetchInterval: 5000,
   });
