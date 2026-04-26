@@ -1,6 +1,10 @@
 import { useState, useEffect } from "react";
 import { useParams, Link, useSearchParams } from "react-router-dom";
 import { useEnsemble, useActivateEnsemble, useSkills } from "@/hooks/use-api";
+import {
+  YamlButton,
+  ensembleYamlFromResource,
+} from "@/components/yaml-panel";
 import { StatusBadge } from "@/components/status-badge";
 import {
   Card,
@@ -189,6 +193,10 @@ export function EnsembleDetailPage() {
               Change Provider
             </Button>
           )}
+          <YamlButton
+            yaml={ensembleYamlFromResource(pack)}
+            title={`Ensemble — ${pack.metadata.name}`}
+          />
           {pack.spec.category && (
             <Badge variant="outline" className="capitalize">
               {pack.spec.category}
