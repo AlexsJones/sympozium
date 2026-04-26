@@ -320,9 +320,23 @@ const providerColors: Record<string, { border: string; text: string; edge: strin
 const defaultProviderColor = { border: "border-blue-500/40", text: "text-blue-400", edge: "#3b82f6" };
 
 function ProviderNode({ data }: NodeProps<Node<ProviderNodeData>>) {
-  // For local models, delegate to the model node rendering style.
+  // For local models, render inline with model node styling.
   if (data.isModelRef && data.model) {
-    return <ModelNode data={{ ...data, model: data.model, label: data.model.metadata.name } as ModelNodeData} />;
+    const model = data.model;
+    const phase = model.status?.phase || "Pending";
+    const border = modelPhaseBorder[phase] || "";
+    return (
+      <div className={`rounded-lg border border-violet-500/40 bg-card shadow-md px-4 py-3 min-w-[180px] max-w-[220px] transition-shadow duration-300 ${border}`}>
+        <div className="flex items-center gap-1.5 mb-1">
+          <Cpu className="h-3.5 w-3.5 text-violet-400" />
+          <span className="font-semibold text-sm text-violet-300">Local Model</span>
+        </div>
+        <p className="text-[10px] text-muted-foreground font-mono mb-1.5 truncate">{model.metadata.name}</p>
+        <Badge variant="outline" className={`text-[9px] px-1 py-0 ${phase === "Ready" ? "border-emerald-500/50 text-emerald-400" : phase === "Failed" ? "border-red-500/50 text-red-400" : "border-blue-500/50 text-blue-400"}`}>{phase}</Badge>
+        {model.status?.endpoint && <p className="text-[9px] text-muted-foreground/60 truncate mt-1" title={model.status.endpoint}>{model.status.endpoint}</p>}
+        <Handle type="source" position={Position.Bottom} className="!bg-violet-400 !w-2 !h-2" />
+      </div>
+    );
   }
 
   const providerDef = PROVIDERS.find((p) => p.value === data.provider);
@@ -988,7 +1002,7 @@ export function GlobalEnsembleCanvas() {
 
   // Build layout (positions + edges) only when packs change — NOT on run updates.
   const { layoutedNodes, allEdges } = useMemo(() => {
-    const nodes: Node<PersonaNodeData | ModelNodeData>[] = [];
+    const nodes: Node<PersonaNodeData | ModelNodeData | ProviderNodeData>[] = [];
     const edges: Edge[] = [];
 
     const packGapX = 50;

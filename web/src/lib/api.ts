@@ -488,6 +488,8 @@ export interface EnsembleSpec {
   relationships?: PersonaRelationship[];
   workflowType?: "autonomous" | "pipeline" | "delegation";
   sharedMemory?: SharedMemorySpec;
+  /** Base URL for the inference endpoint. */
+  baseURL?: string;
   /** References a Model CR for cluster-local inference. */
   modelRef?: string;
 }
