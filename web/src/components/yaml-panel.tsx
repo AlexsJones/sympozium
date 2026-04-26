@@ -60,7 +60,7 @@ export function instanceYamlFromWizard(result: WizardResult): string {
   const obj: Record<string, YamlValue> = {
     apiVersion: "sympozium.ai/v1alpha1",
     kind: "Agent",
-    metadata: { name: result.name || "<instance-name>" },
+    metadata: { name: result.name || "<agent-name>" },
     spec: {
       agents: { default: agentConfig },
       skills,

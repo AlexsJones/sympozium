@@ -76,15 +76,15 @@ const CONCEPTS: Concept[] = [
     short: "A reusable set of tools for agents",
     detail:
       "A SkillPack bundles tools that agents can use: Kubernetes operations, GitHub GitOps, SRE observability, memory, llmfit, and more. Each skill runs in its own sidecar container with ephemeral RBAC, auto-provisioned at runtime.",
-    relates: "Mounted into Instances as sidecar containers",
+    relates: "Mounted into Agents as sidecar containers",
   },
   {
     name: "Policy",
     icon: "G",
     short: "Governance rules for agent behaviour",
     detail:
-      "A SympoziumPolicy enforces sandbox requirements, resource limits, sub-agent depth, tool gating, network isolation, and model access restrictions. Policies are bound to Instances and validated by an admission webhook.",
-    relates: "Bound to Instances via policyRef",
+      "A SympoziumPolicy enforces sandbox requirements, resource limits, sub-agent depth, tool gating, network isolation, and model access restrictions. Policies are bound to Agents and validated by an admission webhook.",
+    relates: "Bound to Agents via policyRef",
   },
 ];
 

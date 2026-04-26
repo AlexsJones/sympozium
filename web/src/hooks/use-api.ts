@@ -62,12 +62,12 @@ export function useNamespaces() {
 // ── Instances ────────────────────────────────────────────────────────────────
 
 export function useAgents() {
-  return useQuery({ queryKey: ["instances"], queryFn: api.agents.list });
+  return useQuery({ queryKey: ["agents"], queryFn: api.agents.list });
 }
 
 export function useAgent(name: string) {
   return useQuery({
-    queryKey: ["instances", name],
+    queryKey: ["agents", name],
     queryFn: () => api.agents.get(name),
     enabled: !!name,
   });
@@ -78,8 +78,8 @@ export function useDeleteAgent() {
   return useMutation({
     mutationFn: api.agents.delete,
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["instances"] });
-      toast.success("Instance deleted");
+      qc.invalidateQueries({ queryKey: ["agents"] });
+      toast.success("Agent deleted");
     },
     onError: toastError,
   });
@@ -90,8 +90,8 @@ export function useCreateAgent() {
   return useMutation({
     mutationFn: api.agents.create,
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["instances"] });
-      toast.success("Instance created");
+      qc.invalidateQueries({ queryKey: ["agents"] });
+      toast.success("Agent created");
     },
     onError: toastError,
   });
@@ -108,9 +108,9 @@ export function usePatchAgent() {
       data: Parameters<typeof api.agents.patch>[1];
     }) => api.agents.patch(name, data),
     onSuccess: (_data, variables) => {
-      qc.invalidateQueries({ queryKey: ["instances"] });
-      qc.invalidateQueries({ queryKey: ["instances", variables.name] });
-      toast.success("Instance updated");
+      qc.invalidateQueries({ queryKey: ["agents"] });
+      qc.invalidateQueries({ queryKey: ["agents", variables.name] });
+      toast.success("Agent updated");
     },
     onError: toastError,
   });

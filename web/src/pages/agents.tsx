@@ -112,12 +112,12 @@ export function AgentsPage() {
           className="bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white border-0"
           onClick={() => setWizardOpen(true)}
         >
-          <Plus className="mr-2 h-4 w-4" /> Create Instance
+          <Plus className="mr-2 h-4 w-4" /> Create Agent
         </Button>
       </div>
 
       <Input
-        placeholder="Search instances…"
+        placeholder="Search agents…"
         value={search}
         onChange={(e) => setSearch(e.target.value)}
         className="max-w-sm"
@@ -132,7 +132,7 @@ export function AgentsPage() {
       ) : filtered.length === 0 ? (
         <div className="py-12 text-center space-y-3">
           <p className="text-muted-foreground">
-            {search ? "No instances match your search" : "No instances yet"}
+            {search ? "No agents match your search" : "No agents yet"}
           </p>
           {!search && (
             <p className="text-sm text-muted-foreground">
@@ -142,7 +142,7 @@ export function AgentsPage() {
               >
                 Enable an ensemble
               </Link>{" "}
-              to create instances automatically, or{" "}
+              to create agents automatically, or{" "}
               <button
                 onClick={() => setWizardOpen(true)}
                 className="text-blue-400 hover:text-blue-300"
@@ -193,7 +193,7 @@ export function AgentsPage() {
                       (h) => h.gate,
                     ) && (
                       <span
-                        data-testid="instance-gate-badge"
+                        data-testid="agent-gate-badge"
                         className="inline-flex items-center gap-0.5 rounded-full border border-amber-500/30 bg-amber-500/10 px-1.5 py-0 text-[10px] font-medium text-amber-400"
                         title="Requires manual approval"
                       >
@@ -254,11 +254,11 @@ export function AgentsPage() {
         </Table>
       )}
 
-      {/* Shared onboarding wizard in instance mode */}
+      {/* Shared onboarding wizard in agent mode */}
       <OnboardingWizard
         open={wizardOpen}
         onClose={() => setWizardOpen(false)}
-        mode="instance"
+        mode="agent"
         availableSkills={(skillPacks || []).map((s) => s.metadata.name)}
         defaults={{
           provider: "openai",

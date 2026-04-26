@@ -102,7 +102,7 @@ export function AgentDetailPage() {
   }
 
   if (!inst) {
-    return <p className="text-muted-foreground">Instance not found</p>;
+    return <p className="text-muted-foreground">Agent not found</p>;
   }
 
   return (
@@ -111,7 +111,7 @@ export function AgentDetailPage() {
         <Breadcrumbs
           items={[
             { label: "Ensembles", to: "/ensembles" },
-            { label: "Agents", to: "/instances" },
+            { label: "Agents", to: "/agents" },
             { label: inst.metadata.name },
           ]}
         />

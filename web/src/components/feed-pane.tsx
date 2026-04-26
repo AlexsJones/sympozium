@@ -248,7 +248,7 @@ export function FeedPane({
           <div className="border-b border-border/50 px-3 py-2">
             <Select value={activeTab} onValueChange={setActiveTab}>
               <SelectTrigger className="h-8 text-xs bg-transparent">
-                <SelectValue placeholder="Select instance…" />
+                <SelectValue placeholder="Select agent…" />
               </SelectTrigger>
               <SelectContent>
                 {tabInstances.map((inst) => (

@@ -165,7 +165,7 @@ const HEARTBEAT_INTERVALS = [
   { value: "24h", label: "Once a day" },
 ];
 
-function heartbeatOptions(mode: "instance" | "persona") {
+function heartbeatOptions(mode: "agent" | "persona") {
   return [
     {
       value: "",
@@ -217,8 +217,8 @@ export interface WizardResult {
 interface OnboardingWizardProps {
   open: boolean;
   onClose: () => void;
-  /** "instance" shows a Name step first; "persona" skips it */
-  mode: "instance" | "persona";
+  /** "agent" shows a Name step first; "persona" skips it */
+  mode: "agent" | "persona";
   /** Display name shown in the dialog title */
   targetName?: string;
   /** Number of personas in the pack (persona mode only) */
@@ -245,8 +245,8 @@ type WizardStep =
   | "confirm"
   | "channelAction";
 
-function stepsForMode(mode: "instance" | "persona"): WizardStep[] {
-  if (mode === "instance") {
+function stepsForMode(mode: "agent" | "persona"): WizardStep[] {
+  if (mode === "agent") {
     return [
       "name",
       "provider",
@@ -675,16 +675,16 @@ export function OnboardingWizard({
   }, [open, defaultsKey]);
 
   const titleIcon =
-    mode === "instance" ? (
+    mode === "agent" ? (
       <Server className="h-5 w-5 text-blue-400" />
     ) : (
       <Sparkles className="h-5 w-5 text-blue-400" />
     );
   const titleText =
-    mode === "instance" ? "Create Instance" : `Enable ${targetName || "Pack"}`;
-  const completeLabel = mode === "instance" ? "Create" : "Activate";
+    mode === "agent" ? "Create Agent" : `Enable ${targetName || "Pack"}`;
+  const completeLabel = mode === "agent" ? "Create" : "Activate";
   const completeIcon =
-    mode === "instance" ? (
+    mode === "agent" ? (
       <Server className="h-4 w-4" />
     ) : (
       <Power className="h-4 w-4" />
@@ -702,11 +702,11 @@ export function OnboardingWizard({
                 <span className="font-mono text-blue-400">{targetName}</span>
               </>
             ) : (
-              "Create Instance"
+              "Create Agent"
             )}
           </DialogTitle>
           <DialogDescription>
-            {mode === "instance"
+            {mode === "agent"
               ? "Configure a new Agent with provider, model, and skills."
               : "Configure provider, model, skills, and channels to activate this ensemble."}
           </DialogDescription>
@@ -721,7 +721,7 @@ export function OnboardingWizard({
         {step === "name" && (
           <div className="space-y-4">
             <div className="space-y-2">
-              <Label>Instance Name</Label>
+              <Label>Agent Name</Label>
               <Input
                 value={form.name}
                 onChange={(e) => {
@@ -1260,13 +1260,13 @@ export function OnboardingWizard({
                           githubTeamInstructions: e.target.value,
                         })
                       }
-                      placeholder="Describe the project goals, coding standards, architecture decisions, or any context each instance should know…"
+                      placeholder="Describe the project goals, coding standards, architecture decisions, or any context each agent should know…"
                       rows={4}
                       className="text-xs resize-y"
                     />
                     <p className="text-[10px] text-muted-foreground">
-                      Shared instructions propagated into every instance's
-                      memory. Each instance will use these alongside its role.
+                      Shared instructions propagated into every agent's
+                      memory. Each agent will use these alongside its role.
                     </p>
                   </div>
                 </div>
@@ -1411,7 +1411,7 @@ export function OnboardingWizard({
             <p className="text-sm text-muted-foreground">
               {mode === "persona"
                 ? "How often should personas wake up? This overrides each persona's default schedule."
-                : "How often should this instance wake up on a heartbeat schedule?"}
+                : "How often should this agent wake up on a heartbeat schedule?"}
             </p>
             {heartbeatOptions(mode).map((opt) => (
               <button
@@ -1488,7 +1488,7 @@ export function OnboardingWizard({
         {step === "confirm" && (
           <div className="space-y-3">
             <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 p-4 space-y-2 text-sm">
-              {mode === "instance" && (
+              {mode === "agent" && (
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Name</span>
                   <span className="font-mono text-blue-400">{form.name}</span>
@@ -1613,9 +1613,9 @@ export function OnboardingWizard({
             </div>
             <div className="flex items-center justify-between">
               <p className="text-xs text-muted-foreground">
-                {mode === "instance"
+                {mode === "agent"
                   ? "A new Agent will be created with this configuration."
-                  : "The controller will stamp out Instances, Schedules, and ConfigMaps for each persona."}
+                  : "The controller will stamp out Agents, Schedules, and ConfigMaps for each persona."}
               </p>
               <Button
                 variant="ghost"
@@ -1631,7 +1631,7 @@ export function OnboardingWizard({
               open={showYaml}
               onClose={() => setShowYaml(false)}
               yaml={
-                mode === "instance"
+                mode === "agent"
                   ? instanceYamlFromWizard(form)
                   : ensembleYamlFromWizard(
                       targetName || "<pack-name>",
@@ -1640,8 +1640,8 @@ export function OnboardingWizard({
                     )
               }
               title={
-                mode === "instance"
-                  ? `Agent — ${form.name || "<instance>"}`
+                mode === "agent"
+                  ? `Agent — ${form.name || "<agent>"}`
                   : `Ensemble — ${targetName || "<pack>"}`
               }
             />

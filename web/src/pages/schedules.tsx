@@ -140,7 +140,7 @@ export function SchedulesPage() {
                   onValueChange={(v) => setForm({ ...form, agentRef: v })}
                 >
                   <SelectTrigger>
-                    <SelectValue placeholder="Select instance" />
+                    <SelectValue placeholder="Select agent" />
                   </SelectTrigger>
                   <SelectContent>
                     {(instances.data || []).map((inst) => (
