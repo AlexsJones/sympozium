@@ -27,7 +27,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Plus, Trash2, ExternalLink, ShieldAlert } from "lucide-react";
 import { formatAge } from "@/lib/utils";
 
-export function InstancesPage() {
+export function AgentsPage() {
   const { data, isLoading } = useAgents();
   const { data: skillPacks } = useSkills();
   const deleteAgent = useDeleteAgent();

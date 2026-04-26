@@ -325,14 +325,14 @@ export function EnsembleDetailPage() {
                         </p>
                         {pack.spec.sharedMemory.accessRules.map((rule) => (
                           <div
-                            key={rule.persona}
+                            key={rule.agentConfig}
                             className="flex items-center gap-2 text-sm"
                           >
                             <Badge
                               variant="outline"
                               className="font-mono text-xs"
                             >
-                              {rule.persona}
+                              {rule.agentConfig}
                             </Badge>
                             <Badge
                               variant={

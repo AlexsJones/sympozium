@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useParams, Link, useSearchParams } from "react-router-dom";
 import {
-  useInstance,
+  useAgent,
   useCapabilities,
   usePatchAgent,
   useRuns,
@@ -16,6 +16,9 @@ import {
   type CapabilityStatus,
   type LifecycleHooks,
   type LifecycleHookContainer,
+  type SecretRef,
+  type ChannelSpec,
+  type ChannelStatus,
 } from "@/lib/api";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -44,7 +47,7 @@ import { useRunsSeen } from "@/hooks/use-runs-seen";
 import { formatAge, truncate } from "@/lib/utils";
 import { YamlButton, instanceYamlFromResource } from "@/components/yaml-panel";
 
-export function InstanceDetailPage() {
+export function AgentDetailPage() {
   const { name } = useParams<{ name: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
   const allowedTabs = new Set([
@@ -177,7 +180,7 @@ export function InstanceDetailPage() {
                 </CardHeader>
                 <CardContent>
                   <div className="space-y-2">
-                    {inst.spec.authRefs.map((ref, i) => (
+                    {inst.spec.authRefs.map((ref: SecretRef, i: number) => (
                       <div key={i} className="flex items-center gap-2 text-sm">
                         <Badge variant="secondary">{ref.provider}</Badge>
                         <span className="font-mono text-muted-foreground">
@@ -270,9 +273,9 @@ export function InstanceDetailPage() {
             <CardContent className="pt-6">
               {inst.spec.channels && inst.spec.channels.length > 0 ? (
                 <div className="space-y-3">
-                  {inst.spec.channels.map((ch, i) => {
+                  {inst.spec.channels.map((ch: ChannelSpec, i: number) => {
                     const chStatus = inst.status?.channels?.find(
-                      (s) => s.type === ch.type,
+                      (s: ChannelStatus) => s.type === ch.type,
                     );
                     return (
                       <div

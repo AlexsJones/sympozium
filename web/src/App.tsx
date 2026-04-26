@@ -3,8 +3,8 @@ import { useAuth } from "@/components/auth-provider";
 import { Layout } from "@/components/layout/layout";
 import { LoginPage } from "@/pages/login";
 import { DashboardPage } from "@/pages/dashboard";
-import { InstancesPage } from "@/pages/instances";
-import { InstanceDetailPage } from "@/pages/agent-detail";
+import { AgentsPage } from "@/pages/agents";
+import { AgentDetailPage } from "@/pages/agent-detail";
 import { RunsPage } from "@/pages/runs";
 import { RunDetailPage } from "@/pages/run-detail";
 import { PoliciesPage } from "@/pages/policies";
@@ -49,8 +49,8 @@ export default function App() {
       >
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
         <Route path="/dashboard" element={<DashboardPage />} />
-        <Route path="/agents" element={<InstancesPage />} />
-        <Route path="/agents/:name" element={<InstanceDetailPage />} />
+        <Route path="/agents" element={<AgentsPage />} />
+        <Route path="/agents/:name" element={<AgentDetailPage />} />
         <Route path="/runs" element={<RunsPage />} />
         <Route path="/runs/:name" element={<RunDetailPage />} />
         <Route path="/policies" element={<PoliciesPage />} />

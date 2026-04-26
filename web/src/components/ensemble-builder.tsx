@@ -815,7 +815,7 @@ function BuilderCanvas({
         description: settings.description,
         category: settings.category,
         workflowType: settings.workflowType,
-        personas,
+        agentConfigs: personas,
         relationships: relationships.length > 0 ? relationships : undefined,
         sharedMemory: settings.sharedMemory?.enabled
           ? settings.sharedMemory
