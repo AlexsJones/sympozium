@@ -199,22 +199,29 @@ graph TB
     end
 
     subgraph RT["Runtime"]
-        AR1["AgentRun (Lead)<br/><small>delegate_to_persona</small>"]
+        AR1["AgentRun (Lead)<br/><small>delegate_to_persona blocks</small>"]
         AR2["AgentRun (Researcher)"]
         AR3["AgentRun (Writer)"]
         IPC["/ipc/spawn/<br/><small>request-*.json</small>"]
+        SR["SpawnRouter<br/><small>NATS subscriber</small>"]
         SPAWNER["Spawner<br/><small>resolvePersonaTarget()</small>"]
+        RESULT["/ipc/spawn/<br/><small>result-*.json</small>"]
     end
 
-    AR1 -- "writes spawn request" --> IPC
-    IPC -- "event bus" --> SPAWNER
-    SPAWNER -- "creates child AgentRun<br/>validates relationship edge" --> AR2
+    AR1 -- "1. writes spawn request" --> IPC
+    IPC -- "2. NATS event" --> SR
+    SR -- "3. calls Spawn()" --> SPAWNER
+    SPAWNER -- "4. creates child AgentRun<br/>validates relationship edge" --> AR2
+    SR -- "5. patches parent → AwaitingDelegate" --> AR1
+    AR2 -- "6. child completes → NATS event" --> SR
+    SR -- "7. publishes delegate result" --> RESULT
+    RESULT -- "8. tool reads result, unblocks" --> AR1
 
     style PACK stroke:#7c3aed,stroke-width:2px
     style RT stroke:#e94560,stroke-width:2px
 ```
 
-Agents in a Ensemble can delegate tasks to other personas using the `delegate_to_persona` tool. The spawner resolves persona names to Agents via the Ensemble CRD and validates that a relationship edge permits the delegation.
+Agents in a Ensemble can delegate tasks to other personas using the `delegate_to_persona` tool. The tool **blocks** until the child completes: the SpawnRouter subscribes to spawn requests, creates child AgentRuns via the Spawner (resolving persona names and validating relationship edges), and delivers the child's result back to the parent through NATS. The parent's `DelegateStatus` tracks in-flight delegations.
 
 ## How It Works
 

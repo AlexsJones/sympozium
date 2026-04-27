@@ -160,7 +160,7 @@ Arguments:
   task: "Write a report based on these findings: ..."
 ```
 
-The tool writes a spawn request to the IPC protocol. The spawner resolves the target persona to the correct Agent, validates the relationship edge exists, and creates a child AgentRun.
+The tool is **blocking** — the parent agent waits (up to 10 minutes) for the child to complete and receives the result directly. Under the hood, the tool writes a spawn request to `/ipc/spawn/`, the SpawnRouter creates a child AgentRun via the Spawner (validating the relationship edge exists), and when the child finishes, the SpawnRouter delivers the result back through NATS to the parent's IPC bridge. The parent's `DelegateStatus` is populated with the child run name, target persona, phase, and result. During the wait, the parent AgentRun transitions to `AwaitingDelegate` phase (timeout checking is paused).
 
 ### Visual Canvas
 

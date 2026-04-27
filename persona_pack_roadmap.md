@@ -13,9 +13,9 @@ The objective is to transform `Ensemble` from a static collection of `SympoziumI
 | **Phase 2b: Canvas (editable)** | **Done** | Drag-to-connect with type picker, edge deletion, Save syncs to CRD |
 | **Phase 2c: Global canvas** | **Done** | Persona Packs list page canvas showing all enabled packs with live run status |
 | **Phase 3a: Persona-targeted spawning** | **Done** | `TargetPersona`/`PackName` on SpawnRequest, resolution + edge validation in Spawner |
-| **Phase 3b: AwaitingDelegate phase** | **Schema only** | Phase enum and `DelegateStatus` defined, controller logic not yet wired |
-| **Phase 3c: Delegate tool for agents** | **Not started** | Agents need a `delegate_to_persona` tool to trigger the IPC spawn protocol |
-| **Phase 3d: Controller await/resume** | **Not started** | Controller watches child completion, delivers result to parent via IPC |
+| **Phase 3b: AwaitingDelegate phase** | **Done** | Controller handles AwaitingDelegate phase, skips timeout while parent waits |
+| **Phase 3c: Delegate tool for agents** | **Done** | `delegate_to_persona` tool blocks until child completes, returns result to LLM |
+| **Phase 3d: Controller await/resume** | **Done** | SpawnRouter subscribes to spawn requests, creates child AgentRuns, delivers results back via NATS/IPC |
 | **Phase 4: Policy & safety** | **Not started** | Relationship-scoped delegation rules, cycle detection, timeouts |
 
 ### What exists today
@@ -29,9 +29,11 @@ The objective is to transform `Ensemble` from a static collection of `SympoziumI
 | **Policy-level limits** | `SympoziumPolicy.Spec.Subagents` | `MaxDepth`, `MaxConcurrent` enforced by controller |
 | **Response gate pattern** | `AgentRun` `PostRun` gate | Runs pause for external approval before completing — reusable pattern for await/resume |
 | **Relationship graph in CRD** | `EnsembleSpec.Relationships[]` | Typed edges (delegation, sequential, supervision) with condition, timeout, resultFormat |
-| **AwaitingDelegate phase** | `AgentRunPhase` enum + `DelegateStatus` | Schema defined but controller doesn't transition to/from this phase yet |
-| **Visual canvas** | `web/src/components/persona-canvas.tsx` | Per-pack editable canvas + global read-only canvas with live run status highlighting |
-| **Default research-team pack** | `config/personas/research-team.yaml` | 4-persona pack demonstrating all 3 relationship types |
+| **AwaitingDelegate phase** | `AgentRunPhase` enum + `DelegateStatus` | Controller transitions parent to AwaitingDelegate, SpawnRouter transitions back to Running on child completion |
+| **SpawnRouter** | `internal/controller/spawn_router.go` | Subscribes to spawn events, creates child AgentRuns, tracks pending delegations, delivers results via NATS |
+| **Blocking delegate tool** | `cmd/agent-runner/tools.go` | `delegate_to_persona` blocks up to 10 min, polls for result file, returns child output to LLM |
+| **Visual canvas** | `web/src/components/ensemble-canvas.tsx` | Per-pack editable canvas + global read-only canvas with live run status highlighting |
+| **Default research-team pack** | `config/agent-configs/research-team.yaml` | 4-persona pack demonstrating all 3 relationship types + shared memory |
 | **OTel instrumentation** | `spawnerTracer` in spawner | Traces parent run, instance, spawn depth, target persona attributes |
 
 ### What's missing (to complete the delegation chain)
