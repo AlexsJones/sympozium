@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.10.4](https://github.com/sympozium-ai/sympozium/compare/v0.10.3...v0.10.4) (2026-04-27)
+
+
+### Features
+
+* multi-provider inference (vLLM, TGI) and cluster topology page ([c434df4](https://github.com/sympozium-ai/sympozium/commit/c434df48788878d3dee87224cde2345a3cca66a7))
+
+
+### Bug Fixes
+
+* gofmt formatting for inference backend files ([8d837bd](https://github.com/sympozium-ai/sympozium/commit/8d837bdd332b68cd544c8ef45962237cf5237710))
+* remove redundant lock button from topology zoom controls ([2e07dc9](https://github.com/sympozium-ai/sympozium/commit/2e07dc9491f8c4086c2113536eee4d41eea32136))
+
 ## [0.10.3](https://github.com/sympozium-ai/sympozium/compare/v0.10.2...v0.10.3) (2026-04-26)
 
 
