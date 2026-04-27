@@ -10,10 +10,11 @@
  *      configure personas, draw relationships, save
  *   4. Ensemble detail — overview with personas
  *   5. Workflow canvas — relationship graph
- *   6. Runs page — execution history
- *   7. Models page — local model deployment
- *   8. Skills catalog — available skill packs
- *   9. Policies — tool gating
+ *   6. Topology — full cluster visualization (nodes, providers, models, ensembles)
+ *   7. Runs page — execution history
+ *   8. Models page — local model deployment
+ *   9. Skills catalog — available skill packs
+ *  10. Policies — tool gating
  */
 
 const CANVAS_ENSEMBLE = "demo-devops-team";
@@ -218,22 +219,32 @@ describe("Sympozium — Demo Walkthrough", () => {
     cy.contains("3 personas with").scrollIntoView({ duration: 400 });
     pause(1500);
 
-    // ─── 6. Runs page ────────────────────────────────────────────
+    // ─── 6. Topology — full cluster visualization ─────────────────
+    visitAndWait("/topology");
+    cy.contains("Topology", { timeout: 10000 }).should("be.visible");
+    // Wait for the canvas to render nodes.
+    cy.get(".react-flow__node", { timeout: 10000 }).should(
+      "have.length.gte",
+      1,
+    );
+    pause(3000);
+
+    // ─── 7. Runs page ────────────────────────────────────────────
     visitAndWait("/runs");
     cy.contains("Runs", { timeout: 10000 }).should("be.visible");
     pause(1200);
 
-    // ─── 7. Models page ──────────────────────────────────────────
+    // ─── 8. Models page ──────────────────────────────────────────
     visitAndWait("/models");
     cy.contains("Models", { timeout: 10000 }).should("be.visible");
     pause(1200);
 
-    // ─── 8. Skills catalog ───────────────────────────────────────
+    // ─── 9. Skills catalog ───────────────────────────────────────
     visitAndWait("/skills");
     cy.contains("Skills", { timeout: 10000 }).should("be.visible");
     pause(1200);
 
-    // ─── 9. Policies ─────────────────────────────────────────────
+    // ─── 10. Policies ────────────────────────────────────────────
     visitAndWait("/policies");
     cy.contains("Policies", { timeout: 10000 }).should("be.visible");
     pause(1200);
