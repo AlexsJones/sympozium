@@ -822,8 +822,8 @@ function TopologyCanvas() {
   const { data: gateway } = useGatewayConfig();
   const { fitView } = useReactFlow();
 
-  const [rfNodes, setNodes, onNodesChange] = useNodesState([]);
-  const [rfEdges, setEdges, onEdgesChange] = useEdgesState([]);
+  const [rfNodes, setNodes, onNodesChange] = useNodesState<Node>([] as Node[]);
+  const [rfEdges, setEdges, onEdgesChange] = useEdgesState<Edge>([] as Edge[]);
   const [locked, setLocked] = useState(() => localStorage.getItem(TOPO_LOCKED_KEY) === "true");
 
   // Track when we've done the initial fitView so we don't re-fit on every refetch.
@@ -835,7 +835,7 @@ function TopologyCanvas() {
     const counts: Record<string, number> = {};
     for (const run of runs || []) {
       if (run.status?.phase === "Running" || run.status?.phase === "Serving") {
-        const agentRef = run.spec?.agentRef || run.spec?.instanceRef;
+        const agentRef = run.spec?.agentRef;
         if (agentRef) {
           for (const ens of ensembles || []) {
             if (
@@ -856,8 +856,8 @@ function TopologyCanvas() {
   const webEndpointAgents = useMemo(() => {
     return (agents || [])
       .filter((a) =>
-        (a.spec?.agents?.default?.skills || []).some(
-          (s: { skillPackRef?: string }) =>
+        (a.spec?.skills || []).some(
+          (s) =>
             s.skillPackRef === "web-endpoint" ||
             s.skillPackRef === "skillpack-web-endpoint",
         ),
@@ -869,7 +869,7 @@ function TopologyCanvas() {
   const runPhases = useMemo<RunPhaseMap>(() => {
     const map: RunPhaseMap = {};
     for (const run of runs || []) {
-      const ref = run.spec?.agentRef || run.spec?.instanceRef;
+      const ref = run.spec?.agentRef;
       if (ref && run.status?.phase) {
         const existing = map[ref];
         // Prefer active phases over terminal ones.
