@@ -288,6 +288,11 @@ func (r *AgentRunReconciler) reconcilePending(ctx context.Context, log logr.Logg
 		return ctrl.Result{}, r.failRun(ctx, agentRun, fmt.Sprintf("gate hook validation failed: %v", err))
 	}
 
+	// Check membrane token budget before creating the job.
+	if err := r.checkTokenBudget(ctx, log, agentRun); err != nil {
+		return ctrl.Result{}, r.failRun(ctx, agentRun, fmt.Sprintf("token budget exceeded: %v", err))
+	}
+
 	// Agent Sandbox mode — create Sandbox CR instead of Job.
 	if agentRun.Spec.AgentSandbox != nil && agentRun.Spec.AgentSandbox.Enabled {
 		return r.reconcilePendingAgentSandbox(ctx, log, agentRun)
@@ -728,6 +733,12 @@ func (r *AgentRunReconciler) reconcileCompleted(ctx context.Context, log logr.Lo
 			}
 			return ctrl.Result{}, err
 		}
+	}
+
+	// Update membrane token budget if this run belongs to a budget-tracked ensemble.
+	if err := r.updateTokenBudget(ctx, log, agentRun); err != nil {
+		log.Error(err, "Failed to update token budget")
+		// Non-fatal: don't block cleanup.
 	}
 
 	// Trigger sequential successors: if this run succeeded and belongs to an
@@ -2307,6 +2318,19 @@ func (r *AgentRunReconciler) injectSharedMemory(ctx context.Context, agentRun *s
 			corev1.EnvVar{Name: "WORKFLOW_MEMORY_SERVER_URL", Value: sharedMemoryURL},
 			corev1.EnvVar{Name: "WORKFLOW_MEMORY_ACCESS", Value: accessMode},
 		)
+
+		// Inject membrane env vars if configured.
+		if pack.Spec.SharedMemory.Membrane != nil {
+			personaName := ""
+			if agentRun.Spec.AgentRef != "" {
+				var inst sympoziumv1alpha1.Agent
+				if err := r.Get(ctx, types.NamespacedName{Name: agentRun.Spec.AgentRef, Namespace: agentRun.Namespace}, &inst); err == nil {
+					personaName = inst.Labels["sympozium.ai/agent-config"]
+				}
+			}
+			membraneEnvs := resolveMembraneEnvVars(personaName, pack.Spec.SharedMemory.Membrane, pack.Spec.Relationships)
+			podSpec.Containers[0].Env = append(podSpec.Containers[0].Env, membraneEnvs...)
+		}
 	}
 
 	// Add wait-for-shared-memory init container.
@@ -2337,6 +2361,158 @@ func (r *AgentRunReconciler) injectSharedMemory(ctx context.Context, agentRun *s
 			},
 		},
 	})
+}
+
+// resolveMembraneEnvVars computes the membrane environment variables for
+// a given agent config within an ensemble.
+func resolveMembraneEnvVars(personaName string, membrane *sympoziumv1alpha1.MembraneSpec, relationships []sympoziumv1alpha1.AgentConfigRelationship) []corev1.EnvVar {
+	if membrane == nil {
+		return nil
+	}
+
+	// Resolve default visibility for this persona.
+	visibility := membrane.DefaultVisibility
+	if visibility == "" {
+		visibility = "public"
+	}
+	var acceptTags []string
+	for _, rule := range membrane.Permeability {
+		if rule.AgentConfig == personaName {
+			if rule.DefaultVisibility != "" {
+				visibility = rule.DefaultVisibility
+			}
+			acceptTags = rule.AcceptTags
+			break
+		}
+	}
+
+	// Resolve trust peers.
+	trustPeers := resolveTrustPeers(personaName, membrane.TrustGroups, relationships)
+
+	// Time decay TTL.
+	maxAge := ""
+	if membrane.TimeDecay != nil && membrane.TimeDecay.TTL != "" {
+		maxAge = membrane.TimeDecay.TTL
+	}
+
+	envs := []corev1.EnvVar{
+		{Name: "WORKFLOW_MEMBRANE_VISIBILITY", Value: visibility},
+		{Name: "WORKFLOW_MEMBRANE_TRUST_PEERS", Value: strings.Join(trustPeers, ",")},
+		{Name: "WORKFLOW_MEMBRANE_ACCEPT_TAGS", Value: strings.Join(acceptTags, ",")},
+		{Name: "WORKFLOW_MEMBRANE_MAX_AGE", Value: maxAge},
+	}
+	return envs
+}
+
+// checkTokenBudget verifies that the ensemble's token budget has not been
+// exceeded before allowing a new AgentRun to start. Returns an error if the
+// budget is exceeded and action is "halt".
+func (r *AgentRunReconciler) checkTokenBudget(ctx context.Context, log logr.Logger, agentRun *sympoziumv1alpha1.AgentRun) error {
+	packName := agentRun.Labels["sympozium.ai/ensemble"]
+	if packName == "" {
+		return nil
+	}
+
+	var pack sympoziumv1alpha1.Ensemble
+	if err := r.Get(ctx, types.NamespacedName{Name: packName, Namespace: agentRun.Namespace}, &pack); err != nil {
+		return nil // ensemble not found, skip check
+	}
+	if pack.Spec.SharedMemory == nil || pack.Spec.SharedMemory.Membrane == nil ||
+		pack.Spec.SharedMemory.Membrane.TokenBudget == nil {
+		return nil
+	}
+	budget := pack.Spec.SharedMemory.Membrane.TokenBudget
+	if budget.MaxTokens <= 0 {
+		return nil
+	}
+
+	if budget.Action == "warn" {
+		if pack.Status.TokenBudgetUsed >= budget.MaxTokens {
+			log.Info("Token budget exceeded (warn mode, allowing run)",
+				"used", pack.Status.TokenBudgetUsed, "max", budget.MaxTokens)
+		}
+		return nil
+	}
+
+	if pack.Status.TokenBudgetUsed >= budget.MaxTokens {
+		return fmt.Errorf("ensemble %q has used %d tokens (limit: %d)", packName, pack.Status.TokenBudgetUsed, budget.MaxTokens)
+	}
+	return nil
+}
+
+// updateTokenBudget aggregates token usage from a completed AgentRun into
+// the ensemble's TokenBudgetUsed status field.
+func (r *AgentRunReconciler) updateTokenBudget(ctx context.Context, log logr.Logger, agentRun *sympoziumv1alpha1.AgentRun) error {
+	packName := agentRun.Labels["sympozium.ai/ensemble"]
+	if packName == "" {
+		return nil
+	}
+	if agentRun.Status.TokenUsage == nil || agentRun.Status.TokenUsage.TotalTokens == 0 {
+		return nil
+	}
+
+	var pack sympoziumv1alpha1.Ensemble
+	if err := r.Get(ctx, types.NamespacedName{Name: packName, Namespace: agentRun.Namespace}, &pack); err != nil {
+		return nil
+	}
+	if pack.Spec.SharedMemory == nil || pack.Spec.SharedMemory.Membrane == nil ||
+		pack.Spec.SharedMemory.Membrane.TokenBudget == nil {
+		return nil
+	}
+
+	patch := client.MergeFrom(pack.DeepCopy())
+	pack.Status.TokenBudgetUsed += int64(agentRun.Status.TokenUsage.TotalTokens)
+	log.Info("Updated ensemble token budget",
+		"ensemble", packName,
+		"run_tokens", agentRun.Status.TokenUsage.TotalTokens,
+		"total_used", pack.Status.TokenBudgetUsed,
+		"max", pack.Spec.SharedMemory.Membrane.TokenBudget.MaxTokens)
+	return r.Status().Patch(ctx, &pack, patch)
+}
+
+// resolveTrustPeers computes the list of agent configs that a given persona
+// should trust, based on explicit TrustGroups and implicit trust from
+// delegation/supervision relationships.
+func resolveTrustPeers(agentConfig string, trustGroups []sympoziumv1alpha1.TrustGroup, relationships []sympoziumv1alpha1.AgentConfigRelationship) []string {
+	peers := map[string]bool{}
+
+	// From explicit trust groups.
+	for _, group := range trustGroups {
+		inGroup := false
+		for _, ac := range group.AgentConfigs {
+			if ac == agentConfig {
+				inGroup = true
+				break
+			}
+		}
+		if inGroup {
+			for _, ac := range group.AgentConfigs {
+				if ac != agentConfig {
+					peers[ac] = true
+				}
+			}
+		}
+	}
+
+	// From relationships: delegation and supervision edges imply mutual trust.
+	for _, rel := range relationships {
+		if rel.Type != "delegation" && rel.Type != "supervision" {
+			continue
+		}
+		if rel.Source == agentConfig {
+			peers[rel.Target] = true
+		}
+		if rel.Target == agentConfig {
+			peers[rel.Source] = true
+		}
+	}
+
+	result := make([]string, 0, len(peers))
+	for p := range peers {
+		result = append(result, p)
+	}
+	sort.Strings(result)
+	return result
 }
 
 // buildVolumes constructs the volume list for an agent pod.

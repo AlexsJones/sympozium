@@ -5,6 +5,9 @@
 // The SQLite database lives on a PersistentVolume so data survives across
 // ephemeral agent pod runs. Agent pods call this server over HTTP via a
 // ClusterIP Service.
+//
+// Membrane extensions add visibility-based permeability (public/trusted/private),
+// provenance tracking (source_agent, parent_id), event sequencing, and time decay.
 package main
 
 import (
@@ -33,11 +36,15 @@ type apiResponse struct {
 
 // memoryEntry represents a stored memory.
 type memoryEntry struct {
-	ID        int64    `json:"id"`
-	Content   string   `json:"content"`
-	Tags      []string `json:"tags,omitempty"`
-	CreatedAt string   `json:"created_at"`
-	UpdatedAt string   `json:"updated_at"`
+	ID          int64    `json:"id"`
+	Content     string   `json:"content"`
+	Tags        []string `json:"tags,omitempty"`
+	Visibility  string   `json:"visibility,omitempty"`
+	SourceAgent string   `json:"source_agent,omitempty"`
+	ParentID    int64    `json:"parent_id,omitempty"`
+	Seq         int64    `json:"seq,omitempty"`
+	CreatedAt   string   `json:"created_at"`
+	UpdatedAt   string   `json:"updated_at"`
 }
 
 func main() {
@@ -59,11 +66,16 @@ func main() {
 	if err := initSchema(db); err != nil {
 		log.Fatalf("failed to initialize schema: %v", err)
 	}
+	if err := migrateMembraneColumns(db); err != nil {
+		log.Fatalf("failed to run membrane migration: %v", err)
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /search", searchHandler(db))
 	mux.HandleFunc("POST /store", storeHandler(db))
 	mux.HandleFunc("GET /list", listHandler(db))
+	mux.HandleFunc("GET /stats", statsHandler(db))
+	mux.HandleFunc("GET /provenance", provenanceHandler(db))
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprint(w, "ok")
@@ -79,8 +91,12 @@ func main() {
 func searchHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
-			Query string `json:"query"`
-			TopK  int    `json:"top_k"`
+			Query       string   `json:"query"`
+			TopK        int      `json:"top_k"`
+			CallerAgent string   `json:"caller_agent"`
+			TrustPeers  []string `json:"trust_peers"`
+			AcceptTags  []string `json:"accept_tags"`
+			MaxAge      string   `json:"max_age"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			log.Printf("[search] bad request: %v", err)
@@ -96,8 +112,8 @@ func searchHandler(db *sql.DB) http.HandlerFunc {
 			req.TopK = 5
 		}
 
-		log.Printf("[search] query=%q top_k=%d", truncateLog(req.Query, 120), req.TopK)
-		results, err := searchMemories(db, req.Query, req.TopK)
+		log.Printf("[search] query=%q top_k=%d caller=%s", truncateLog(req.Query, 120), req.TopK, req.CallerAgent)
+		results, err := searchMemories(db, req.Query, req.TopK, req.CallerAgent, req.TrustPeers, req.AcceptTags, req.MaxAge)
 		if err != nil {
 			log.Printf("[search] error: %v", err)
 			writeJSON(w, http.StatusInternalServerError, apiResponse{Error: err.Error()})
@@ -111,8 +127,11 @@ func searchHandler(db *sql.DB) http.HandlerFunc {
 func storeHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
-			Content string   `json:"content"`
-			Tags    []string `json:"tags"`
+			Content     string   `json:"content"`
+			Tags        []string `json:"tags"`
+			Visibility  string   `json:"visibility"`
+			SourceAgent string   `json:"source_agent"`
+			ParentID    int64    `json:"parent_id"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			log.Printf("[store] bad request: %v", err)
@@ -124,18 +143,22 @@ func storeHandler(db *sql.DB) http.HandlerFunc {
 			writeJSON(w, http.StatusBadRequest, apiResponse{Error: "'content' is required"})
 			return
 		}
+		if req.Visibility == "" {
+			req.Visibility = "public"
+		}
 
-		log.Printf("[store] content=%d bytes tags=%v", len(req.Content), req.Tags)
-		id, storedAt, err := storeMemory(db, req.Content, req.Tags)
+		log.Printf("[store] content=%d bytes tags=%v visibility=%s source=%s parent=%d",
+			len(req.Content), req.Tags, req.Visibility, req.SourceAgent, req.ParentID)
+		id, seq, storedAt, err := storeMemory(db, req.Content, req.Tags, req.Visibility, req.SourceAgent, req.ParentID)
 		if err != nil {
 			log.Printf("[store] error: %v", err)
 			writeJSON(w, http.StatusInternalServerError, apiResponse{Error: err.Error()})
 			return
 		}
-		log.Printf("[store] saved id=%d at=%s", id, storedAt)
+		log.Printf("[store] saved id=%d seq=%d at=%s", id, seq, storedAt)
 		writeJSON(w, http.StatusOK, apiResponse{
 			Success: true,
-			Content: map[string]any{"id": id, "stored_at": storedAt},
+			Content: map[string]any{"id": id, "seq": seq, "stored_at": storedAt},
 		})
 	}
 }
@@ -143,13 +166,21 @@ func storeHandler(db *sql.DB) http.HandlerFunc {
 func listHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		tags := r.URL.Query().Get("tags")
+		callerAgent := r.URL.Query().Get("caller_agent")
+		trustPeersStr := r.URL.Query().Get("trust_peers")
+		maxAge := r.URL.Query().Get("max_age")
 		limit := 20
 		if l, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && l > 0 {
 			limit = l
 		}
 
-		log.Printf("[list] tags=%q limit=%d", tags, limit)
-		results, err := listMemories(db, tags, limit)
+		var trustPeers []string
+		if trustPeersStr != "" {
+			trustPeers = strings.Split(trustPeersStr, ",")
+		}
+
+		log.Printf("[list] tags=%q caller=%s limit=%d", tags, callerAgent, limit)
+		results, err := listMemories(db, tags, limit, callerAgent, trustPeers, maxAge)
 		if err != nil {
 			log.Printf("[list] error: %v", err)
 			writeJSON(w, http.StatusInternalServerError, apiResponse{Error: err.Error()})
@@ -160,27 +191,122 @@ func listHandler(db *sql.DB) http.HandlerFunc {
 	}
 }
 
+func statsHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		type agentStats struct {
+			SourceAgent string `json:"source_agent"`
+			Visibility  string `json:"visibility"`
+			Count       int    `json:"count"`
+		}
+		rows, err := db.Query(`
+			SELECT COALESCE(source_agent, '') as source_agent,
+			       COALESCE(visibility, 'public') as visibility,
+			       COUNT(*) as count
+			FROM memories
+			GROUP BY source_agent, visibility
+			ORDER BY count DESC
+		`)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, apiResponse{Error: err.Error()})
+			return
+		}
+		defer rows.Close()
+
+		var stats []agentStats
+		for rows.Next() {
+			var s agentStats
+			if err := rows.Scan(&s.SourceAgent, &s.Visibility, &s.Count); err != nil {
+				continue
+			}
+			stats = append(stats, s)
+		}
+		if stats == nil {
+			stats = []agentStats{}
+		}
+
+		var maxSeq int64
+		_ = db.QueryRow(`SELECT COALESCE(MAX(seq), 0) FROM memories`).Scan(&maxSeq)
+
+		writeJSON(w, http.StatusOK, apiResponse{
+			Success: true,
+			Content: map[string]any{
+				"by_agent_visibility": stats,
+				"max_seq":             maxSeq,
+			},
+		})
+	}
+}
+
+func provenanceHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		idStr := r.URL.Query().Get("id")
+		if idStr == "" {
+			writeJSON(w, http.StatusBadRequest, apiResponse{Error: "'id' query parameter is required"})
+			return
+		}
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, apiResponse{Error: "invalid 'id' parameter"})
+			return
+		}
+
+		chain, err := getProvenanceChain(db, id)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, apiResponse{Error: err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, apiResponse{Success: true, Content: chain})
+	}
+}
+
 // --- Core database operations ---
 
-func searchMemories(db *sql.DB, query string, topK int) ([]memoryEntry, error) {
-	// FTS5 search with ranking.
-	rows, err := db.Query(`
-		SELECT m.id, m.content, m.tags, m.created_at, m.updated_at
+func searchMemories(db *sql.DB, query string, topK int, callerAgent string, trustPeers, acceptTags []string, maxAge string) ([]memoryEntry, error) {
+	// Build visibility filter.
+	visFilter, visArgs := buildVisibilityFilter(callerAgent, trustPeers)
+
+	// Build time decay filter.
+	ageFilter, ageArgs := buildTimeDecayFilter(maxAge)
+
+	// Build accept tags filter.
+	tagFilter, tagArgs := buildAcceptTagsFilter(acceptTags)
+
+	// FTS5 search with ranking + membrane filters.
+	allArgs := []any{fts5Query(query)}
+	allArgs = append(allArgs, visArgs...)
+	allArgs = append(allArgs, ageArgs...)
+	allArgs = append(allArgs, tagArgs...)
+	allArgs = append(allArgs, topK)
+
+	q := fmt.Sprintf(`
+		SELECT m.id, m.content, m.tags, m.visibility, m.source_agent, m.parent_id, m.seq, m.created_at, m.updated_at
 		FROM memories_fts fts
 		JOIN memories m ON m.id = fts.rowid
 		WHERE memories_fts MATCH ?
+		%s %s %s
 		ORDER BY rank
 		LIMIT ?
-	`, fts5Query(query), topK)
+	`, visFilter, ageFilter, tagFilter)
+
+	rows, err := db.Query(q, allArgs...)
 	if err != nil {
-		// If FTS query fails (bad syntax), fall back to LIKE search.
-		rows, err = db.Query(`
-			SELECT id, content, tags, created_at, updated_at
+		// Fallback to LIKE search with same membrane filters.
+		allArgs = []any{"%" + query + "%"}
+		allArgs = append(allArgs, visArgs...)
+		allArgs = append(allArgs, ageArgs...)
+		allArgs = append(allArgs, tagArgs...)
+		allArgs = append(allArgs, topK)
+
+		q = fmt.Sprintf(`
+			SELECT id, content, tags, visibility, source_agent, parent_id, seq, created_at, updated_at
 			FROM memories
 			WHERE content LIKE ?
+			%s %s %s
 			ORDER BY updated_at DESC
 			LIMIT ?
-		`, "%"+query+"%", topK)
+		`, visFilter, ageFilter, tagFilter)
+
+		rows, err = db.Query(q, allArgs...)
 		if err != nil {
 			return nil, fmt.Errorf("search failed: %w", err)
 		}
@@ -189,39 +315,70 @@ func searchMemories(db *sql.DB, query string, topK int) ([]memoryEntry, error) {
 	return scanEntries(rows)
 }
 
-func storeMemory(db *sql.DB, content string, tags []string) (int64, string, error) {
+func storeMemory(db *sql.DB, content string, tags []string, visibility, sourceAgent string, parentID int64) (int64, int64, string, error) {
 	tagsStr := strings.Join(tags, ",")
 	now := time.Now().UTC().Format(time.RFC3339)
-	result, err := db.Exec(`
-		INSERT INTO memories (content, tags, created_at, updated_at)
-		VALUES (?, ?, ?, ?)
-	`, content, tagsStr, now, now)
+
+	tx, err := db.Begin()
 	if err != nil {
-		return 0, "", fmt.Errorf("store failed: %w", err)
+		return 0, 0, "", fmt.Errorf("store begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	// Get next monotonic sequence number.
+	var nextSeq int64
+	_ = tx.QueryRow(`SELECT COALESCE(MAX(seq), 0) + 1 FROM memories`).Scan(&nextSeq)
+
+	result, err := tx.Exec(`
+		INSERT INTO memories (content, tags, visibility, source_agent, parent_id, seq, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	`, content, tagsStr, visibility, sourceAgent, parentID, nextSeq, now, now)
+	if err != nil {
+		return 0, 0, "", fmt.Errorf("store failed: %w", err)
 	}
 	id, _ := result.LastInsertId()
-	return id, now, nil
+
+	if err := tx.Commit(); err != nil {
+		return 0, 0, "", fmt.Errorf("store commit: %w", err)
+	}
+	return id, nextSeq, now, nil
 }
 
-func listMemories(db *sql.DB, tags string, limit int) ([]memoryEntry, error) {
-	var rows *sql.Rows
-	var err error
+func listMemories(db *sql.DB, tags string, limit int, callerAgent string, trustPeers []string, maxAge string) ([]memoryEntry, error) {
+	visFilter, visArgs := buildVisibilityFilter(callerAgent, trustPeers)
+	ageFilter, ageArgs := buildTimeDecayFilter(maxAge)
+
+	var conditions []string
+	var args []any
+
 	if tags != "" {
-		rows, err = db.Query(`
-			SELECT id, content, tags, created_at, updated_at
-			FROM memories
-			WHERE tags LIKE ?
-			ORDER BY updated_at DESC
-			LIMIT ?
-		`, "%"+tags+"%", limit)
-	} else {
-		rows, err = db.Query(`
-			SELECT id, content, tags, created_at, updated_at
-			FROM memories
-			ORDER BY updated_at DESC
-			LIMIT ?
-		`, limit)
+		conditions = append(conditions, "tags LIKE ?")
+		args = append(args, "%"+tags+"%")
 	}
+
+	args = append(args, visArgs...)
+	args = append(args, ageArgs...)
+
+	where := ""
+	if len(conditions) > 0 {
+		where = "WHERE " + strings.Join(conditions, " AND ")
+	}
+	// visFilter and ageFilter already include "AND" prefix when non-empty.
+	if where == "" && (visFilter != "" || ageFilter != "") {
+		where = "WHERE 1=1"
+	}
+
+	args = append(args, limit)
+
+	q := fmt.Sprintf(`
+		SELECT id, content, tags, visibility, source_agent, parent_id, seq, created_at, updated_at
+		FROM memories
+		%s %s %s
+		ORDER BY updated_at DESC
+		LIMIT ?
+	`, where, visFilter, ageFilter)
+
+	rows, err := db.Query(q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list failed: %w", err)
 	}
@@ -229,12 +386,47 @@ func listMemories(db *sql.DB, tags string, limit int) ([]memoryEntry, error) {
 	return scanEntries(rows)
 }
 
+func getProvenanceChain(db *sql.DB, id int64) ([]memoryEntry, error) {
+	var chain []memoryEntry
+	seen := map[int64]bool{}
+	current := id
+
+	for current > 0 && !seen[current] {
+		seen[current] = true
+		row := db.QueryRow(`
+			SELECT id, content, tags, visibility, source_agent, parent_id, seq, created_at, updated_at
+			FROM memories WHERE id = ?
+		`, current)
+
+		var e memoryEntry
+		var tags string
+		err := row.Scan(&e.ID, &e.Content, &tags, &e.Visibility, &e.SourceAgent, &e.ParentID, &e.Seq, &e.CreatedAt, &e.UpdatedAt)
+		if err != nil {
+			break
+		}
+		if tags != "" {
+			e.Tags = strings.Split(tags, ",")
+		}
+		chain = append(chain, e)
+		current = e.ParentID
+	}
+
+	// Reverse so root is first.
+	for i, j := 0, len(chain)-1; i < j; i, j = i+1, j-1 {
+		chain[i], chain[j] = chain[j], chain[i]
+	}
+	if chain == nil {
+		chain = []memoryEntry{}
+	}
+	return chain, nil
+}
+
 func scanEntries(rows *sql.Rows) ([]memoryEntry, error) {
 	var results []memoryEntry
 	for rows.Next() {
 		var e memoryEntry
 		var tags string
-		if err := rows.Scan(&e.ID, &e.Content, &tags, &e.CreatedAt, &e.UpdatedAt); err != nil {
+		if err := rows.Scan(&e.ID, &e.Content, &tags, &e.Visibility, &e.SourceAgent, &e.ParentID, &e.Seq, &e.CreatedAt, &e.UpdatedAt); err != nil {
 			continue
 		}
 		if tags != "" {
@@ -247,6 +439,67 @@ func scanEntries(rows *sql.Rows) ([]memoryEntry, error) {
 	}
 	return results, nil
 }
+
+// --- Membrane filter builders ---
+
+// buildVisibilityFilter returns an SQL fragment and args that enforce
+// three-tier permeability. If callerAgent is empty, no filtering is applied
+// (backward-compatible with pre-membrane deployments).
+func buildVisibilityFilter(callerAgent string, trustPeers []string) (string, []any) {
+	if callerAgent == "" {
+		return "", nil
+	}
+
+	// Caller can always see:
+	// 1. Public entries
+	// 2. Trusted entries from their trust peers
+	// 3. Their own entries (any visibility)
+	peers := append(trustPeers, callerAgent)
+	placeholders := make([]string, len(peers))
+	args := make([]any, 0, len(peers)+1)
+	for i, p := range peers {
+		placeholders[i] = "?"
+		args = append(args, p)
+	}
+	args = append(args, callerAgent)
+
+	filter := fmt.Sprintf(
+		`AND (visibility = 'public' OR (visibility = 'trusted' AND source_agent IN (%s)) OR source_agent = ?)`,
+		strings.Join(placeholders, ","),
+	)
+	return filter, args
+}
+
+// buildTimeDecayFilter returns an SQL fragment that excludes entries older
+// than maxAge. maxAge should be a Go duration string (e.g., "24h", "168h").
+func buildTimeDecayFilter(maxAge string) (string, []any) {
+	if maxAge == "" {
+		return "", nil
+	}
+	d, err := time.ParseDuration(maxAge)
+	if err != nil {
+		return "", nil
+	}
+	cutoff := time.Now().UTC().Add(-d).Format(time.RFC3339)
+	return "AND created_at > ?", []any{cutoff}
+}
+
+// buildAcceptTagsFilter returns an SQL fragment that filters entries to only
+// those with at least one matching tag from acceptTags.
+func buildAcceptTagsFilter(acceptTags []string) (string, []any) {
+	if len(acceptTags) == 0 {
+		return "", nil
+	}
+	conditions := make([]string, len(acceptTags))
+	args := make([]any, len(acceptTags))
+	for i, tag := range acceptTags {
+		conditions[i] = "tags LIKE ?"
+		args[i] = "%" + tag + "%"
+	}
+	return "AND (" + strings.Join(conditions, " OR ") + ")", args
+}
+
+// --- Schema ---
 
 // initSchema creates the memories table and FTS5 virtual table.
 func initSchema(db *sql.DB) error {
@@ -284,6 +537,45 @@ func initSchema(db *sql.DB) error {
 		CREATE INDEX IF NOT EXISTS idx_memories_tags ON memories(tags);
 	`)
 	return err
+}
+
+// migrateMembraneColumns adds membrane columns to an existing database.
+// Safe to call on fresh databases (columns won't exist yet) and idempotent
+// on already-migrated databases.
+func migrateMembraneColumns(db *sql.DB) error {
+	var count int
+	err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('memories') WHERE name='visibility'`).Scan(&count)
+	if err != nil {
+		return fmt.Errorf("membrane migration check: %w", err)
+	}
+	if count > 0 {
+		return nil // already migrated
+	}
+
+	log.Printf("[memory-server] running membrane schema migration")
+	for _, stmt := range []string{
+		`ALTER TABLE memories ADD COLUMN visibility TEXT DEFAULT 'public'`,
+		`ALTER TABLE memories ADD COLUMN source_agent TEXT DEFAULT ''`,
+		`ALTER TABLE memories ADD COLUMN parent_id INTEGER DEFAULT 0`,
+		`ALTER TABLE memories ADD COLUMN seq INTEGER DEFAULT 0`,
+	} {
+		if _, err := db.Exec(stmt); err != nil {
+			return fmt.Errorf("membrane migration: %w", err)
+		}
+	}
+
+	// Create indexes for membrane columns.
+	for _, stmt := range []string{
+		`CREATE INDEX IF NOT EXISTS idx_memories_visibility ON memories(visibility)`,
+		`CREATE INDEX IF NOT EXISTS idx_memories_source_agent ON memories(source_agent)`,
+		`CREATE INDEX IF NOT EXISTS idx_memories_seq ON memories(seq DESC)`,
+	} {
+		if _, err := db.Exec(stmt); err != nil {
+			log.Printf("[memory-server] warning: index creation: %v", err)
+		}
+	}
+	log.Printf("[memory-server] membrane migration complete")
+	return nil
 }
 
 // fts5Query converts a natural language query into an FTS5 query.

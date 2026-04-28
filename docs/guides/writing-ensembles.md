@@ -241,6 +241,39 @@ source persona's name, so other agents can filter by contributor.
 - **Pipeline monitoring**: multiple monitors share a common knowledge base
 - **Any team where one persona's output informs another's work**
 
+### Adding a membrane (optional)
+
+For larger ensembles or cost-sensitive workflows, add a `membrane` block to control
+what gets shared, set token spending limits, and protect against cascading failures:
+
+```yaml
+spec:
+  sharedMemory:
+    enabled: true
+    storageSize: "1Gi"
+    membrane:
+      defaultVisibility: public
+      permeability:
+        - agentConfig: pipeline-monitor
+          defaultVisibility: trusted
+          exposeTags: ["alerts", "metrics"]
+        - agentConfig: schema-auditor
+          defaultVisibility: private
+      trustGroups:
+        - name: data-team
+          agentConfigs: ["pipeline-monitor", "schema-auditor"]
+      tokenBudget:
+        maxTokens: 50000
+        action: halt
+      circuitBreaker:
+        consecutiveFailures: 3
+      timeDecay:
+        ttl: "168h"
+```
+
+The membrane is entirely optional — without it, shared memory works as before
+with all entries visible to all personas. See [Ensembles — Synthetic Membrane](../concepts/ensembles.md#synthetic-membrane) for the full reference.
+
 ---
 
 ## Step 6: Bind channels (optional)

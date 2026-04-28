@@ -148,27 +148,172 @@ export function EnsembleSettingsPanel({
             </Label>
           </div>
           {settings.sharedMemory?.enabled && (
-            <div className="space-y-1.5 pl-5">
-              <Label htmlFor="sm-size" className="text-xs">
-                Storage Size
-              </Label>
-              <Input
-                id="sm-size"
-                value={settings.sharedMemory.storageSize || "1Gi"}
-                onChange={(e) =>
-                  update({
-                    sharedMemory: {
-                      ...settings.sharedMemory!,
-                      storageSize: e.target.value,
-                    },
-                  })
-                }
-                placeholder="e.g. 1Gi"
-                className="h-8 text-sm font-mono"
-              />
-              <p className="text-[10px] text-muted-foreground">
-                Access rules are configured per-persona after saving.
-              </p>
+            <div className="space-y-3 pl-5">
+              <div className="space-y-1.5">
+                <Label htmlFor="sm-size" className="text-xs">
+                  Storage Size
+                </Label>
+                <Input
+                  id="sm-size"
+                  value={settings.sharedMemory.storageSize || "1Gi"}
+                  onChange={(e) =>
+                    update({
+                      sharedMemory: {
+                        ...settings.sharedMemory!,
+                        storageSize: e.target.value,
+                      },
+                    })
+                  }
+                  placeholder="e.g. 1Gi"
+                  className="h-8 text-sm font-mono"
+                />
+                <p className="text-[10px] text-muted-foreground">
+                  Access rules are configured per-persona after saving.
+                </p>
+              </div>
+
+              {/* Membrane settings */}
+              <div className="space-y-2 border-t pt-2">
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    id="membrane-enable"
+                    checked={!!settings.sharedMemory.membrane}
+                    onChange={(e) =>
+                      update({
+                        sharedMemory: {
+                          ...settings.sharedMemory!,
+                          membrane: e.target.checked
+                            ? { defaultVisibility: "public" }
+                            : undefined,
+                        },
+                      })
+                    }
+                    className="rounded"
+                  />
+                  <Label htmlFor="membrane-enable" className="text-xs cursor-pointer">
+                    Enable Membrane
+                  </Label>
+                </div>
+
+                {settings.sharedMemory.membrane && (
+                  <div className="space-y-2 pl-5">
+                    <div className="space-y-1">
+                      <Label className="text-xs">Default Visibility</Label>
+                      <Select
+                        value={settings.sharedMemory.membrane.defaultVisibility || "public"}
+                        onValueChange={(v) =>
+                          update({
+                            sharedMemory: {
+                              ...settings.sharedMemory!,
+                              membrane: {
+                                ...settings.sharedMemory!.membrane!,
+                                defaultVisibility: v as "public" | "trusted" | "private",
+                              },
+                            },
+                          })
+                        }
+                      >
+                        <SelectTrigger className="h-8 text-sm">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="public">Public</SelectItem>
+                          <SelectItem value="trusted">Trusted</SelectItem>
+                          <SelectItem value="private">Private</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <p className="text-[10px] text-muted-foreground">
+                        Default visibility for new entries
+                      </p>
+                    </div>
+
+                    <div className="space-y-1">
+                      <Label htmlFor="mb-budget" className="text-xs">
+                        Token Budget
+                      </Label>
+                      <Input
+                        id="mb-budget"
+                        type="number"
+                        value={settings.sharedMemory.membrane.tokenBudget?.maxTokens ?? ""}
+                        onChange={(e) =>
+                          update({
+                            sharedMemory: {
+                              ...settings.sharedMemory!,
+                              membrane: {
+                                ...settings.sharedMemory!.membrane!,
+                                tokenBudget: e.target.value
+                                  ? {
+                                      ...settings.sharedMemory!.membrane!.tokenBudget,
+                                      maxTokens: parseInt(e.target.value, 10),
+                                      action: settings.sharedMemory!.membrane!.tokenBudget?.action || "halt",
+                                    }
+                                  : undefined,
+                              },
+                            },
+                          })
+                        }
+                        placeholder="e.g. 100000 (0 = unlimited)"
+                        className="h-8 text-sm font-mono"
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <Label htmlFor="mb-cb" className="text-xs">
+                        Circuit Breaker (consecutive failures)
+                      </Label>
+                      <Input
+                        id="mb-cb"
+                        type="number"
+                        value={settings.sharedMemory.membrane.circuitBreaker?.consecutiveFailures ?? ""}
+                        onChange={(e) =>
+                          update({
+                            sharedMemory: {
+                              ...settings.sharedMemory!,
+                              membrane: {
+                                ...settings.sharedMemory!.membrane!,
+                                circuitBreaker: e.target.value
+                                  ? { consecutiveFailures: parseInt(e.target.value, 10) }
+                                  : undefined,
+                              },
+                            },
+                          })
+                        }
+                        placeholder="e.g. 3"
+                        className="h-8 text-sm font-mono"
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <Label htmlFor="mb-ttl" className="text-xs">
+                        Time Decay TTL
+                      </Label>
+                      <Input
+                        id="mb-ttl"
+                        value={settings.sharedMemory.membrane.timeDecay?.ttl ?? ""}
+                        onChange={(e) =>
+                          update({
+                            sharedMemory: {
+                              ...settings.sharedMemory!,
+                              membrane: {
+                                ...settings.sharedMemory!.membrane!,
+                                timeDecay: e.target.value
+                                  ? {
+                                      ttl: e.target.value,
+                                      decayFunction: settings.sharedMemory!.membrane!.timeDecay?.decayFunction || "linear",
+                                    }
+                                  : undefined,
+                              },
+                            },
+                          })
+                        }
+                        placeholder="e.g. 168h (7 days)"
+                        className="h-8 text-sm font-mono"
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
           )}
         </div>

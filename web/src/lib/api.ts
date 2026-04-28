@@ -458,10 +458,48 @@ export interface SharedMemoryAccessRule {
   access: "read-write" | "read-only";
 }
 
+export interface PermeabilityRule {
+  agentConfig: string;
+  defaultVisibility?: "public" | "trusted" | "private";
+  exposeTags?: string[];
+  acceptTags?: string[];
+}
+
+export interface TrustGroup {
+  name: string;
+  agentConfigs: string[];
+}
+
+export interface TokenBudgetSpec {
+  maxTokens?: number;
+  maxTokensPerRun?: number;
+  action?: "halt" | "warn";
+}
+
+export interface CircuitBreakerSpec {
+  consecutiveFailures?: number;
+  cooldownDuration?: string;
+}
+
+export interface TimeDecaySpec {
+  ttl?: string;
+  decayFunction?: "linear" | "exponential";
+}
+
+export interface MembraneSpec {
+  defaultVisibility?: "public" | "trusted" | "private";
+  permeability?: PermeabilityRule[];
+  trustGroups?: TrustGroup[];
+  tokenBudget?: TokenBudgetSpec;
+  circuitBreaker?: CircuitBreakerSpec;
+  timeDecay?: TimeDecaySpec;
+}
+
 export interface SharedMemorySpec {
   enabled: boolean;
   storageSize?: string;
   accessRules?: SharedMemoryAccessRule[];
+  membrane?: MembraneSpec;
 }
 
 export interface AgentConfigRelationship {
@@ -500,6 +538,9 @@ export interface EnsembleStatus {
   installedCount?: number;
   installedPersonas?: InstalledAgentConfig[];
   sharedMemoryReady?: boolean;
+  tokenBudgetUsed?: number;
+  circuitBreakerOpen?: boolean;
+  consecutiveDelegateFailures?: number;
   conditions?: Condition[];
 }
 

@@ -403,6 +403,14 @@ var workflowMemoryServerURL string
 // workflowMemoryAccess is the access mode for this persona ("read-write" or "read-only").
 var workflowMemoryAccess string
 
+// Membrane configuration (from WORKFLOW_MEMBRANE_* env vars).
+var (
+	membraneVisibility string   // default visibility for entries created by this persona
+	membraneTrustPeers []string // agent configs in this persona's trust group
+	membraneAcceptTags []string // tags this persona wants to receive
+	membraneMaxAge     string   // time decay TTL (e.g., "24h")
+)
+
 // workflowMemoryToolDefs returns tool definitions for the shared workflow memory.
 func workflowMemoryToolDefs() []ToolDef {
 	defs := []ToolDef{
@@ -445,23 +453,40 @@ func workflowMemoryToolDefs() []ToolDef {
 
 	// Only include the store tool for read-write personas.
 	if workflowMemoryAccess != "read-only" {
+		storeProps := map[string]any{
+			"content": map[string]any{
+				"type":        "string",
+				"description": "The content to share with the team. Be specific: include findings, root causes, service names, and relevant details.",
+			},
+			"tags": map[string]any{
+				"type":        "array",
+				"items":       map[string]any{"type": "string"},
+				"description": "Tags for categorization (e.g., ['kafka', 'consumer-lag']). Your persona name is added automatically.",
+			},
+		}
+		storeDesc := "Store a finding in the shared team memory so other personas in the workflow can access it. Entries are automatically tagged with your persona name for attribution."
+
+		// Add membrane parameters when configured.
+		if membraneVisibility != "" {
+			storeProps["visibility"] = map[string]any{
+				"type":        "string",
+				"enum":        []string{"public", "trusted", "private"},
+				"description": "Visibility level: 'public' (all team members), 'trusted' (trust group only), 'private' (only you). Defaults to your configured default.",
+			}
+			storeProps["parent_id"] = map[string]any{
+				"type":        "integer",
+				"description": "ID of a parent memory entry this derives from (for provenance tracking).",
+			}
+			storeDesc += " You can control visibility (public/trusted/private) and link to parent entries for provenance."
+		}
+
 		defs = append(defs, ToolDef{
 			Name:        ToolWorkflowMemoryStore,
-			Description: "Store a finding in the shared team memory so other personas in the workflow can access it. Entries are automatically tagged with your persona name for attribution.",
+			Description: storeDesc,
 			Parameters: map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"content": map[string]any{
-						"type":        "string",
-						"description": "The content to share with the team. Be specific: include findings, root causes, service names, and relevant details.",
-					},
-					"tags": map[string]any{
-						"type":        "array",
-						"items":       map[string]any{"type": "string"},
-						"description": "Tags for categorization (e.g., ['kafka', 'consumer-lag']). Your persona name is added automatically.",
-					},
-				},
-				"required": []string{"content"},
+				"type":       "object",
+				"properties": storeProps,
+				"required":   []string{"content"},
 			},
 		})
 	}
@@ -484,13 +509,35 @@ func executeWorkflowMemoryTool(ctx context.Context, toolName string, argsJSON st
 		return fmt.Sprintf("Error parsing arguments: %v", err)
 	}
 
+	instanceName := os.Getenv("INSTANCE_NAME")
+
 	// Auto-tag store calls with the source persona name for attribution.
 	if toolName == ToolWorkflowMemoryStore {
-		instanceName := os.Getenv("INSTANCE_NAME")
 		if instanceName != "" {
 			tags, _ := args["tags"].([]any)
 			tags = append(tags, instanceName)
 			args["tags"] = tags
+		}
+		// Inject membrane fields for store calls.
+		if membraneVisibility != "" {
+			if _, ok := args["visibility"]; !ok {
+				args["visibility"] = membraneVisibility
+			}
+			args["source_agent"] = instanceName
+		}
+	}
+
+	// Inject membrane fields for search and list calls.
+	if (toolName == ToolWorkflowMemorySearch || toolName == ToolWorkflowMemoryList) && membraneVisibility != "" {
+		args["caller_agent"] = instanceName
+		if len(membraneTrustPeers) > 0 {
+			args["trust_peers"] = membraneTrustPeers
+		}
+		if len(membraneAcceptTags) > 0 {
+			args["accept_tags"] = membraneAcceptTags
+		}
+		if membraneMaxAge != "" {
+			args["max_age"] = membraneMaxAge
 		}
 	}
 
@@ -573,6 +620,19 @@ func workflowMemoryGet(ctx context.Context, path string, args map[string]any) (*
 	}
 	if limit, ok := args["limit"].(float64); ok && limit > 0 {
 		url += sep + "limit=" + fmt.Sprintf("%d", int(limit))
+		sep = "&"
+	}
+	// Membrane query params for list endpoint.
+	if caller, ok := args["caller_agent"].(string); ok && caller != "" {
+		url += sep + "caller_agent=" + caller
+		sep = "&"
+	}
+	if peers, ok := args["trust_peers"].([]string); ok && len(peers) > 0 {
+		url += sep + "trust_peers=" + strings.Join(peers, ",")
+		sep = "&"
+	}
+	if maxAge, ok := args["max_age"].(string); ok && maxAge != "" {
+		url += sep + "max_age=" + maxAge
 	}
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
@@ -655,6 +715,21 @@ func initWorkflowMemoryTools() []ToolDef {
 	workflowMemoryAccess = os.Getenv("WORKFLOW_MEMORY_ACCESS")
 	if workflowMemoryAccess == "" {
 		workflowMemoryAccess = "read-write"
+	}
+
+	// Read membrane configuration.
+	membraneVisibility = os.Getenv("WORKFLOW_MEMBRANE_VISIBILITY")
+	if peers := os.Getenv("WORKFLOW_MEMBRANE_TRUST_PEERS"); peers != "" {
+		membraneTrustPeers = strings.Split(peers, ",")
+	}
+	if tags := os.Getenv("WORKFLOW_MEMBRANE_ACCEPT_TAGS"); tags != "" {
+		membraneAcceptTags = strings.Split(tags, ",")
+	}
+	membraneMaxAge = os.Getenv("WORKFLOW_MEMBRANE_MAX_AGE")
+
+	if membraneVisibility != "" {
+		log.Printf("Membrane configured: visibility=%s trust_peers=%v accept_tags=%v max_age=%s",
+			membraneVisibility, membraneTrustPeers, membraneAcceptTags, membraneMaxAge)
 	}
 
 	log.Printf("Workflow memory server configured: %s (access: %s)", workflowMemoryServerURL, workflowMemoryAccess)

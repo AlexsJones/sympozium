@@ -138,6 +138,134 @@ Each persona can be granted `read-write` or `read-only` access via `accessRules`
 
 Access control is enforced client-side in the agent runner — sufficient because the memory server is in-cluster behind a ClusterIP with no untrusted clients.
 
+## Synthetic Membrane
+
+The Synthetic Membrane is an optional layer on top of Shared Workflow Memory that adds **selective permeability**, **provenance tracking**, **token budgets**, **circuit breakers**, and **time decay**. Inspired by biological cell membranes, it transforms the flat shared memory pool into a structured medium where agents share state selectively rather than broadcasting everything.
+
+### Why a Membrane?
+
+Without a membrane, all shared memory entries are equally visible to all personas. This works for small teams, but breaks down at scale:
+
+- A reviewer doesn't need raw data dumps from the researcher
+- Token costs grow linearly with shared state size
+- A single failing delegation can cascade through the entire ensemble
+- Old entries accumulate and dilute search relevance
+
+The membrane addresses each of these with a dedicated mechanism.
+
+### Enabling the Membrane
+
+```yaml
+apiVersion: sympozium.ai/v1alpha1
+kind: Ensemble
+metadata:
+  name: research-team
+spec:
+  sharedMemory:
+    enabled: true
+    storageSize: "1Gi"
+    membrane:
+      defaultVisibility: public
+      permeability:
+        - agentConfig: researcher
+          defaultVisibility: trusted
+          exposeTags: ["findings", "data"]
+          acceptTags: ["summary"]
+        - agentConfig: writer
+          defaultVisibility: public
+          acceptTags: ["findings", "data"]
+        - agentConfig: reviewer
+          defaultVisibility: private
+      trustGroups:
+        - name: content-team
+          agentConfigs: ["researcher", "writer"]
+      tokenBudget:
+        maxTokens: 100000
+        action: halt
+      circuitBreaker:
+        consecutiveFailures: 3
+      timeDecay:
+        ttl: "168h"
+        decayFunction: linear
+```
+
+### Permeability (Visibility Tiers)
+
+Every memory entry has a **visibility** level: `public`, `trusted`, or `private`.
+
+| Visibility | Who can see it |
+|------------|---------------|
+| `public` | All personas in the ensemble |
+| `trusted` | Personas in the same trust group + the author |
+| `private` | Only the persona that created it |
+
+Each persona can override the ensemble default via a `permeability` rule:
+
+- **`defaultVisibility`**: The visibility tier applied to entries this persona creates
+- **`exposeTags`**: Tags this persona publishes through the membrane. Entries with other tags are treated as private.
+- **`acceptTags`**: Tags this persona wants to receive. Search results are filtered to matching tags only.
+
+### Trust Groups
+
+Trust groups define which personas can see each other's `trusted` entries. If no trust groups are configured, trust is derived automatically from `delegation` and `supervision` relationships.
+
+```yaml
+trustGroups:
+  - name: research-team
+    agentConfigs: ["researcher", "writer"]
+  - name: editorial
+    agentConfigs: ["writer", "editor"]
+```
+
+In this example, the writer can see trusted entries from both the researcher (via `research-team`) and the editor (via `editorial`).
+
+### Token Budget
+
+Token budgets set a ceiling on total token consumption across all agent runs in an ensemble.
+
+| Field | Description |
+|-------|-------------|
+| `maxTokens` | Maximum total tokens (input+output) across all runs. 0 = unlimited. |
+| `maxTokensPerRun` | Maximum tokens for any single AgentRun. 0 = unlimited. |
+| `action` | `halt` (default) — block new runs when exceeded. `warn` — allow runs but log a warning. |
+
+When a run completes, the controller adds its token usage to `status.tokenBudgetUsed`. Before creating a new run, the controller checks whether the budget has been exceeded.
+
+### Circuit Breaker
+
+The circuit breaker protects against cascading delegation failures. After `consecutiveFailures` delegate children fail in a row, the circuit breaker opens and rejects further spawn requests until a delegate succeeds (which resets the counter).
+
+```yaml
+circuitBreaker:
+  consecutiveFailures: 3
+  cooldownDuration: "10m"  # optional
+```
+
+When the circuit breaker is open, `delegate_to_persona` calls immediately return an error instead of spawning a child run. This prevents runaway token consumption from repeated failing delegations.
+
+### Time Decay
+
+Time decay excludes old entries from search results without deleting them. This keeps the shared memory relevant as the team's knowledge evolves.
+
+| Field | Description |
+|-------|-------------|
+| `ttl` | Entries older than this are excluded from search. Format: `"24h"`, `"168h"` (7 days). |
+| `decayFunction` | `linear` (default) or `exponential` — controls how relevance decreases with age. |
+
+### Provenance Tracking
+
+Every memory entry tracks its **source agent** and an optional **parent ID** for derivation chains. This enables:
+
+- **Attribution**: Which persona created this entry?
+- **Lineage**: What chain of reasoning led to this conclusion?
+- **Monotonic sequencing**: Entries have a `seq` number for replay and event sourcing
+
+The memory server exposes a `/provenance?id=N` endpoint that returns the full derivation chain from root to the given entry.
+
+### Further Reading
+
+The membrane design is based on the [Synthetic Membrane](https://github.com/AlexsJones/synthetic-membrane) research paper: *"The Synthetic Membrane: A Shared Permeable Boundary for Multi-Agent AI Systems"* (April 2026). The paper proposes a six-layer architecture for multi-agent coordination, drawing on biological analogues, distributed systems theory, and recent findings from the Superminds Test (2M+ agents, zero collective intelligence without structured substrate).
+
 ### Auto-Context Injection
 
 When an agent starts, the runner automatically queries both private and shared memory for task-relevant context. The system prompt includes two sections:

@@ -107,6 +107,17 @@ func (sr *SpawnRouter) handleSpawnRequest(ctx context.Context, event *eventbus.E
 		"requestID", req.RequestID,
 	)
 
+	// Check circuit breaker before spawning.
+	if err := sr.checkCircuitBreaker(ctx, req.PackName, parentRunID); err != nil {
+		sr.Log.Info("Circuit breaker is open, rejecting spawn",
+			"parentRun", parentRunID,
+			"pack", req.PackName,
+			"error", err.Error(),
+		)
+		sr.publishDelegateResult(ctx, parentRunID, req.RequestID, "", err.Error())
+		return
+	}
+
 	// Look up the parent AgentRun to get namespace, model, session key, depth.
 	var parentRun sympoziumv1alpha1.AgentRun
 	if err := sr.Client.Get(ctx, types.NamespacedName{Name: parentRunID, Namespace: "default"}, &parentRun); err != nil {
@@ -224,6 +235,7 @@ func (sr *SpawnRouter) handleChildCompleted(ctx context.Context, event *eventbus
 
 	sr.publishDelegateResult(ctx, pd.ParentRunID, pd.RequestID, response, "")
 	sr.updateParentDelegateStatus(ctx, pd.ParentRunID, childRunID, sympoziumv1alpha1.AgentRunPhaseSucceeded, response, "")
+	sr.resetCircuitBreaker(ctx, pd.ParentRunID)
 }
 
 // handleChildFailed checks if a failed run is a delegation child and
@@ -254,6 +266,7 @@ func (sr *SpawnRouter) handleChildFailed(ctx context.Context, event *eventbus.Ev
 
 	sr.publishDelegateResult(ctx, pd.ParentRunID, pd.RequestID, "", errMsg)
 	sr.updateParentDelegateStatus(ctx, pd.ParentRunID, childRunID, sympoziumv1alpha1.AgentRunPhaseFailed, "", errMsg)
+	sr.incrementCircuitBreaker(ctx, pd.ParentRunID)
 }
 
 // publishDelegateResult sends the child's result to the parent's IPC bridge
@@ -329,4 +342,104 @@ func (sr *SpawnRouter) updateParentDelegateStatus(ctx context.Context, parentRun
 			"childRun", childRunID,
 		)
 	}
+}
+
+// checkCircuitBreaker returns an error if the circuit breaker is open for the
+// given ensemble. The circuit breaker trips after consecutive delegate failures
+// exceed the configured threshold.
+func (sr *SpawnRouter) checkCircuitBreaker(ctx context.Context, packName, parentRunID string) error {
+	if packName == "" {
+		return nil
+	}
+	pack, err := sr.getEnsembleForRun(ctx, parentRunID, packName)
+	if err != nil || pack == nil {
+		return nil
+	}
+	if pack.Status.CircuitBreakerOpen {
+		return fmt.Errorf("circuit breaker is open for ensemble %q: %d consecutive delegation failures",
+			packName, pack.Status.ConsecutiveDelegateFailures)
+	}
+	return nil
+}
+
+// incrementCircuitBreaker increments the consecutive failure counter and
+// opens the circuit breaker if the threshold is crossed.
+func (sr *SpawnRouter) incrementCircuitBreaker(ctx context.Context, parentRunID string) {
+	pack, err := sr.getEnsembleForRunByParent(ctx, parentRunID)
+	if err != nil || pack == nil {
+		return
+	}
+	if pack.Spec.SharedMemory == nil || pack.Spec.SharedMemory.Membrane == nil ||
+		pack.Spec.SharedMemory.Membrane.CircuitBreaker == nil {
+		return
+	}
+	cb := pack.Spec.SharedMemory.Membrane.CircuitBreaker
+	threshold := cb.ConsecutiveFailures
+	if threshold <= 0 {
+		threshold = 3
+	}
+
+	patch := client.MergeFrom(pack.DeepCopy())
+	pack.Status.ConsecutiveDelegateFailures++
+	if pack.Status.ConsecutiveDelegateFailures >= threshold {
+		pack.Status.CircuitBreakerOpen = true
+		sr.Log.Info("Circuit breaker OPEN",
+			"ensemble", pack.Name,
+			"failures", pack.Status.ConsecutiveDelegateFailures,
+			"threshold", threshold,
+		)
+	}
+	if err := sr.Client.Status().Patch(ctx, pack, patch); err != nil {
+		sr.Log.Error(err, "failed to update circuit breaker status")
+	}
+}
+
+// resetCircuitBreaker resets the consecutive failure counter on a successful
+// delegate completion.
+func (sr *SpawnRouter) resetCircuitBreaker(ctx context.Context, parentRunID string) {
+	pack, err := sr.getEnsembleForRunByParent(ctx, parentRunID)
+	if err != nil || pack == nil {
+		return
+	}
+	if pack.Status.ConsecutiveDelegateFailures == 0 && !pack.Status.CircuitBreakerOpen {
+		return
+	}
+
+	patch := client.MergeFrom(pack.DeepCopy())
+	pack.Status.ConsecutiveDelegateFailures = 0
+	pack.Status.CircuitBreakerOpen = false
+	if err := sr.Client.Status().Patch(ctx, pack, patch); err != nil {
+		sr.Log.Error(err, "failed to reset circuit breaker status")
+	}
+}
+
+// getEnsembleForRun looks up the ensemble by name, resolving the namespace
+// from the parent AgentRun.
+func (sr *SpawnRouter) getEnsembleForRun(ctx context.Context, parentRunID, packName string) (*sympoziumv1alpha1.Ensemble, error) {
+	var parentRun sympoziumv1alpha1.AgentRun
+	if err := sr.Client.Get(ctx, types.NamespacedName{Name: parentRunID, Namespace: "default"}, &parentRun); err != nil {
+		return nil, err
+	}
+	var pack sympoziumv1alpha1.Ensemble
+	if err := sr.Client.Get(ctx, types.NamespacedName{Name: packName, Namespace: parentRun.Namespace}, &pack); err != nil {
+		return nil, err
+	}
+	return &pack, nil
+}
+
+// getEnsembleForRunByParent resolves the ensemble from a parent AgentRun's labels.
+func (sr *SpawnRouter) getEnsembleForRunByParent(ctx context.Context, parentRunID string) (*sympoziumv1alpha1.Ensemble, error) {
+	var parentRun sympoziumv1alpha1.AgentRun
+	if err := sr.Client.Get(ctx, types.NamespacedName{Name: parentRunID, Namespace: "default"}, &parentRun); err != nil {
+		return nil, err
+	}
+	packName := parentRun.Labels["sympozium.ai/ensemble"]
+	if packName == "" {
+		return nil, nil
+	}
+	var pack sympoziumv1alpha1.Ensemble
+	if err := sr.Client.Get(ctx, types.NamespacedName{Name: packName, Namespace: parentRun.Namespace}, &pack); err != nil {
+		return nil, err
+	}
+	return &pack, nil
 }

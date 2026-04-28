@@ -77,6 +77,7 @@ export interface AgentConfigNodeData {
   runPhase?: string;
   runTask?: string;
   hasSharedMemory?: boolean;
+  membraneVisibility?: string;
   label: string;
   [key: string]: unknown;
 }
@@ -174,10 +175,10 @@ function AgentConfigNode({ data }: NodeProps<Node<AgentConfigNodeData>>) {
         <Badge
           variant="outline"
           className="text-[9px] px-1 py-0 mb-1 gap-0.5 w-fit"
-          title="Shared workflow memory"
+          title={data.membraneVisibility ? `Membrane: ${data.membraneVisibility} visibility` : "Shared workflow memory"}
         >
           <Database className="h-2.5 w-2.5" />
-          shared memory
+          {data.membraneVisibility ? `${data.membraneVisibility}` : "shared memory"}
         </Badge>
       )}
 
@@ -811,8 +812,13 @@ export function EnsembleCanvas({ pack }: EnsembleCanvasProps) {
     const nodes: Node<AgentConfigNodeData | ModelNodeData | ProviderNodeData>[] =
       layoutNodes(personas, relationships, 0, yOffset);
     const sharedMemEnabled = pack.spec.sharedMemory?.enabled ?? false;
+    const membrane = pack.spec.sharedMemory?.membrane;
     for (const node of nodes) {
       node.data.hasSharedMemory = sharedMemEnabled;
+      if (membrane) {
+        const rule = membrane.permeability?.find((r) => r.agentConfig === node.id);
+        node.data.membraneVisibility = rule?.defaultVisibility || membrane.defaultVisibility || "public";
+      }
       const ip = pack.status?.installedPersonas?.find(
         (p) => p.name === node.id,
       );
@@ -1103,9 +1109,15 @@ export function GlobalEnsembleCanvas() {
       );
 
       const sharedMemoryEnabled = pack.spec.sharedMemory?.enabled ?? false;
+      const packMembrane = pack.spec.sharedMemory?.membrane;
       for (const node of packNodes) {
         node.data.packName = pack.metadata.name;
         node.data.hasSharedMemory = sharedMemoryEnabled;
+        if (packMembrane) {
+          const personaId = node.id.split("/")[1] || node.id;
+          const rule = packMembrane.permeability?.find((r) => r.agentConfig === personaId);
+          node.data.membraneVisibility = rule?.defaultVisibility || packMembrane.defaultVisibility || "public";
+        }
         const personaName = node.id.split("/")[1] || node.id;
         const ip = pack.status?.installedPersonas?.find(
           (p) => p.name === personaName,
@@ -1241,10 +1253,16 @@ export function DashboardEnsembleCanvas() {
         prefix,
       );
       const sharedMemEnabled = pack.spec.sharedMemory?.enabled ?? false;
+      const dashMembrane = pack.spec.sharedMemory?.membrane;
       for (const node of packNodes) {
         node.data.packName =
           visiblePacks.length > 1 ? pack.metadata.name : undefined;
         node.data.hasSharedMemory = sharedMemEnabled;
+        if (dashMembrane) {
+          const personaId = node.id.split("/")[1] || node.id;
+          const rule = dashMembrane.permeability?.find((r) => r.agentConfig === personaId);
+          node.data.membraneVisibility = rule?.defaultVisibility || dashMembrane.defaultVisibility || "public";
+        }
         const personaName = node.id.split("/")[1] || node.id;
         const ip = pack.status?.installedPersonas?.find(
           (p) => p.name === personaName,

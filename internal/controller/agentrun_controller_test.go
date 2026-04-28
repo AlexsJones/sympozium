@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -10,6 +11,10 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	sympoziumv1alpha1 "github.com/sympozium-ai/sympozium/api/v1alpha1"
 )
@@ -1663,5 +1668,274 @@ func TestBuildVolumes_WorkspacePVCWithSandboxEnabled(t *testing.T) {
 	}
 	if workspace.VolumeSource.PersistentVolumeClaim == nil {
 		t.Fatal("workspace should use PVC even with sandbox enabled when postRun hooks are defined")
+	}
+}
+
+// ── Membrane helper tests ───────────────────────────────────────────────────
+
+func TestResolveTrustPeers_FromGroups(t *testing.T) {
+	groups := []sympoziumv1alpha1.TrustGroup{
+		{Name: "research", AgentConfigs: []string{"researcher", "writer", "editor"}},
+	}
+	peers := resolveTrustPeers("researcher", groups, nil)
+	if len(peers) != 2 {
+		t.Fatalf("expected 2 peers, got %d: %v", len(peers), peers)
+	}
+	// Should be sorted.
+	if peers[0] != "editor" || peers[1] != "writer" {
+		t.Errorf("peers = %v, want [editor writer]", peers)
+	}
+}
+
+func TestResolveTrustPeers_FromRelationships(t *testing.T) {
+	rels := []sympoziumv1alpha1.AgentConfigRelationship{
+		{Source: "planner", Target: "executor", Type: "delegation"},
+		{Source: "monitor", Target: "planner", Type: "supervision"},
+		{Source: "planner", Target: "logger", Type: "sequential"},
+	}
+	peers := resolveTrustPeers("planner", nil, rels)
+	// delegation to executor + supervision from monitor = 2 peers
+	// sequential to logger should NOT imply trust
+	if len(peers) != 2 {
+		t.Fatalf("expected 2 peers, got %d: %v", len(peers), peers)
+	}
+	peerMap := map[string]bool{}
+	for _, p := range peers {
+		peerMap[p] = true
+	}
+	if !peerMap["executor"] || !peerMap["monitor"] {
+		t.Errorf("peers = %v, want executor and monitor", peers)
+	}
+}
+
+func TestResolveTrustPeers_NoMembrane(t *testing.T) {
+	peers := resolveTrustPeers("agent-a", nil, nil)
+	if len(peers) != 0 {
+		t.Errorf("expected no peers, got %v", peers)
+	}
+}
+
+func TestResolveTrustPeers_Combined(t *testing.T) {
+	groups := []sympoziumv1alpha1.TrustGroup{
+		{Name: "team", AgentConfigs: []string{"a", "b"}},
+	}
+	rels := []sympoziumv1alpha1.AgentConfigRelationship{
+		{Source: "a", Target: "c", Type: "delegation"},
+	}
+	peers := resolveTrustPeers("a", groups, rels)
+	if len(peers) != 2 {
+		t.Fatalf("expected 2 peers (b from group, c from rel), got %d: %v", len(peers), peers)
+	}
+}
+
+func TestResolveMembraneEnvVars(t *testing.T) {
+	membrane := &sympoziumv1alpha1.MembraneSpec{
+		DefaultVisibility: "public",
+		Permeability: []sympoziumv1alpha1.PermeabilityRule{
+			{
+				AgentConfig:       "writer",
+				DefaultVisibility: "trusted",
+				AcceptTags:        []string{"research", "data"},
+			},
+		},
+		TrustGroups: []sympoziumv1alpha1.TrustGroup{
+			{Name: "team", AgentConfigs: []string{"writer", "editor"}},
+		},
+		TimeDecay: &sympoziumv1alpha1.TimeDecaySpec{
+			TTL: "168h",
+		},
+	}
+	rels := []sympoziumv1alpha1.AgentConfigRelationship{
+		{Source: "writer", Target: "reviewer", Type: "delegation"},
+	}
+
+	envs := resolveMembraneEnvVars("writer", membrane, rels)
+	envMap := map[string]string{}
+	for _, e := range envs {
+		envMap[e.Name] = e.Value
+	}
+
+	if envMap["WORKFLOW_MEMBRANE_VISIBILITY"] != "trusted" {
+		t.Errorf("visibility = %q, want trusted", envMap["WORKFLOW_MEMBRANE_VISIBILITY"])
+	}
+	if envMap["WORKFLOW_MEMBRANE_MAX_AGE"] != "168h" {
+		t.Errorf("max_age = %q, want 168h", envMap["WORKFLOW_MEMBRANE_MAX_AGE"])
+	}
+	if envMap["WORKFLOW_MEMBRANE_ACCEPT_TAGS"] != "research,data" {
+		t.Errorf("accept_tags = %q, want research,data", envMap["WORKFLOW_MEMBRANE_ACCEPT_TAGS"])
+	}
+	// Trust peers: editor (from group) + reviewer (from delegation)
+	peers := envMap["WORKFLOW_MEMBRANE_TRUST_PEERS"]
+	if !strings.Contains(peers, "editor") || !strings.Contains(peers, "reviewer") {
+		t.Errorf("trust_peers = %q, want editor and reviewer", peers)
+	}
+}
+
+func TestResolveMembraneEnvVars_Nil(t *testing.T) {
+	envs := resolveMembraneEnvVars("test", nil, nil)
+	if len(envs) != 0 {
+		t.Errorf("expected no envs for nil membrane, got %d", len(envs))
+	}
+}
+
+// ── Token budget tests ──────────────────────────────────────────────────────
+
+func newMembraneTestReconciler(t *testing.T, objs ...client.Object) *AgentRunReconciler {
+	t.Helper()
+
+	scheme := runtime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add corev1 scheme: %v", err)
+	}
+	if err := sympoziumv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add sympozium scheme: %v", err)
+	}
+
+	cl := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(objs...).
+		WithStatusSubresource(&sympoziumv1alpha1.Ensemble{}, &sympoziumv1alpha1.AgentRun{}).
+		Build()
+
+	return &AgentRunReconciler{
+		Client: cl,
+		Scheme: scheme,
+	}
+}
+
+func TestCheckTokenBudget_NoBudget(t *testing.T) {
+	pack := &sympoziumv1alpha1.Ensemble{
+		ObjectMeta: metav1.ObjectMeta{Name: "my-pack", Namespace: "default"},
+		Spec: sympoziumv1alpha1.EnsembleSpec{
+			SharedMemory: &sympoziumv1alpha1.SharedMemorySpec{Enabled: true},
+		},
+	}
+	run := newTestRun()
+	run.Labels = map[string]string{"sympozium.ai/ensemble": "my-pack"}
+
+	r := newMembraneTestReconciler(t, pack)
+	err := r.checkTokenBudget(context.Background(), logr.Discard(), run)
+	if err != nil {
+		t.Errorf("expected no error without budget config, got: %v", err)
+	}
+}
+
+func TestCheckTokenBudget_UnderLimit(t *testing.T) {
+	pack := &sympoziumv1alpha1.Ensemble{
+		ObjectMeta: metav1.ObjectMeta{Name: "my-pack", Namespace: "default"},
+		Spec: sympoziumv1alpha1.EnsembleSpec{
+			SharedMemory: &sympoziumv1alpha1.SharedMemorySpec{
+				Enabled: true,
+				Membrane: &sympoziumv1alpha1.MembraneSpec{
+					TokenBudget: &sympoziumv1alpha1.TokenBudgetSpec{
+						MaxTokens: 10000,
+						Action:    "halt",
+					},
+				},
+			},
+		},
+		Status: sympoziumv1alpha1.EnsembleStatus{
+			TokenBudgetUsed: 5000,
+		},
+	}
+	run := newTestRun()
+	run.Labels = map[string]string{"sympozium.ai/ensemble": "my-pack"}
+
+	r := newMembraneTestReconciler(t, pack)
+	err := r.checkTokenBudget(context.Background(), logr.Discard(), run)
+	if err != nil {
+		t.Errorf("expected no error under budget, got: %v", err)
+	}
+}
+
+func TestCheckTokenBudget_OverLimit_Halt(t *testing.T) {
+	pack := &sympoziumv1alpha1.Ensemble{
+		ObjectMeta: metav1.ObjectMeta{Name: "my-pack", Namespace: "default"},
+		Spec: sympoziumv1alpha1.EnsembleSpec{
+			SharedMemory: &sympoziumv1alpha1.SharedMemorySpec{
+				Enabled: true,
+				Membrane: &sympoziumv1alpha1.MembraneSpec{
+					TokenBudget: &sympoziumv1alpha1.TokenBudgetSpec{
+						MaxTokens: 10000,
+						Action:    "halt",
+					},
+				},
+			},
+		},
+		Status: sympoziumv1alpha1.EnsembleStatus{
+			TokenBudgetUsed: 10000,
+		},
+	}
+	run := newTestRun()
+	run.Labels = map[string]string{"sympozium.ai/ensemble": "my-pack"}
+
+	r := newMembraneTestReconciler(t, pack)
+	err := r.checkTokenBudget(context.Background(), logr.Discard(), run)
+	if err == nil {
+		t.Error("expected error when budget exceeded with halt action")
+	}
+}
+
+func TestCheckTokenBudget_OverLimit_Warn(t *testing.T) {
+	pack := &sympoziumv1alpha1.Ensemble{
+		ObjectMeta: metav1.ObjectMeta{Name: "my-pack", Namespace: "default"},
+		Spec: sympoziumv1alpha1.EnsembleSpec{
+			SharedMemory: &sympoziumv1alpha1.SharedMemorySpec{
+				Enabled: true,
+				Membrane: &sympoziumv1alpha1.MembraneSpec{
+					TokenBudget: &sympoziumv1alpha1.TokenBudgetSpec{
+						MaxTokens: 10000,
+						Action:    "warn",
+					},
+				},
+			},
+		},
+		Status: sympoziumv1alpha1.EnsembleStatus{
+			TokenBudgetUsed: 15000,
+		},
+	}
+	run := newTestRun()
+	run.Labels = map[string]string{"sympozium.ai/ensemble": "my-pack"}
+
+	r := newMembraneTestReconciler(t, pack)
+	err := r.checkTokenBudget(context.Background(), logr.Discard(), run)
+	if err != nil {
+		t.Errorf("expected warn mode to allow run, got: %v", err)
+	}
+}
+
+func TestUpdateTokenBudget(t *testing.T) {
+	pack := &sympoziumv1alpha1.Ensemble{
+		ObjectMeta: metav1.ObjectMeta{Name: "my-pack", Namespace: "default"},
+		Spec: sympoziumv1alpha1.EnsembleSpec{
+			SharedMemory: &sympoziumv1alpha1.SharedMemorySpec{
+				Enabled: true,
+				Membrane: &sympoziumv1alpha1.MembraneSpec{
+					TokenBudget: &sympoziumv1alpha1.TokenBudgetSpec{
+						MaxTokens: 100000,
+					},
+				},
+			},
+		},
+	}
+	run := newTestRun()
+	run.Labels = map[string]string{"sympozium.ai/ensemble": "my-pack"}
+	run.Status.TokenUsage = &sympoziumv1alpha1.TokenUsage{
+		TotalTokens: 1500,
+	}
+
+	r := newMembraneTestReconciler(t, pack)
+	err := r.updateTokenBudget(context.Background(), logr.Discard(), run)
+	if err != nil {
+		t.Fatalf("updateTokenBudget: %v", err)
+	}
+
+	// Verify the ensemble status was updated.
+	var updated sympoziumv1alpha1.Ensemble
+	if err := r.Get(context.Background(), types.NamespacedName{Name: "my-pack", Namespace: "default"}, &updated); err != nil {
+		t.Fatalf("get ensemble: %v", err)
+	}
+	if updated.Status.TokenBudgetUsed != 1500 {
+		t.Errorf("tokenBudgetUsed = %d, want 1500", updated.Status.TokenBudgetUsed)
 	}
 }
