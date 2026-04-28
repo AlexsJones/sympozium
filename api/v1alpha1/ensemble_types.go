@@ -244,6 +244,11 @@ type SharedMemorySpec struct {
 	// If empty, all agent configurations get read-write access.
 	// +optional
 	AccessRules []SharedMemoryAccessRule `json:"accessRules,omitempty"`
+
+	// Membrane configures the synthetic membrane layer: selective permeability,
+	// provenance tracking, token budgets, and circuit breakers.
+	// +optional
+	Membrane *MembraneSpec `json:"membrane,omitempty"`
 }
 
 // SharedMemoryAccessRule defines access control for a specific agent configuration.
@@ -321,6 +326,21 @@ type EnsembleStatus struct {
 	// SharedMemoryReady indicates the shared memory infrastructure is provisioned.
 	// +optional
 	SharedMemoryReady bool `json:"sharedMemoryReady,omitempty"`
+
+	// TokenBudgetUsed tracks aggregate token consumption across all runs
+	// in the current execution wave. Only populated when Membrane.TokenBudget is configured.
+	// +optional
+	TokenBudgetUsed int64 `json:"tokenBudgetUsed,omitempty"`
+
+	// CircuitBreakerOpen indicates the delegation circuit breaker has tripped
+	// due to consecutive delegate failures exceeding the configured threshold.
+	// +optional
+	CircuitBreakerOpen bool `json:"circuitBreakerOpen,omitempty"`
+
+	// ConsecutiveDelegateFailures tracks the current streak of consecutive
+	// delegate failures for circuit breaker evaluation.
+	// +optional
+	ConsecutiveDelegateFailures int `json:"consecutiveDelegateFailures,omitempty"`
 
 	// Conditions represent the latest available observations.
 	// +optional

@@ -158,6 +158,55 @@ A `wait-for-shared-memory` init container ensures the server is ready before the
 
 The `workflow_memory_store` tool is only available to personas with `read-write` access. The source persona name is automatically added as a tag for attribution.
 
+### Synthetic Membrane
+
+The **Synthetic Membrane** is an optional layer on top of Shared Workflow Memory that adds selective permeability, provenance tracking, token budgets, circuit breakers, and time decay. It transforms the flat shared memory pool into a structured medium where agents share state selectively.
+
+Add a `membrane` block inside `sharedMemory`:
+
+```yaml
+spec:
+  sharedMemory:
+    enabled: true
+    storageSize: "1Gi"
+    membrane:
+      defaultVisibility: public
+      permeability:
+        - agentConfig: researcher
+          defaultVisibility: trusted
+          exposeTags: ["findings"]
+        - agentConfig: reviewer
+          defaultVisibility: private
+      trustGroups:
+        - name: content-team
+          agentConfigs: ["researcher", "writer"]
+      tokenBudget:
+        maxTokens: 100000
+        action: halt
+      circuitBreaker:
+        consecutiveFailures: 3
+      timeDecay:
+        ttl: "168h"
+```
+
+Key capabilities:
+
+| Feature | What it does |
+|---------|-------------|
+| **Permeability** | Three-tier visibility (public/trusted/private) per persona with tag-level selectivity |
+| **Trust groups** | Named groups of personas that can see each other's "trusted" entries |
+| **Token budget** | Caps total token consumption across all runs; halts or warns on breach |
+| **Circuit breaker** | Opens after N consecutive delegation failures, blocking further spawns |
+| **Time decay** | Excludes old entries from search results via configurable TTL |
+| **Provenance** | Every entry tracks its source agent and derivation chain via `parent_id` |
+
+When the membrane is configured, agent pods receive additional env vars (`WORKFLOW_MEMBRANE_VISIBILITY`, `WORKFLOW_MEMBRANE_TRUST_PEERS`, `WORKFLOW_MEMBRANE_ACCEPT_TAGS`, `WORKFLOW_MEMBRANE_MAX_AGE`) that the agent runner uses to filter store and search calls automatically.
+
+See [Ensembles — Synthetic Membrane](ensembles.md#synthetic-membrane) for full configuration reference.
+
+!!! tip "Further Reading"
+    The membrane design is based on the [Synthetic Membrane](https://github.com/AlexsJones/synthetic-membrane) research paper: *"The Synthetic Membrane: A Shared Permeable Boundary for Multi-Agent AI Systems"* (April 2026).
+
 ### Viewing Shared Memory
 
 Query the shared memory via the API:

@@ -625,6 +625,151 @@ spec:
                     description: Enabled activates the shared memory server for this
                       ensemble.
                     type: boolean
+                  membrane:
+                    description: |-
+                      Membrane configures the synthetic membrane layer: selective permeability,
+                      provenance tracking, token budgets, and circuit breakers.
+                    properties:
+                      circuitBreaker:
+                        description: CircuitBreaker configures failure thresholds
+                          for delegation chains.
+                        properties:
+                          consecutiveFailures:
+                            default: 3
+                            description: |-
+                              ConsecutiveFailures is how many consecutive delegate failures
+                              trigger the circuit breaker.
+                            type: integer
+                          cooldownDuration:
+                            description: |-
+                              CooldownDuration is how long the breaker stays open before
+                              allowing retries. Format: "5m", "1h". Empty means manual reset only.
+                            type: string
+                        type: object
+                      defaultVisibility:
+                        default: public
+                        description: |-
+                          DefaultVisibility is the default visibility tier for new entries
+                          when not overridden by a per-agent-config PermeabilityRule.
+                        enum:
+                        - public
+                        - trusted
+                        - private
+                        type: string
+                      permeability:
+                        description: |-
+                          Permeability defines per-agent-config visibility and selectivity rules.
+                          If empty, all entries default to the ensemble-level DefaultVisibility.
+                        items:
+                          description: |-
+                            PermeabilityRule defines what an agent config exposes to and accepts from
+                            the shared memory membrane.
+                          properties:
+                            acceptTags:
+                              description: |-
+                                AcceptTags lists tags this agent config is interested in receiving.
+                                Empty means accept all visible entries. When set, search results
+                                are filtered to only include entries with at least one matching tag.
+                              items:
+                                type: string
+                              type: array
+                            agentConfig:
+                              description: AgentConfig is the agent config name this
+                                rule applies to.
+                              type: string
+                            defaultVisibility:
+                              description: |-
+                                DefaultVisibility for entries created by this agent config.
+                                Overrides the ensemble-level default.
+                              enum:
+                              - public
+                              - trusted
+                              - private
+                              type: string
+                            exposeTags:
+                              description: |-
+                                ExposeTags lists tags this agent config publishes through the membrane.
+                                Empty means expose all tags. Entries with tags not in this list
+                                are treated as "private" regardless of their visibility setting.
+                              items:
+                                type: string
+                              type: array
+                          required:
+                          - agentConfig
+                          type: object
+                        type: array
+                      timeDecay:
+                        description: TimeDecay configures how old entries lose salience
+                          in search results.
+                        properties:
+                          decayFunction:
+                            default: linear
+                            description: DecayFunction controls how relevance decreases
+                              with age.
+                            enum:
+                            - linear
+                            - exponential
+                            type: string
+                          ttl:
+                            description: |-
+                              TTL is the default time-to-live for entries. Entries older than this
+                              are excluded from search results but not deleted.
+                              Format: "24h", "168h" (7 days).
+                            type: string
+                        type: object
+                      tokenBudget:
+                        description: TokenBudget configures ensemble-level token spending
+                          limits.
+                        properties:
+                          action:
+                            default: halt
+                            description: |-
+                              Action determines what happens when the budget is exceeded.
+                              "halt" (default) prevents new runs from starting.
+                              "warn" allows runs but sets a warning condition on the ensemble.
+                            enum:
+                            - halt
+                            - warn
+                            type: string
+                          maxTokens:
+                            description: |-
+                              MaxTokens is the maximum total tokens (input+output) across all agent
+                              runs in a single ensemble execution wave. 0 means unlimited.
+                            format: int64
+                            type: integer
+                          maxTokensPerRun:
+                            description: MaxTokensPerRun limits tokens for any single
+                              AgentRun. 0 means unlimited.
+                            format: int64
+                            type: integer
+                        type: object
+                      trustGroups:
+                        description: |-
+                          TrustGroups defines named groups of agent configs that share "trusted"
+                          visibility. Agents in the same trust group can see each other's
+                          "trusted" entries. If empty, trust is derived from ensemble Relationships
+                          (delegation and supervision edges imply mutual trust).
+                        items:
+                          description: |-
+                            TrustGroup defines a named group of agent configs that share "trusted"
+                            visibility with each other.
+                          properties:
+                            agentConfigs:
+                              description: AgentConfigs lists the agent config names
+                                in this group.
+                              items:
+                                type: string
+                              type: array
+                            name:
+                              description: Name is a human-readable identifier for
+                                this trust group.
+                              type: string
+                          required:
+                          - agentConfigs
+                          - name
+                          type: object
+                        type: array
+                    type: object
                   storageSize:
                     default: 1Gi
                     description: |-
@@ -673,6 +818,11 @@ spec:
           status:
             description: EnsembleStatus defines the observed state of Ensemble.
             properties:
+              circuitBreakerOpen:
+                description: |-
+                  CircuitBreakerOpen indicates the delegation circuit breaker has tripped
+                  due to consecutive delegate failures exceeding the configured threshold.
+                type: boolean
               conditions:
                 description: Conditions represent the latest available observations.
                 items:
@@ -730,6 +880,11 @@ spec:
                   - type
                   type: object
                 type: array
+              consecutiveDelegateFailures:
+                description: |-
+                  ConsecutiveDelegateFailures tracks the current streak of consecutive
+                  delegate failures for circuit breaker evaluation.
+                type: integer
               installedCount:
                 description: InstalledCount is the number of personas successfully
                   installed.
@@ -767,6 +922,12 @@ spec:
                 description: SharedMemoryReady indicates the shared memory infrastructure
                   is provisioned.
                 type: boolean
+              tokenBudgetUsed:
+                description: |-
+                  TokenBudgetUsed tracks aggregate token consumption across all runs
+                  in the current execution wave. Only populated when Membrane.TokenBudget is configured.
+                format: int64
+                type: integer
             type: object
         type: object
     served: true

@@ -1,6 +1,11 @@
 import { useState, useEffect } from "react";
-import { useParams, Link, useSearchParams } from "react-router-dom";
-import { useEnsemble, useActivateEnsemble, useSkills } from "@/hooks/use-api";
+import { useParams, Link, useSearchParams, useNavigate } from "react-router-dom";
+import {
+  useEnsemble,
+  useActivateEnsemble,
+  useDeleteEnsemble,
+  useSkills,
+} from "@/hooks/use-api";
 import {
   YamlButton,
   ensembleYamlFromResource,
@@ -31,6 +36,7 @@ import {
   Workflow,
   Database,
   Settings,
+  Trash2,
 } from "lucide-react";
 import { Breadcrumbs } from "@/components/breadcrumbs";
 import { formatAge } from "@/lib/utils";
@@ -47,9 +53,11 @@ interface PersonaEditState {
 
 export function EnsembleDetailPage() {
   const { name } = useParams<{ name: string }>();
+  const navigate = useNavigate();
   const { data: pack, isLoading } = useEnsemble(name || "");
   const { data: skillPacks } = useSkills();
   const patchMutation = useActivateEnsemble();
+  const deleteMutation = useDeleteEnsemble();
 
   const [wizardOpen, setWizardOpen] = useState(false);
 
@@ -196,6 +204,27 @@ export function EnsembleDetailPage() {
             yaml={ensembleYamlFromResource(pack)}
             title={`Ensemble — ${pack.metadata.name}`}
           />
+          <Button
+            variant="ghost"
+            size="sm"
+            className="gap-1.5 text-xs text-destructive hover:text-destructive"
+            disabled={deleteMutation.isPending}
+            onClick={() => {
+              if (
+                window.confirm(
+                  `Delete ensemble "${pack.metadata.name}"? This will remove all associated agents, schedules, and shared memory.`,
+                )
+              ) {
+                deleteMutation.mutate(pack.metadata.name, {
+                  onSuccess: () => navigate("/ensembles"),
+                });
+              }
+            }}
+            title="Delete ensemble"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+            Delete
+          </Button>
           {pack.spec.category && (
             <Badge variant="outline" className="capitalize">
               {pack.spec.category}
@@ -355,6 +384,106 @@ export function EnsembleDetailPage() {
                         ))}
                       </div>
                     )}
+
+                  {/* Membrane config */}
+                  {pack.spec.sharedMemory.membrane && (
+                    <div className="space-y-2 border-t pt-3 mt-3">
+                      <p className="text-xs font-medium text-muted-foreground">
+                        Synthetic Membrane
+                      </p>
+                      <div className="flex flex-wrap items-center gap-2 text-sm">
+                        <Badge variant="outline" className="text-xs">
+                          Visibility: {pack.spec.sharedMemory.membrane.defaultVisibility || "public"}
+                        </Badge>
+                        {pack.spec.sharedMemory.membrane.timeDecay?.ttl && (
+                          <Badge variant="outline" className="text-xs">
+                            TTL: {pack.spec.sharedMemory.membrane.timeDecay.ttl}
+                          </Badge>
+                        )}
+                      </div>
+
+                      {/* Token budget */}
+                      {pack.spec.sharedMemory.membrane.tokenBudget && (
+                        <div className="space-y-0.5">
+                          <p className="text-xs text-muted-foreground">Token Budget</p>
+                          <div className="flex items-center gap-2 text-sm">
+                            <span className="font-mono text-xs">
+                              {(pack.status?.tokenBudgetUsed ?? 0).toLocaleString()} / {(pack.spec.sharedMemory.membrane.tokenBudget.maxTokens ?? 0).toLocaleString()}
+                            </span>
+                            <Badge
+                              variant={pack.spec.sharedMemory.membrane.tokenBudget.action === "warn" ? "secondary" : "destructive"}
+                              className="text-xs"
+                            >
+                              {pack.spec.sharedMemory.membrane.tokenBudget.action || "halt"}
+                            </Badge>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Circuit breaker */}
+                      {pack.spec.sharedMemory.membrane.circuitBreaker && (
+                        <div className="space-y-0.5">
+                          <p className="text-xs text-muted-foreground">Circuit Breaker</p>
+                          <div className="flex items-center gap-2 text-sm">
+                            <Badge
+                              variant={pack.status?.circuitBreakerOpen ? "destructive" : "secondary"}
+                              className="text-xs"
+                            >
+                              {pack.status?.circuitBreakerOpen ? "OPEN" : "Closed"}
+                            </Badge>
+                            <span className="text-xs text-muted-foreground">
+                              {pack.status?.consecutiveDelegateFailures ?? 0} / {pack.spec.sharedMemory.membrane.circuitBreaker.consecutiveFailures ?? 3} failures
+                            </span>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Trust groups */}
+                      {pack.spec.sharedMemory.membrane.trustGroups &&
+                        pack.spec.sharedMemory.membrane.trustGroups.length > 0 && (
+                        <div className="space-y-0.5">
+                          <p className="text-xs text-muted-foreground">Trust Groups</p>
+                          {pack.spec.sharedMemory.membrane.trustGroups.map((g) => (
+                            <div key={g.name} className="flex items-center gap-1.5 text-sm">
+                              <span className="text-xs font-medium">{g.name}:</span>
+                              {g.agentConfigs.map((ac) => (
+                                <Badge key={ac} variant="outline" className="font-mono text-xs">
+                                  {ac}
+                                </Badge>
+                              ))}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Permeability rules */}
+                      {pack.spec.sharedMemory.membrane.permeability &&
+                        pack.spec.sharedMemory.membrane.permeability.length > 0 && (
+                        <div className="space-y-0.5">
+                          <p className="text-xs text-muted-foreground">Permeability</p>
+                          {pack.spec.sharedMemory.membrane.permeability.map((rule) => (
+                            <div key={rule.agentConfig} className="flex items-center gap-1.5 text-sm">
+                              <Badge variant="outline" className="font-mono text-xs">
+                                {rule.agentConfig}
+                              </Badge>
+                              <Badge
+                                variant={
+                                  rule.defaultVisibility === "public"
+                                    ? "default"
+                                    : rule.defaultVisibility === "trusted"
+                                      ? "secondary"
+                                      : "outline"
+                                }
+                                className="text-xs"
+                              >
+                                {rule.defaultVisibility || "public"}
+                              </Badge>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               ) : (
                 <p className="text-sm text-muted-foreground">

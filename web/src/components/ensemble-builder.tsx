@@ -1110,6 +1110,14 @@ function BuilderCanvas({
           settings={settings}
           onChange={setSettings}
           onClose={() => setShowSettings(false)}
+          personaNames={personas.map((p) => p.name)}
+          relationships={edges
+            .filter((e) => e.data?.type)
+            .map((e) => ({
+              source: e.source,
+              target: e.target,
+              type: e.data!.type as "delegation" | "sequential" | "supervision",
+            }))}
         />
       )}
 
