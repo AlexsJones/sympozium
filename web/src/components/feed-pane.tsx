@@ -395,7 +395,11 @@ function FeedBubble({ item }: { item: FeedItem }) {
             {item.text}
           </span>
         ) : isUser ? (
-          <p className="whitespace-pre-wrap break-all">{item.text}</p>
+          <div className="prose prose-sm prose-invert prose-feed break-word max-w-none">
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>
+              {item.text}
+            </ReactMarkdown>
+          </div>
         ) : (
           <div className="prose prose-sm prose-invert prose-feed break-word max-w-none">
             <ReactMarkdown remarkPlugins={[remarkGfm]}>
