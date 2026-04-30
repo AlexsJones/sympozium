@@ -74,6 +74,10 @@ helm upgrade --install sympozium sympozium/sympozium \
   --skip-crds --set createNamespace=false
 ```
 
+> `--skip-crds` on the second command assumes you installed `sympozium-crds`
+> first. If you skip the CRDs chart, drop `--skip-crds` so the bundled CRDs
+> in the `sympozium` chart are applied instead.
+
 See [`charts/sympozium/values.yaml`](charts/sympozium/values.yaml) for configuration options, or the [Helm Chart docs](https://deploy.sympozium.ai/docs/reference/helm/) for the full guide.
 
 ---

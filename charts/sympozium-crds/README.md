@@ -13,4 +13,4 @@ helm upgrade --install sympozium ./charts/sympozium \
   --skip-crds --set createNamespace=false
 ```
 
-Uninstalling this chart deletes the CRDs and cascade-deletes every Sympozium custom resource in the cluster. Uninstall `sympozium` first.
+> **Uninstall ordering.** Uninstalling this chart deletes the CRDs and cascade-deletes every Sympozium custom resource (Agents, AgentRuns, SkillPacks, Ensembles, SympoziumPolicies, …) across **all** namespaces. Always `helm uninstall sympozium` first, then `helm uninstall sympozium-crds`.

@@ -25,7 +25,9 @@ helm upgrade --install sympozium ./charts/sympozium \
 
 Both charts are kept in lockstep. Always upgrade `sympozium-crds` before `sympozium`.
 
-> **Uninstall ordering.** Removing `sympozium-crds` cascade-deletes every Agent, AgentRun, SkillPack, etc. in the cluster. Uninstall `sympozium` first.
+`--skip-crds` on the second command assumes the `sympozium-crds` release is installed. If you choose to use only the `sympozium` chart, omit `--skip-crds` so the CRDs bundled in that chart are applied — but you will then forfeit the ability to roll CRD schema changes forward via `helm upgrade`.
+
+> **Uninstall ordering.** Removing `sympozium-crds` cascade-deletes every Agent, AgentRun, SkillPack, Ensemble, SympoziumPolicy, etc. across **all** namespaces. Always `helm uninstall sympozium` first, then `helm uninstall sympozium-crds`.
 
 > The legacy single-chart install (`helm install sympozium ./charts/sympozium`) still works for fresh clusters that will never need a CRD upgrade.
 
