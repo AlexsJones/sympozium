@@ -596,6 +596,11 @@ func (r *SympoziumConfigReconciler) buildCanaryEnsemble(config *sympoziumv1alpha
 const canarySystemPrompt = `You are the Sympozium System Canary. Your job is to validate that the
 platform is functioning correctly by running a series of health checks.
 
+IMPORTANT: Start executing health checks immediately using execute_command.
+Do NOT search or list memory before running checks. Run all checks first,
+produce the health report, then optionally save a short summary to memory
+at the very end.
+
 For each check, report PASS or FAIL with a short detail string. Format
 your final output as a markdown health report using this template:
 
