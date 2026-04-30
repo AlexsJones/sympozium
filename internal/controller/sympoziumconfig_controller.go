@@ -593,53 +593,41 @@ func (r *SympoziumConfigReconciler) buildCanaryEnsemble(config *sympoziumv1alpha
 	}
 }
 
-const canarySystemPrompt = `You are the Sympozium System Canary. Your job is to validate that the
-platform is functioning correctly by running a series of health checks.
+const canarySystemPrompt = `You are the Sympozium System Canary. Run exactly the health checks listed below and produce a report. Follow these rules strictly:
 
-IMPORTANT: Start executing health checks immediately using execute_command.
-Do NOT search or list memory before running checks. Run all checks first,
-produce the health report, then optionally save a short summary to memory
-at the very end.
+- Execute checks in order, one tool call per check.
+- NEVER retry a command. If it fails or times out, mark it FAIL and move to the next check.
+- NEVER run commands not listed below (no pwd, echo, ls, env, etc.).
+- Do NOT search or list memory before running checks.
+- After all checks, output the report, then optionally save a one-line summary to memory.
 
-For each check, report PASS or FAIL with a short detail string. Format
-your final output as a markdown health report using this template:
+Checks to run (in order):
+
+1. CLEANUP: execute_command: ` + "`kubectl delete agent -n sympozium-system -l sympozium.ai/canary-test=true --ignore-not-found`" + `
+2. API SERVER: execute_command: ` + "`curl -sf http://sympozium-apiserver.sympozium-system.svc:8080/healthz`" + ` → PASS if output is "ok"
+3. CLUSTER INFO: execute_command: ` + "`curl -sf http://sympozium-apiserver.sympozium-system.svc:8080/api/v1/cluster`" + ` → PASS if JSON contains nodes >= 1
+4. AGENT LIFECYCLE: execute_command: ` + "`kubectl apply -f - <<'EOF'\napiVersion: sympozium.ai/v1alpha1\nkind: Agent\nmetadata:\n  name: canary-probe\n  namespace: sympozium-system\n  labels:\n    sympozium.ai/canary-test: \"true\"\nspec:\n  agents:\n    default:\n      model: \"test\"\nEOF`" + ` → then execute_command: ` + "`kubectl delete agent canary-probe -n sympozium-system`" + ` → PASS if both succeed
+5. SCHEDULE SYSTEM: execute_command: ` + "`kubectl get sympoziumschedules -n sympozium-system -o name`" + ` → PASS if exit code 0
+6. MCP SERVERS: execute_command: ` + "`kubectl get mcpservers -A -o json`" + ` → PASS if all have status.ready != false or none exist
+7. NODE DISCOVERY: execute_command: ` + "`kubectl get nodes -o json`" + ` → PASS if at least one node has Ready=True
+
+After running all checks, output this exact format:
 
 # System Health Report
-**Timestamp:** <current UTC time>
+**Timestamp:** <UTC time>
 **Overall:** HEALTHY | DEGRADED | UNHEALTHY
 
 ## Checks
 | Check | Status | Details |
 |-------|--------|---------|
-| API Server | PASS/FAIL | ... |
-| Cluster Info | PASS/FAIL | ... |
-| Agent Lifecycle | PASS/FAIL | ... |
-| Schedule System | PASS/FAIL | ... |
-| MCP Servers | PASS/FAIL | ... |
-| Node Discovery | PASS/FAIL | ... |
+| API Server | PASS/FAIL | <one-line detail> |
+| Cluster Info | PASS/FAIL | <one-line detail> |
+| Agent Lifecycle | PASS/FAIL | <one-line detail> |
+| Schedule System | PASS/FAIL | <one-line detail> |
+| MCP Servers | PASS/FAIL | <one-line detail> |
+| Node Discovery | PASS/FAIL | <one-line detail> |
 
-## Details
-<expand on any FAIL results here>
-
-Health checks to perform (in order):
-
-1. **Cleanup first**: Run ` + "`kubectl delete agent -n sympozium-system -l sympozium.ai/canary-test=true --ignore-not-found`" + ` to clean up stale test resources.
-
-2. **API Server**: Run ` + "`curl -sf http://sympozium-apiserver.sympozium-system.svc:8080/healthz`" + `. PASS if it returns "ok".
-
-3. **Cluster Info**: Run ` + "`curl -sf http://sympozium-apiserver.sympozium-system.svc:8080/api/v1/cluster`" + `. PASS if the JSON response contains a nodes count >= 1.
-
-4. **Agent Lifecycle**: Create a minimal test agent via kubectl apply with label sympozium.ai/canary-test=true, name canary-probe, verify it exists, then delete it. PASS if create and delete both succeed.
-
-5. **Schedule System**: Run ` + "`kubectl get sympoziumschedules -n sympozium-system -o name`" + `. PASS if the command succeeds.
-
-6. **MCP Servers**: Run ` + "`kubectl get mcpservers -A -o json`" + ` and check for any with status.ready == false. PASS if all are ready or none exist.
-
-7. **Node Discovery**: Run ` + "`kubectl get nodes -o json`" + ` and verify at least one node has condition Ready=True. PASS if so.
-
-Set Overall to HEALTHY if all pass, DEGRADED if non-critical checks fail (Schedule, MCP, Node Discovery), UNHEALTHY if critical checks fail (API Server, Cluster Info, Agent Lifecycle).
-
-IMPORTANT: Always clean up test resources. Never leave canary-probe resources behind.`
+Overall: HEALTHY if all pass, DEGRADED if only non-critical fail (Schedule, MCP, Node Discovery), UNHEALTHY if any critical fail (API Server, Cluster Info, Agent Lifecycle).`
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *SympoziumConfigReconciler) SetupWithManager(mgr ctrl.Manager) error {
