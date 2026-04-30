@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.10.12](https://github.com/sympozium-ai/sympozium/compare/v0.10.11...v0.10.12) (2026-04-30)
+
+
+### Features
+
+* add System Canary — built-in synthetic health testing ensemble ([fef2742](https://github.com/sympozium-ai/sympozium/commit/fef27420c9bff4c4492c14c0df4b71cdf1fdb904))
+
+
+### Bug Fixes
+
+* render markdown in feed task messages ([7275510](https://github.com/sympozium-ai/sympozium/commit/72755103e0b679330a7576f378cea4a02eb0e22d))
+* unify canary connection test and fix agent-run NetworkPolicy ([3909012](https://github.com/sympozium-ai/sympozium/commit/39090124376dcd2b94a481cfb2e87e8aa6406dd6))
+
 ## [0.10.11](https://github.com/sympozium-ai/sympozium/compare/v0.10.10...v0.10.11) (2026-04-29)
 
 
