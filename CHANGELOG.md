@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.10.14](https://github.com/sympozium-ai/sympozium/compare/v0.10.13...v0.10.14) (2026-05-01)
+
+
+### Features
+
+* add structured health check matrix to canary UI ([73d54c1](https://github.com/sympozium-ai/sympozium/commit/73d54c1ab07d5d74af2a9ecd0ef68ad28af5df74))
+* replace LLM-based canary with deterministic health checks ([2e25fd1](https://github.com/sympozium-ai/sympozium/commit/2e25fd1a98481362ba382d4240cecf2069533d9b))
+
+
+### Bug Fixes
+
+* canary NetworkPolicy, RBAC, provider resolution, and node-probe routing ([5be1db0](https://github.com/sympozium-ai/sympozium/commit/5be1db0031bcdf19be09521036740ca5861414de))
+* hide system canary from ensembles list ([f7c051c](https://github.com/sympozium-ai/sympozium/commit/f7c051cf84e607a18bd350b54ec922c34467f824))
+* tighten canary system prompt to prevent command retries ([c226a02](https://github.com/sympozium-ai/sympozium/commit/c226a02fa28a71bd81780c005a07eed2fca3c7c3))
+
 ## [0.10.13](https://github.com/sympozium-ai/sympozium/compare/v0.10.12...v0.10.13) (2026-04-30)
 
 

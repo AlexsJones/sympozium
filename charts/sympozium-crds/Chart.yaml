@@ -1,9 +1,11 @@
 apiVersion: v2
 name: sympozium-crds
-description: Sympozium CustomResourceDefinitions — installed and upgraded as ordinary Helm resources so they participate in `helm upgrade`.
+description: >-
+  Sympozium CustomResourceDefinitions — installed and upgraded as ordinary Helm
+  resources so they participate in `helm upgrade`.
 type: application
-version: 0.10.8
-appVersion: 0.10.8
+version: 0.10.14
+appVersion: 0.10.14
 home: https://github.com/sympozium-ai/sympozium
 sources:
   - https://github.com/sympozium-ai/sympozium
