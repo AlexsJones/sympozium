@@ -139,6 +139,19 @@ func (p *openaiProvider) Chat(ctx context.Context) (ChatResult, error) {
 		}
 	}
 
+	// Small/local models (qwen3, etc.) sometimes emit tool calls as
+	// <tool_call> XML inside the regular content field with finish_reason="stop"
+	// instead of using the structured tool_calls API. Try to recover them
+	// so the agentic loop can continue rather than ending prematurely.
+	if text != "" && choice.FinishReason != "tool_calls" && len(choice.Message.ToolCalls) == 0 {
+		if recovered := parseQwenToolCalls(text); len(recovered) > 0 {
+			extraToolCalls = recovered
+			text = sanitizeReasoningArtifacts(text)
+			log.Printf("openai.Chat: recovered %d tool call(s) from content text (finish_reason=%s)",
+				len(recovered), choice.FinishReason)
+		}
+	}
+
 	result := ChatResult{
 		Text:         text,
 		InputTokens:  int(completion.Usage.PromptTokens),
