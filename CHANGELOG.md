@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.10.17](https://github.com/sympozium-ai/sympozium/compare/v0.10.16...v0.10.17) (2026-05-03)
+
+
+### Features
+
+* **cypress:** parameterize test model via CYPRESS_TEST_MODEL env var ([b4f68ea](https://github.com/sympozium-ai/sympozium/commit/b4f68ea8dd5ba0ad6eef18476d5630d4d0c486dc))
+* **cypress:** parameterize test model via CYPRESS_TEST_MODEL env var ([af6310b](https://github.com/sympozium-ai/sympozium/commit/af6310b0f3ebfe6d361e75b6242bed6572546e53))
+
+
+### Bug Fixes
+
+* restrict WhatsApp channel to self-chat messages only ([3425eb8](https://github.com/sympozium-ai/sympozium/commit/3425eb80290f95ce229e91850caef1f1db4e8e6b))
+* restrict WhatsApp channel to self-chat messages only ([6af4dca](https://github.com/sympozium-ai/sympozium/commit/6af4dcaad6f9e2372e917c4f95e3dd952c706c3e)), closes [#138](https://github.com/sympozium-ai/sympozium/issues/138)
+* **web-proxy:** close subscribe-before-find race and skip terminal runs ([71786b7](https://github.com/sympozium-ai/sympozium/commit/71786b736dc6ec8ef93c0ecaf31d04f5a2771a45))
+* **web-proxy:** close subscribe-before-find race and skip terminal runs ([77c1267](https://github.com/sympozium-ai/sympozium/commit/77c12673dad1d21d063418a527c88ae1c85018b7))
+* **web-proxy:** dedupe retried chat requests ([bec7af2](https://github.com/sympozium-ai/sympozium/commit/bec7af286bd761016659c838af7d1819172bc48b))
+* **web-proxy:** dedupe retried chat requests ([d4233f3](https://github.com/sympozium-ai/sympozium/commit/d4233f3f4fc7c8153e1b7f2d9737d36c7340b988))
+* **web:** prevent gateway toggle from disconnecting UI ([9ededbd](https://github.com/sympozium-ai/sympozium/commit/9ededbd830eb7c409e4340a40b222fd1c7651de4))
+* **web:** prevent gateway toggle from disconnecting UI ([3ef4772](https://github.com/sympozium-ai/sympozium/commit/3ef4772500b15a0149be8c1242ff48154ceb8ee0))
+
 ## [0.10.16](https://github.com/sympozium-ai/sympozium/compare/v0.10.15...v0.10.16) (2026-05-01)
 
 
