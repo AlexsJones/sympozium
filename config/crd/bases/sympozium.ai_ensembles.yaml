@@ -2555,10 +2555,12 @@ spec:
                         "delegation": source requests target and awaits the result.
                         "sequential": source must complete before target starts.
                         "supervision": source monitors target (observability only, no runtime effect).
+                        "stimulus": source is a StimulusSpec node that injects a prompt into target on readiness.
                       enum:
                       - delegation
                       - sequential
                       - supervision
+                      - stimulus
                       type: string
                   required:
                   - source
@@ -2766,6 +2768,23 @@ spec:
                   The outer key is the SkillPack name (e.g. "github-gitops"), and the inner map
                   holds key/value pairs injected as SKILL_<KEY> environment variables.
                   Set during onboarding when the user configures skill-specific settings.
+                type: object
+              stimulus:
+                description: |-
+                  Stimulus configures an auto-injected prompt that fires when all agent
+                  pods in the ensemble reach Serving phase. The stimulus is delivered to
+                  the target node specified via a "stimulus" relationship edge.
+                properties:
+                  name:
+                    description: Name identifies this stimulus node in relationships.
+                    type: string
+                  prompt:
+                    description: Prompt is the task text injected into the target
+                      agent's AgentRun.
+                    type: string
+                required:
+                - name
+                - prompt
                 type: object
               taskOverride:
                 description: |-
@@ -4768,6 +4787,11 @@ spec:
           status:
             description: EnsembleStatus defines the observed state of Ensemble.
             properties:
+              allAgentsServing:
+                description: |-
+                  AllAgentsServing indicates all agent pods have reached Serving phase.
+                  Used for stimulus edge detection.
+                type: boolean
               circuitBreakerOpen:
                 description: |-
                   CircuitBreakerOpen indicates the delegation circuit breaker has tripped
@@ -4872,6 +4896,17 @@ spec:
                 description: SharedMemoryReady indicates the shared memory infrastructure
                   is provisioned.
                 type: boolean
+              stimulusDelivered:
+                description: |-
+                  StimulusDelivered indicates the stimulus prompt has been injected in
+                  the current readiness cycle. Reset when the ensemble is disabled.
+                type: boolean
+              stimulusGeneration:
+                description: |-
+                  StimulusGeneration increments each time a stimulus is delivered
+                  (automatic or manual).
+                format: int64
+                type: integer
               tokenBudgetUsed:
                 description: |-
                   TokenBudgetUsed tracks aggregate token consumption across all runs

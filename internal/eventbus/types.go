@@ -57,6 +57,7 @@ const (
 	TopicToolApprovalResponse = "tool.approval.response"
 	TopicAgentDelegateResult  = "agent.delegate.result" // per-run: agent.delegate.result.{parentRunID}
 	TopicScheduleUpsert       = "schedule.upsert"
+	TopicStimulusDelivered    = "ensemble.stimulus.delivered"
 )
 
 // NewEvent creates a new event with the current timestamp.

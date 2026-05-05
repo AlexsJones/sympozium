@@ -369,6 +369,18 @@ export function usePatchEnsembleRelationships() {
   });
 }
 
+export function useTriggerStimulus() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (name: string) => api.ensembles.triggerStimulus(name),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["ensembles"] });
+      toast.success("Stimulus triggered");
+    },
+    onError: toastError,
+  });
+}
+
 export function useInstallDefaultEnsembles() {
   const qc = useQueryClient();
   return useMutation({

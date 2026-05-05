@@ -22,6 +22,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	sympoziumv1alpha1 "github.com/sympozium-ai/sympozium/api/v1alpha1"
+	"github.com/sympozium-ai/sympozium/internal/eventbus"
 )
 
 const ensembleFinalizer = "sympozium.ai/ensemble-finalizer"
@@ -31,8 +32,9 @@ const ensembleFinalizer = "sympozium.ai/ensemble-finalizer"
 // ConfigMaps for each persona defined in the pack.
 type EnsembleReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
-	Log    logr.Logger
+	Scheme   *runtime.Scheme
+	Log      logr.Logger
+	EventBus eventbus.EventBus
 }
 
 // defaultObservabilitySpec builds an ObservabilitySpec from env vars injected
@@ -193,6 +195,8 @@ func (r *EnsembleReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		pack.Status.InstalledCount = 0
 		pack.Status.InstalledAgentConfigs = nil
 		pack.Status.SharedMemoryReady = false
+		pack.Status.AllAgentsServing = false
+		pack.Status.StimulusDelivered = false
 		if err := r.Status().Update(ctx, pack); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -214,8 +218,8 @@ func (r *EnsembleReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		modelEndpoint = model.Status.Endpoint
 	}
 
-	// Validate the relationship graph for cycles before proceeding.
-	if err := validateRelationshipGraph(pack.Spec.AgentConfigs, pack.Spec.Relationships); err != nil {
+	// Validate the relationship graph for cycles and stimulus constraints before proceeding.
+	if err := validateRelationshipGraph(pack.Spec.AgentConfigs, pack.Spec.Relationships, pack.Spec.Stimulus); err != nil {
 		log.Error(err, "Invalid relationship graph")
 		pack.Status.Phase = "Error"
 		if statusErr := r.Status().Update(ctx, pack); statusErr != nil {
@@ -259,6 +263,14 @@ func (r *EnsembleReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	} else {
 		pack.Status.Phase = "Ready"
 	}
+
+	// Check if all agents are serving for stimulus delivery.
+	if pack.Spec.Stimulus != nil && installErr == nil {
+		if err := r.reconcileStimulus(ctx, log, pack); err != nil {
+			log.Error(err, "Failed to reconcile stimulus")
+		}
+	}
+
 	if err := r.Status().Update(ctx, pack); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -1120,12 +1132,125 @@ func (r *EnsembleReconciler) cleanupSharedMemory(ctx context.Context, log logr.L
 	return nil
 }
 
+// reconcileStimulus checks whether all agents in the ensemble have reached
+// Serving phase. On the transition edge (not-all-serving → all-serving), it
+// creates an AgentRun targeting the stimulus relationship target.
+func (r *EnsembleReconciler) reconcileStimulus(ctx context.Context, log logr.Logger, pack *sympoziumv1alpha1.Ensemble) error {
+	// Count agents that are serving.
+	servingCount := 0
+	for _, ip := range pack.Status.InstalledAgentConfigs {
+		var agent sympoziumv1alpha1.Agent
+		if err := r.Get(ctx, types.NamespacedName{Name: ip.InstanceName, Namespace: pack.Namespace}, &agent); err != nil {
+			continue
+		}
+		if agent.Status.Phase == "Serving" {
+			servingCount++
+		}
+	}
+
+	allServing := servingCount > 0 && servingCount == len(pack.Status.InstalledAgentConfigs)
+	prevAllServing := pack.Status.AllAgentsServing
+	pack.Status.AllAgentsServing = allServing
+
+	// Detect the edge: not-all-serving → all-serving.
+	if !prevAllServing && allServing && !pack.Status.StimulusDelivered {
+		if err := r.deliverStimulus(ctx, log, pack, "readiness"); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// deliverStimulus creates an AgentRun for the stimulus target agent.
+func (r *EnsembleReconciler) deliverStimulus(ctx context.Context, log logr.Logger, pack *sympoziumv1alpha1.Ensemble, triggerSource string) error {
+	// Resolve stimulus relationship target.
+	var targetPersona string
+	for _, rel := range pack.Spec.Relationships {
+		if rel.Type == "stimulus" {
+			targetPersona = rel.Target
+			break
+		}
+	}
+	if targetPersona == "" {
+		return fmt.Errorf("stimulus spec configured but no stimulus relationship found")
+	}
+
+	targetAgentName := pack.Name + "-" + targetPersona
+
+	// Look up the target agent instance.
+	var targetInst sympoziumv1alpha1.Agent
+	if err := r.Get(ctx, types.NamespacedName{Name: targetAgentName, Namespace: pack.Namespace}, &targetInst); err != nil {
+		return fmt.Errorf("stimulus target agent %q not found: %w", targetAgentName, err)
+	}
+
+	// Create the AgentRun.
+	runName := fmt.Sprintf("%s-stimulus-%d", targetAgentName, time.Now().UnixMilli()%100000)
+	agentRun := &sympoziumv1alpha1.AgentRun{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      runName,
+			Namespace: pack.Namespace,
+			Labels: map[string]string{
+				"sympozium.ai/instance":       targetAgentName,
+				"sympozium.ai/ensemble":       pack.Name,
+				"sympozium.ai/stimulus":       "true",
+				"sympozium.ai/trigger-source": triggerSource,
+			},
+		},
+		Spec: sympoziumv1alpha1.AgentRunSpec{
+			AgentRef: targetAgentName,
+			Task:     pack.Spec.Stimulus.Prompt,
+			AgentID:  fmt.Sprintf("stimulus-%s", pack.Spec.Stimulus.Name),
+			Model: sympoziumv1alpha1.ModelSpec{
+				Provider:      resolveProvider(&targetInst),
+				Model:         targetInst.Spec.Agents.Default.Model,
+				BaseURL:       targetInst.Spec.Agents.Default.BaseURL,
+				AuthSecretRef: resolveAuthSecret(&targetInst),
+			},
+			Skills:           targetInst.Spec.Skills,
+			ImagePullSecrets: targetInst.Spec.ImagePullSecrets,
+			Volumes:          targetInst.Spec.Volumes,
+			VolumeMounts:     targetInst.Spec.VolumeMounts,
+		},
+	}
+
+	if err := r.Create(ctx, agentRun); err != nil {
+		return fmt.Errorf("failed to create stimulus AgentRun: %w", err)
+	}
+
+	log.Info("Delivered stimulus",
+		"run", runName,
+		"target", targetPersona,
+		"trigger", triggerSource,
+		"generation", pack.Status.StimulusGeneration+1)
+
+	pack.Status.StimulusDelivered = true
+	pack.Status.StimulusGeneration++
+
+	// Publish event to the bus if available.
+	if r.EventBus != nil {
+		r.EventBus.Publish(ctx, eventbus.TopicStimulusDelivered, &eventbus.Event{
+			Topic:     eventbus.TopicStimulusDelivered,
+			Timestamp: time.Now(),
+			Metadata: map[string]string{
+				"ensemble":      pack.Name,
+				"target":        targetPersona,
+				"triggerSource": triggerSource,
+				"runName":       runName,
+			},
+		})
+	}
+
+	return nil
+}
+
 // validateRelationshipGraph checks that all relationship source/target names
 // reference existing personas and that the sequential edges form a DAG (no
 // cycles). Delegation and supervision edges are not checked for cycles because
 // delegation is on-demand and supervision has no runtime effect.
-func validateRelationshipGraph(personas []sympoziumv1alpha1.AgentConfigSpec, relationships []sympoziumv1alpha1.AgentConfigRelationship) error {
-	if len(relationships) == 0 {
+// It also validates stimulus relationship constraints.
+func validateRelationshipGraph(personas []sympoziumv1alpha1.AgentConfigSpec, relationships []sympoziumv1alpha1.AgentConfigRelationship, stimulus *sympoziumv1alpha1.StimulusSpec) error {
+	if len(relationships) == 0 && stimulus == nil {
 		return nil
 	}
 
@@ -1135,9 +1260,45 @@ func validateRelationshipGraph(personas []sympoziumv1alpha1.AgentConfigSpec, rel
 		names[p.Name] = true
 	}
 
+	// Validate stimulus relationships.
+	stimulusRelCount := 0
+	for _, rel := range relationships {
+		if rel.Type == "stimulus" {
+			stimulusRelCount++
+		}
+	}
+	if stimulusRelCount > 1 {
+		return fmt.Errorf("at most one stimulus relationship is allowed per ensemble, found %d", stimulusRelCount)
+	}
+	if stimulusRelCount == 1 && stimulus == nil {
+		return fmt.Errorf("stimulus relationship defined but no stimulus spec configured")
+	}
+	if stimulus != nil && stimulusRelCount == 0 {
+		return fmt.Errorf("stimulus spec configured but no stimulus relationship defined")
+	}
+	if stimulus != nil {
+		if strings.TrimSpace(stimulus.Prompt) == "" {
+			return fmt.Errorf("stimulus prompt must not be empty")
+		}
+		for _, rel := range relationships {
+			if rel.Type == "stimulus" {
+				if rel.Source != stimulus.Name {
+					return fmt.Errorf("stimulus relationship source %q must match stimulus name %q", rel.Source, stimulus.Name)
+				}
+				if !names[rel.Target] {
+					return fmt.Errorf("stimulus relationship references unknown persona %q (target)", rel.Target)
+				}
+				break
+			}
+		}
+	}
+
 	// Validate references and build the adjacency list for sequential edges.
 	adj := make(map[string][]string)
 	for _, rel := range relationships {
+		if rel.Type == "stimulus" {
+			continue // stimulus source is not a persona, skip persona name check
+		}
 		if !names[rel.Source] {
 			return fmt.Errorf("relationship references unknown persona %q (source)", rel.Source)
 		}

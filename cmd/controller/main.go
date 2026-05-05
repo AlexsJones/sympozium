@@ -160,11 +160,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := (&controller.EnsembleReconciler{
+	ensembleReconciler := &controller.EnsembleReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
 		Log:    ctrl.Log.WithName("controllers").WithName("Ensemble"),
-	}).SetupWithManager(mgr); err != nil {
+	}
+	if err := ensembleReconciler.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Ensemble")
 		os.Exit(1)
 	}
@@ -208,6 +209,7 @@ func main() {
 			setupLog.Error(err, "unable to connect to NATS — channel routing disabled")
 		} else {
 			agentRunReconciler.EventBus = eb
+			ensembleReconciler.EventBus = eb
 
 			router := &controller.ChannelRouter{
 				Client:   mgr.GetClient(),

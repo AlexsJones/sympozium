@@ -537,10 +537,15 @@ export interface SharedMemorySpec {
 export interface AgentConfigRelationship {
   source: string;
   target: string;
-  type: "delegation" | "sequential" | "supervision";
+  type: "delegation" | "sequential" | "supervision" | "stimulus";
   condition?: string;
   timeout?: string;
   resultFormat?: string;
+}
+
+export interface StimulusSpec {
+  name: string;
+  prompt: string;
 }
 
 export interface EnsembleSpec {
@@ -555,6 +560,7 @@ export interface EnsembleSpec {
   policyRef?: string;
   skillParams?: Record<string, Record<string, string>>;
   taskOverride?: string;
+  stimulus?: StimulusSpec;
   relationships?: AgentConfigRelationship[];
   workflowType?: "autonomous" | "pipeline" | "delegation";
   sharedMemory?: SharedMemorySpec;
@@ -573,6 +579,9 @@ export interface EnsembleStatus {
   tokenBudgetUsed?: number;
   circuitBreakerOpen?: boolean;
   consecutiveDelegateFailures?: number;
+  allAgentsServing?: boolean;
+  stimulusDelivered?: boolean;
+  stimulusGeneration?: number;
   conditions?: Condition[];
 }
 
@@ -1064,6 +1073,11 @@ export const api = {
         {
           method: "POST",
         },
+      ),
+    triggerStimulus: (name: string) =>
+      apiFetch<{ runName: string; target: string; stimulus: string }>(
+        `/api/v1/ensembles/${name}/stimulus/trigger`,
+        { method: "POST" },
       ),
   },
 

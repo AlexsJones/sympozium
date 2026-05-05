@@ -23,10 +23,11 @@ import {
   useEnsembles,
   useModels,
   usePatchEnsembleRelationships,
+  useTriggerStimulus,
 } from "@/hooks/use-api";
 import { useWebSocket } from "@/hooks/use-websocket";
 import { useQueryClient } from "@tanstack/react-query";
-import { Save, Plus, Trash2, Database, Cpu } from "lucide-react";
+import { Save, Plus, Trash2, Database, Cpu, Zap } from "lucide-react";
 import type {
   Ensemble,
   Model,
@@ -34,6 +35,7 @@ import type {
   AgentConfigRelationship,
   AgentRun,
   SecretRef,
+  StimulusSpec,
 } from "@/lib/api";
 import { PROVIDERS } from "@/components/onboarding-wizard";
 import {
@@ -377,23 +379,83 @@ function ProviderNode({ data }: NodeProps<Node<ProviderNodeData>>) {
   );
 }
 
-const nodeTypes = { persona: AgentConfigNode, model: ModelNode, provider: ProviderNode };
+// ── Stimulus node ──────────────────────────────────────────────────────────
+
+export interface StimulusNodeData {
+  stimulus: StimulusSpec;
+  delivered?: boolean;
+  generation?: number;
+  label: string;
+  [key: string]: unknown;
+}
+
+function StimulusNode({ data }: NodeProps<Node<StimulusNodeData>>) {
+  const { stimulus, delivered, generation } = data;
+
+  return (
+    <div
+      className={`rounded-lg border border-amber-500/40 bg-card shadow-md px-3 py-2.5 min-w-[160px] max-w-[200px] transition-shadow duration-300 ${
+        delivered
+          ? "ring-1 ring-amber-500/40"
+          : ""
+      }`}
+      data-testid="stimulus-node"
+    >
+      <div className="flex items-center gap-1.5 mb-1">
+        <Zap className="h-3.5 w-3.5 text-amber-400" />
+        <span className="font-semibold text-sm text-amber-300">Stimulus</span>
+      </div>
+
+      <p className="text-[10px] text-muted-foreground font-mono mb-1 truncate">
+        {stimulus.name}
+      </p>
+
+      <p
+        className="text-[9px] text-muted-foreground/80 truncate italic"
+        title={stimulus.prompt}
+      >
+        {stimulus.prompt.length > 60
+          ? stimulus.prompt.slice(0, 60) + "…"
+          : stimulus.prompt}
+      </p>
+
+      {generation != null && generation > 0 && (
+        <Badge
+          variant="outline"
+          className="text-[9px] px-1 py-0 mt-1 gap-0.5 w-fit"
+        >
+          fired ×{generation}
+        </Badge>
+      )}
+
+      <Handle
+        type="source"
+        position={Position.Bottom}
+        className="!bg-amber-400 !w-2 !h-2"
+      />
+    </div>
+  );
+}
+
+const nodeTypes = { persona: AgentConfigNode, model: ModelNode, provider: ProviderNode, stimulus: StimulusNode };
 
 // ── Shared edge styling ─────────────────────────────────────────────────────
 
-const EDGE_TYPES = ["delegation", "sequential", "supervision"] as const;
+const EDGE_TYPES = ["delegation", "sequential", "supervision", "stimulus"] as const;
 
 const edgeStyles: Record<string, { stroke: string; strokeDasharray?: string }> =
   {
     delegation: { stroke: "#3b82f6" },
     sequential: { stroke: "#f59e0b", strokeDasharray: "6 3" },
     supervision: { stroke: "#6b7280", strokeDasharray: "2 4" },
+    stimulus: { stroke: "#f59e0b" },
   };
 
 const edgeLabels: Record<string, string> = {
   delegation: "delegates to",
   sequential: "then",
   supervision: "supervises",
+  stimulus: "triggers",
 };
 
 function styledEdge(
@@ -456,6 +518,7 @@ function layoutNodes(
   const outDegree = new Map<string, number>();
   const inDegree = new Map<string, number>();
   for (const r of relationships) {
+    if (r.type === "stimulus") continue; // stimulus source is not a persona
     outDegree.set(r.source, (outDegree.get(r.source) || 0) + 1);
     inDegree.set(r.target, (inDegree.get(r.target) || 0) + 1);
   }
@@ -483,14 +546,22 @@ function layoutNodes(
 }
 
 function buildEdges(relationships: AgentConfigRelationship[], prefix = ""): Edge[] {
-  return relationships.map((rel, i) =>
-    styledEdge(
+  return relationships.map((rel, i) => {
+    const stimId = `__stimulus__${rel.source}`;
+    const sourceId =
+      rel.type === "stimulus"
+        ? (prefix ? `${prefix}/${stimId}` : stimId)
+        : prefix
+          ? `${prefix}/${rel.source}`
+          : rel.source;
+    const targetId = prefix ? `${prefix}/${rel.target}` : rel.target;
+    return styledEdge(
       `e-${prefix}-${i}-${rel.source}-${rel.target}`,
-      prefix ? `${prefix}/${rel.source}` : rel.source,
-      prefix ? `${prefix}/${rel.target}` : rel.target,
+      sourceId,
+      targetId,
       rel.type,
-    ),
-  );
+    );
+  });
 }
 
 // ── Provider node derivation ─────────────────────────────────────────────
@@ -782,6 +853,7 @@ export function EnsembleCanvas({ pack }: EnsembleCanvasProps) {
   const { data: runs } = useRuns();
   const { data: models } = useModels();
   const patchMutation = usePatchEnsembleRelationships();
+  const triggerStimulusMutation = useTriggerStimulus();
   const relationships = pack.spec.relationships || [];
   const personas = pack.spec.agentConfigs || [];
 
@@ -809,7 +881,7 @@ export function EnsembleCanvas({ pack }: EnsembleCanvasProps) {
     const hasProviders = provResult.nodes.length > 0;
     const yOffset = hasProviders ? 140 : 0;
 
-    const nodes: Node<AgentConfigNodeData | ModelNodeData | ProviderNodeData>[] =
+    const nodes: Node<AgentConfigNodeData | ModelNodeData | ProviderNodeData | StimulusNodeData>[] =
       layoutNodes(personas, relationships, 0, yOffset);
     const sharedMemEnabled = pack.spec.sharedMemory?.enabled ?? false;
     const membrane = pack.spec.sharedMemory?.membrane;
@@ -832,6 +904,22 @@ export function EnsembleCanvas({ pack }: EnsembleCanvasProps) {
 
     // Add provider/model nodes above personas.
     nodes.push(...provResult.nodes);
+
+    // Add stimulus node if configured.
+    if (pack.spec.stimulus) {
+      const stimulusYOffset = hasProviders ? -60 : -80;
+      nodes.push({
+        id: `__stimulus__${pack.spec.stimulus.name}`,
+        type: "stimulus",
+        position: { x: 0, y: stimulusYOffset },
+        data: {
+          stimulus: pack.spec.stimulus,
+          delivered: pack.status?.stimulusDelivered,
+          generation: pack.status?.stimulusGeneration,
+          label: pack.spec.stimulus.name,
+        },
+      });
+    }
 
     return nodes;
   }, [
@@ -993,6 +1081,23 @@ export function EnsembleCanvas({ pack }: EnsembleCanvasProps) {
               Delete Edge
             </Button>
           )}
+          {pack.spec.stimulus && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() =>
+                triggerStimulusMutation.mutate(pack.metadata.name)
+              }
+              disabled={triggerStimulusMutation.isPending}
+              type="button"
+              data-testid="stimulus-retrigger-btn"
+            >
+              <Zap className="h-3.5 w-3.5 mr-1" />
+              {triggerStimulusMutation.isPending
+                ? "Triggering..."
+                : "Re-trigger Stimulus"}
+            </Button>
+          )}
           <Button
             size="sm"
             onClick={handleSave}
@@ -1084,7 +1189,7 @@ export function GlobalEnsembleCanvas() {
 
   // Build layout (positions + edges) only when packs change — NOT on run updates.
   const { layoutedNodes, allEdges } = useMemo(() => {
-    const nodes: Node<AgentConfigNodeData | ModelNodeData | ProviderNodeData>[] = [];
+    const nodes: Node<AgentConfigNodeData | ModelNodeData | ProviderNodeData | StimulusNodeData>[] = [];
     const edges: Edge[] = [];
 
     const packGapX = 50;
@@ -1130,6 +1235,23 @@ export function GlobalEnsembleCanvas() {
       edges.push(...provResult.edges);
       edges.push(...buildEdges(relationships, prefix));
 
+      // Add stimulus node if configured.
+      if (pack.spec.stimulus) {
+        const stimId = `__stimulus__${pack.spec.stimulus.name}`;
+        const prefixedStimId = prefix ? `${prefix}/${stimId}` : stimId;
+        nodes.push({
+          id: prefixedStimId,
+          type: "stimulus",
+          position: { x: currentX, y: hasProviders ? -60 : -80 },
+          data: {
+            stimulus: pack.spec.stimulus,
+            delivered: pack.status?.stimulusDelivered,
+            generation: pack.status?.stimulusGeneration,
+            label: pack.spec.stimulus.name,
+          },
+        });
+      }
+
       const cols = Math.max(2, Math.ceil(Math.sqrt(personas.length)));
       currentX += cols * 260 + packGapX;
     }
@@ -1150,8 +1272,8 @@ export function GlobalEnsembleCanvas() {
       );
     }
     return layoutedNodes.map((node) => {
-      // Model nodes don't have run status — pass through unchanged.
-      if (node.type === "model") return node;
+      // Non-persona nodes don't have run status — pass through unchanged.
+      if (node.type !== "persona") return node;
       const packName = (node.data as AgentConfigNodeData).packName || "";
       const personaName = node.id.split("/")[1] || node.id;
       const status = runPhaseMaps.get(packName)?.get(personaName);
@@ -1232,7 +1354,7 @@ export function DashboardEnsembleCanvas() {
 
   // Build layout only when packs change — NOT on run updates.
   const { layoutedNodes: dashLayoutNodes, allEdges } = useMemo(() => {
-    const nodes: Node<AgentConfigNodeData | ModelNodeData | ProviderNodeData>[] = [];
+    const nodes: Node<AgentConfigNodeData | ModelNodeData | ProviderNodeData | StimulusNodeData>[] = [];
     const edges: Edge[] = [];
     let currentX = 0;
 
@@ -1274,6 +1396,24 @@ export function DashboardEnsembleCanvas() {
       nodes.push(...packNodes);
       edges.push(...provResult.edges);
       edges.push(...buildEdges(relationships, prefix));
+
+      // Add stimulus node if configured.
+      if (pack.spec.stimulus) {
+        const stimId = `__stimulus__${pack.spec.stimulus.name}`;
+        const prefixedStimId = prefix ? `${prefix}/${stimId}` : stimId;
+        nodes.push({
+          id: prefixedStimId,
+          type: "stimulus",
+          position: { x: currentX, y: hasProviders ? -60 : -80 },
+          data: {
+            stimulus: pack.spec.stimulus,
+            delivered: pack.status?.stimulusDelivered,
+            generation: pack.status?.stimulusGeneration,
+            label: pack.spec.stimulus.name,
+          },
+        });
+      }
+
       const cols = Math.max(2, Math.ceil(Math.sqrt(personas.length)));
       currentX += cols * 260 + 50;
     }
@@ -1294,7 +1434,7 @@ export function DashboardEnsembleCanvas() {
       );
     }
     return dashLayoutNodes.map((node) => {
-      if (node.type === "model" || node.type === "provider") return node;
+      if (node.type !== "persona") return node;
       const packName = (node.data as AgentConfigNodeData).packName || "";
       const personaName = node.id.split("/")[1] || node.id;
       const status = runPhaseMaps.get(packName)?.get(personaName);

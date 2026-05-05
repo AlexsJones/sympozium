@@ -161,6 +161,23 @@ export function FeedPane({
 
     // Add filtered stream events
     for (const ev of instanceEvents) {
+      // Handle stimulus delivery events.
+      if (ev.topic === "ensemble.stimulus.delivered") {
+        const meta = ev.data as Record<string, unknown> | undefined;
+        const source =
+          meta && typeof meta === "object"
+            ? (meta as Record<string, string>).triggerSource || "auto"
+            : "auto";
+        items.push({
+          id: `stimulus-${ev.timestamp}`,
+          type: "system",
+          text: `Stimulus prompt sent (${source})`,
+          timestamp: ev.timestamp,
+          meta: "stimulus",
+        });
+        continue;
+      }
+
       const data = ev.data as Record<string, unknown> | undefined;
       const chunk =
         typeof data === "object" && data

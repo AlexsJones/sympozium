@@ -53,6 +53,7 @@ import { Button } from "@/components/ui/button";
 import type {
   Ensemble,
   Model,
+  AgentRun,
   ProviderNode,
   NodeProvider,
   GatewayConfigResponse,
@@ -64,6 +65,7 @@ import { Link } from "react-router-dom";
 function K8sNodeNode({ data }: NodeProps<Node<K8sNodeData>>) {
   return (
     <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 px-4 py-3 min-w-[240px] shadow-md cursor-pointer hover:border-emerald-500/50 hover:bg-emerald-500/10 transition-colors">
+      <Handle type="target" position={Position.Top} className="!bg-emerald-500 !w-2 !h-2" />
       <Handle type="source" position={Position.Bottom} className="!bg-emerald-500 !w-2 !h-2" />
       <div className="flex items-center gap-2 mb-2">
         <Server className="h-4 w-4 text-emerald-400" />
@@ -79,7 +81,7 @@ function K8sNodeNode({ data }: NodeProps<Node<K8sNodeData>>) {
               className="text-[9px] border-emerald-500/30 text-emerald-400"
             >
               {p.name}
-              {p.models.length > 0 && ` (${p.models.length})`}
+              {p.models?.length > 0 && ` (${p.models.length})`}
             </Badge>
           ))}
         </div>
@@ -180,6 +182,49 @@ function PersonaNode({ data }: NodeProps<Node<PersonaNodeData>>) {
           <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${dotClass}`} />
         )}
       </div>
+    </div>
+  );
+}
+
+interface AgentRunNodeData {
+  runName: string;
+  task: string;
+  phase: string;
+  label: string;
+  [key: string]: unknown;
+}
+
+const runPhaseBorder: Record<string, string> = {
+  Running: "border-blue-500/50 bg-blue-500/5",
+  Pending: "border-yellow-500/50 bg-yellow-500/5",
+  Serving: "border-violet-500/50 bg-violet-500/5",
+  PostRunning: "border-amber-500/50 bg-amber-500/5",
+  AwaitingDelegate: "border-amber-500/50 bg-amber-500/5",
+};
+
+const runPhaseDot: Record<string, string> = {
+  Running: "bg-blue-500 animate-pulse",
+  Pending: "bg-yellow-500 animate-pulse",
+  Serving: "bg-violet-500 animate-pulse",
+  PostRunning: "bg-amber-500 animate-pulse",
+  AwaitingDelegate: "bg-amber-500 animate-pulse",
+};
+
+function AgentRunNode({ data }: NodeProps<Node<AgentRunNodeData>>) {
+  const border = runPhaseBorder[data.phase] || "border-border/50 bg-card";
+  const dot = runPhaseDot[data.phase] || "bg-muted-foreground/40";
+
+  return (
+    <div className={`rounded border ${border} px-2 py-1 shadow-sm min-w-[100px] max-w-[140px]`}>
+      <Handle type="target" position={Position.Top} className="!bg-cyan-400 !w-1.5 !h-1.5" />
+      <div className="flex items-center gap-1">
+        <Activity className="h-2.5 w-2.5 text-cyan-400 shrink-0" />
+        <span className="text-[9px] font-mono truncate">{data.runName.slice(-8)}</span>
+        <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${dot}`} />
+      </div>
+      <p className="text-[8px] text-muted-foreground/70 truncate mt-0.5" title={data.task}>
+        {data.task.length > 30 ? data.task.slice(0, 30) + "…" : data.task}
+      </p>
     </div>
   );
 }
@@ -299,6 +344,7 @@ const nodeTypes = {
   ensemble: EnsembleNode,
   ensembleGroup: EnsembleGroupNode,
   persona: PersonaNode,
+  agentRun: AgentRunNode,
   cloudProvider: CloudProviderNode,
   gateway: GatewayNode,
 };
@@ -364,6 +410,7 @@ function buildTopology(
   runningByEnsemble: Record<string, number>,
   webEndpointAgents: string[],
   runPhases: RunPhaseMap,
+  activeRuns: AgentRun[],
 ): { nodes: Node[]; edges: Edge[] } {
   const nodes: Node[] = [];
   const edges: Edge[] = [];
@@ -718,6 +765,47 @@ function buildTopology(
           animated: rel.type === "delegation",
         });
       }
+
+      // Active run nodes below personas.
+      const runsByAgent = new Map<string, AgentRun[]>();
+      for (const run of activeRuns) {
+        const ref = run.spec?.agentRef;
+        if (ref && ref.startsWith(ens.metadata.name + "-")) {
+          const list = runsByAgent.get(ref) || [];
+          list.push(run);
+          runsByAgent.set(ref, list);
+        }
+      }
+      const personaRows = Math.ceil(configs.length / PERSONA_MAX_COLS);
+      const runBaseY = 60 + personaRows * PERSONA_ROW_H + 10;
+      let runIdx = 0;
+      for (const [agentRef, agentRuns] of runsByAgent) {
+        for (const run of agentRuns) {
+          const runId = `run-${run.metadata.name}`;
+          const personaName = agentRef.slice(ens.metadata.name.length + 1);
+          const parentPersonaId = `${ensId}-p-${personaName}`;
+          nodes.push({
+            id: runId,
+            type: "agentRun",
+            position: { x: 10 + (runIdx % 3) * 150, y: runBaseY + Math.floor(runIdx / 3) * 40 },
+            parentId: groupId,
+            data: {
+              runName: run.metadata.name,
+              task: run.spec.task || "",
+              phase: run.status?.phase || "Pending",
+              label: run.metadata.name,
+            },
+          });
+          edges.push({
+            id: `e-run-${run.metadata.name}`,
+            source: parentPersonaId,
+            target: runId,
+            style: { stroke: "#22d3ee40", strokeWidth: 1 },
+            animated: true,
+          });
+          runIdx++;
+        }
+      }
     }
   });
   if (activeEnsembles.length > 0) {
@@ -759,6 +847,42 @@ function buildTopology(
       addEnsembleEdges(ensId, ens, false);
     });
     layerY += Math.ceil(inactiveEnsembles.length / INACTIVE_MAX_COLS) * 60 + 30;
+  }
+
+  // ── Ad-hoc active runs (not belonging to any ensemble) ──────────────────
+  const ensembleAgentRefs = new Set<string>();
+  for (const ens of ensembles) {
+    for (const cfg of ens.spec.agentConfigs || []) {
+      ensembleAgentRefs.add(`${ens.metadata.name}-${cfg.name}`);
+    }
+  }
+  const adhocRuns = activeRuns.filter(
+    (r) => r.spec?.agentRef && !ensembleAgentRefs.has(r.spec.agentRef),
+  );
+  if (adhocRuns.length > 0) {
+    const ADHOC_COL_GAP = 160;
+    const adhocCols = Math.min(adhocRuns.length, 4);
+    const adhocTotalW = (adhocCols - 1) * ADHOC_COL_GAP;
+    adhocRuns.forEach((run, i) => {
+      const col = i % adhocCols;
+      const row = Math.floor(i / adhocCols);
+      const runId = `run-${run.metadata.name}`;
+      nodes.push({
+        id: runId,
+        type: "agentRun",
+        position: {
+          x: -adhocTotalW / 2 + col * ADHOC_COL_GAP,
+          y: layerY + row * 45,
+        },
+        data: {
+          runName: run.metadata.name,
+          task: run.spec.task || "",
+          phase: run.status?.phase || "Pending",
+          label: run.metadata.name,
+        },
+      });
+    });
+    layerY += Math.ceil(adhocRuns.length / adhocCols) * 45 + 30;
   }
 
   // ── Gateway edges (gateway is at top, ensembles/nodes are below) ─────────
@@ -894,6 +1018,29 @@ function TopologyCanvas() {
     return map;
   }, [runs]);
 
+  // Active (non-terminal) runs — these appear as nodes on the canvas and
+  // disappear once the run completes.
+  const activeRuns = useMemo(
+    () =>
+      (runs || []).filter((r) => {
+        const phase = r.status?.phase;
+        return (
+          phase === "Running" ||
+          phase === "Pending" ||
+          phase === "Serving" ||
+          phase === "PostRunning" ||
+          phase === "AwaitingDelegate"
+        );
+      }),
+    [runs],
+  );
+
+  // Fingerprint of active run names — drives layout recomputation when runs start/finish.
+  const activeRunFingerprint = useMemo(
+    () => activeRuns.map((r) => r.metadata.name).sort().join(","),
+    [activeRuns],
+  );
+
   // Recompute layout only when the set of entities changes (add/remove),
   // not on every status update or data refetch.
   useEffect(() => {
@@ -902,7 +1049,7 @@ function TopologyCanvas() {
       models || [],
       ensembles || [],
       !!gateway,
-    );
+    ) + "|runs:" + activeRunFingerprint;
 
     const entitiesChanged = fp !== prevFingerprintRef.current;
     prevFingerprintRef.current = fp;
@@ -916,6 +1063,7 @@ function TopologyCanvas() {
         runningByEnsemble,
         webEndpointAgents,
         runPhases,
+        activeRuns,
       );
 
       // Apply saved positions if available.
@@ -948,6 +1096,7 @@ function TopologyCanvas() {
           runningByEnsemble,
           webEndpointAgents,
           runPhases,
+          activeRuns,
         );
         const freshMap = new Map(freshNodes.map((n) => [n.id, n]));
         return prev.map((n) => {
@@ -967,11 +1116,12 @@ function TopologyCanvas() {
           runningByEnsemble,
           webEndpointAgents,
           runPhases,
+          activeRuns,
         );
         return freshEdges;
       });
     }
-  }, [providerNodes, models, ensembles, gateway, runningByEnsemble, webEndpointAgents, runPhases, setNodes, setEdges, fitView]);
+  }, [providerNodes, models, ensembles, gateway, runningByEnsemble, webEndpointAgents, runPhases, activeRuns, activeRunFingerprint, setNodes, setEdges, fitView]);
 
   // Save positions to localStorage after any node drag ends.
   const handleNodesChange = useCallback(
@@ -1155,7 +1305,7 @@ function TopologyCanvas() {
                           {p.proxyPort ? ` / proxy ${p.proxyPort}` : ""}
                         </span>
                       </div>
-                      {p.models.length > 0 && (
+                      {p.models?.length > 0 && (
                         <div className="flex flex-wrap gap-1">
                           {p.models.map((m) => (
                             <Badge

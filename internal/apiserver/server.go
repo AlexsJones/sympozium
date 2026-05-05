@@ -139,6 +139,7 @@ func (s *Server) buildMux(frontendFS fs.FS, token string) http.Handler {
 	mux.HandleFunc("DELETE /api/v1/ensembles/{name}", s.deleteEnsemble)
 	mux.HandleFunc("POST /api/v1/ensembles/{name}/clone", s.cloneEnsemble)
 	mux.HandleFunc("GET /api/v1/ensembles/{name}/shared-memory", s.listEnsembleSharedMemory)
+	mux.HandleFunc("POST /api/v1/ensembles/{name}/stimulus/trigger", s.triggerStimulus)
 
 	// MCP Server endpoints
 	mux.HandleFunc("GET /api/v1/mcpservers", s.listMCPServers)
@@ -1973,6 +1974,125 @@ func (s *Server) listEnsembleSharedMemory(w http.ResponseWriter, r *http.Request
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(resp.StatusCode)
 	io.Copy(w, resp.Body)
+}
+
+func (s *Server) triggerStimulus(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	ns := r.URL.Query().Get("namespace")
+	if ns == "" {
+		ns = "default"
+	}
+
+	// Fetch the ensemble.
+	var ensemble sympoziumv1alpha1.Ensemble
+	if err := s.client.Get(r.Context(), types.NamespacedName{Name: name, Namespace: ns}, &ensemble); err != nil {
+		if k8serrors.IsNotFound(err) {
+			http.Error(w, "ensemble not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Validate stimulus is configured.
+	if ensemble.Spec.Stimulus == nil {
+		http.Error(w, "no stimulus configured for this ensemble", http.StatusBadRequest)
+		return
+	}
+
+	// Resolve stimulus target from relationships.
+	var targetPersona string
+	for _, rel := range ensemble.Spec.Relationships {
+		if rel.Type == "stimulus" {
+			targetPersona = rel.Target
+			break
+		}
+	}
+	if targetPersona == "" {
+		http.Error(w, "no stimulus relationship found", http.StatusBadRequest)
+		return
+	}
+
+	targetAgentName := name + "-" + targetPersona
+
+	// Look up the target agent.
+	var targetInst sympoziumv1alpha1.Agent
+	if err := s.client.Get(r.Context(), types.NamespacedName{Name: targetAgentName, Namespace: ns}, &targetInst); err != nil {
+		http.Error(w, fmt.Sprintf("stimulus target agent %q not found", targetAgentName), http.StatusNotFound)
+		return
+	}
+
+	// Resolve auth and model from the target instance.
+	authSecret := ""
+	provider := "openai"
+	if len(targetInst.Spec.AuthRefs) > 0 {
+		authSecret = targetInst.Spec.AuthRefs[0].Secret
+		if targetInst.Spec.AuthRefs[0].Provider != "" {
+			provider = targetInst.Spec.AuthRefs[0].Provider
+		}
+	}
+
+	// Create the AgentRun.
+	runName := fmt.Sprintf("%s-stimulus-%d", targetAgentName, time.Now().UnixMilli()%100000)
+	agentRun := &sympoziumv1alpha1.AgentRun{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      runName,
+			Namespace: ns,
+			Labels: map[string]string{
+				"sympozium.ai/instance":       targetAgentName,
+				"sympozium.ai/ensemble":       name,
+				"sympozium.ai/stimulus":       "true",
+				"sympozium.ai/trigger-source": "manual",
+			},
+		},
+		Spec: sympoziumv1alpha1.AgentRunSpec{
+			AgentRef: targetAgentName,
+			Task:     ensemble.Spec.Stimulus.Prompt,
+			AgentID:  fmt.Sprintf("stimulus-%s", ensemble.Spec.Stimulus.Name),
+			Model: sympoziumv1alpha1.ModelSpec{
+				Provider:      provider,
+				Model:         targetInst.Spec.Agents.Default.Model,
+				BaseURL:       targetInst.Spec.Agents.Default.BaseURL,
+				AuthSecretRef: authSecret,
+			},
+			Skills:           targetInst.Spec.Skills,
+			ImagePullSecrets: targetInst.Spec.ImagePullSecrets,
+			Volumes:          targetInst.Spec.Volumes,
+			VolumeMounts:     targetInst.Spec.VolumeMounts,
+		},
+	}
+
+	if err := s.client.Create(r.Context(), agentRun); err != nil {
+		http.Error(w, "failed to create stimulus run: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Update ensemble status.
+	ensemble.Status.StimulusGeneration++
+	if err := s.client.Status().Update(r.Context(), &ensemble); err != nil {
+		s.log.Error(err, "Failed to update ensemble stimulus generation", "ensemble", name)
+	}
+
+	// Publish event.
+	if s.eventBus != nil {
+		s.eventBus.Publish(r.Context(), eventbus.TopicStimulusDelivered, &eventbus.Event{
+			Topic:     eventbus.TopicStimulusDelivered,
+			Timestamp: time.Now(),
+			Metadata: map[string]string{
+				"ensemble":      name,
+				"target":        targetPersona,
+				"triggerSource": "manual",
+				"runName":       runName,
+			},
+		})
+	}
+
+	w.WriteHeader(http.StatusCreated)
+	writeJSON(w, map[string]string{
+		"runName":  runName,
+		"target":   targetPersona,
+		"stimulus": ensemble.Spec.Stimulus.Name,
+	})
 }
 
 // --- WebSocket streaming ---

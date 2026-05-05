@@ -44,6 +44,7 @@ Ensembles support **typed relationships** between personas, enabling coordinatio
 | `delegation` | Source requests target, awaits result, then continues | Researcher delegates to Writer |
 | `sequential` | Source must complete before target starts | Writer finishes → Reviewer begins |
 | `supervision` | Source monitors target (observability only) | Lead supervises Writer and Reviewer |
+| `stimulus` | Injects a pre-configured prompt into target when all agents are serving | Kickoff triggers Lead Researcher |
 
 ### Workflow Types
 
@@ -82,6 +83,58 @@ spec:
       type: sequential
       timeout: "5m"
 ```
+
+## Stimulus
+
+A **Stimulus** is a lightweight configuration node that automatically injects a prompt into a target agent when all ensemble pods reach the Serving phase. It enables workflows to self-start without requiring a manual message in the feed or an external trigger.
+
+### How It Works
+
+1. Define a `stimulus` spec on the ensemble with a `name` and `prompt`.
+2. Draw a `stimulus` relationship from the stimulus name to the target agent config.
+3. When all agents in the ensemble are running (all pods reach Serving phase), the controller creates an AgentRun on the target with the configured prompt.
+4. If the ensemble is disabled and re-enabled, the stimulus fires again on the next full-readiness transition.
+5. The stimulus can also be manually re-triggered via the UI button or API.
+
+### Example
+
+```yaml
+apiVersion: sympozium.ai/v1alpha1
+kind: Ensemble
+metadata:
+  name: research-pipeline
+spec:
+  workflowType: pipeline
+  stimulus:
+    name: kickoff
+    prompt: "Begin the daily research workflow. Summarize developments in AI safety from the last 24 hours."
+  agentConfigs:
+    - name: lead
+      systemPrompt: "You are a lead researcher coordinating the team."
+    - name: analyst
+      systemPrompt: "You are a data analyst."
+  relationships:
+    - source: kickoff
+      target: lead
+      type: stimulus
+    - source: lead
+      target: analyst
+      type: sequential
+```
+
+### Manual Re-trigger
+
+The stimulus can be re-triggered at any time via the API:
+
+```bash
+curl -X POST /api/v1/ensembles/research-pipeline/stimulus/trigger
+```
+
+Or via the "Re-trigger Stimulus" button on the workflow canvas in the UI.
+
+### Feed Integration
+
+When a stimulus is delivered (automatically or manually), a system message appears in the feed: **"Stimulus prompt sent (readiness)"** or **"Stimulus prompt sent (manual)"**.
 
 ## Shared Workflow Memory
 

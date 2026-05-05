@@ -107,6 +107,12 @@ type EnsembleSpec struct {
 	// +optional
 	SharedMemory *SharedMemorySpec `json:"sharedMemory,omitempty"`
 
+	// Stimulus configures an auto-injected prompt that fires when all agent
+	// pods in the ensemble reach Serving phase. The stimulus is delivered to
+	// the target node specified via a "stimulus" relationship edge.
+	// +optional
+	Stimulus *StimulusSpec `json:"stimulus,omitempty"`
+
 	// Relationships defines directed edges between personas in the ensemble,
 	// enabling coordination patterns like delegation, sequential pipelines,
 	// and supervision.
@@ -287,6 +293,16 @@ type SharedMemoryAccessRule struct {
 	Access string `json:"access"`
 }
 
+// StimulusSpec defines a prompt that is automatically injected into the target
+// agent when all ensemble pods reach Serving phase.
+type StimulusSpec struct {
+	// Name identifies this stimulus node in relationships.
+	Name string `json:"name"`
+
+	// Prompt is the task text injected into the target agent's AgentRun.
+	Prompt string `json:"prompt"`
+}
+
 // AgentConfigRelationship defines a directed edge between two agent configurations in an ensemble.
 type AgentConfigRelationship struct {
 	// Source is the agent config name that initiates the interaction.
@@ -299,7 +315,8 @@ type AgentConfigRelationship struct {
 	// "delegation": source requests target and awaits the result.
 	// "sequential": source must complete before target starts.
 	// "supervision": source monitors target (observability only, no runtime effect).
-	// +kubebuilder:validation:Enum=delegation;sequential;supervision
+	// "stimulus": source is a StimulusSpec node that injects a prompt into target on readiness.
+	// +kubebuilder:validation:Enum=delegation;sequential;supervision;stimulus
 	Type string `json:"type"`
 
 	// Condition is an optional description of when this edge activates
@@ -366,6 +383,21 @@ type EnsembleStatus struct {
 	// delegate failures for circuit breaker evaluation.
 	// +optional
 	ConsecutiveDelegateFailures int `json:"consecutiveDelegateFailures,omitempty"`
+
+	// AllAgentsServing indicates all agent pods have reached Serving phase.
+	// Used for stimulus edge detection.
+	// +optional
+	AllAgentsServing bool `json:"allAgentsServing,omitempty"`
+
+	// StimulusDelivered indicates the stimulus prompt has been injected in
+	// the current readiness cycle. Reset when the ensemble is disabled.
+	// +optional
+	StimulusDelivered bool `json:"stimulusDelivered,omitempty"`
+
+	// StimulusGeneration increments each time a stimulus is delivered
+	// (automatic or manual).
+	// +optional
+	StimulusGeneration int64 `json:"stimulusGeneration,omitempty"`
 
 	// Conditions represent the latest available observations.
 	// +optional

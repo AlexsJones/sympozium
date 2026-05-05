@@ -109,7 +109,7 @@ func TestValidateRelationshipGraph_NoCycle(t *testing.T) {
 		{Source: "a", Target: "b", Type: "sequential"},
 		{Source: "b", Target: "c", Type: "sequential"},
 	}
-	if err := validateRelationshipGraph(personas, rels); err != nil {
+	if err := validateRelationshipGraph(personas, rels, nil); err != nil {
 		t.Errorf("expected no error for linear pipeline, got: %v", err)
 	}
 }
@@ -121,7 +121,7 @@ func TestValidateRelationshipGraph_Cycle(t *testing.T) {
 		{Source: "b", Target: "c", Type: "sequential"},
 		{Source: "c", Target: "a", Type: "sequential"},
 	}
-	err := validateRelationshipGraph(personas, rels)
+	err := validateRelationshipGraph(personas, rels, nil)
 	if err == nil {
 		t.Fatal("expected cycle error")
 	}
@@ -135,7 +135,7 @@ func TestValidateRelationshipGraph_SelfLoop(t *testing.T) {
 	rels := []sympoziumv1alpha1.AgentConfigRelationship{
 		{Source: "a", Target: "a", Type: "sequential"},
 	}
-	err := validateRelationshipGraph(personas, rels)
+	err := validateRelationshipGraph(personas, rels, nil)
 	if err == nil {
 		t.Fatal("expected cycle error for self-loop")
 	}
@@ -146,7 +146,7 @@ func TestValidateRelationshipGraph_DanglingRef(t *testing.T) {
 	rels := []sympoziumv1alpha1.AgentConfigRelationship{
 		{Source: "a", Target: "nonexistent", Type: "sequential"},
 	}
-	err := validateRelationshipGraph(personas, rels)
+	err := validateRelationshipGraph(personas, rels, nil)
 	if err == nil {
 		t.Fatal("expected error for dangling reference")
 	}
@@ -161,14 +161,136 @@ func TestValidateRelationshipGraph_IgnoresNonSequential(t *testing.T) {
 		{Source: "a", Target: "b", Type: "delegation"},
 		{Source: "b", Target: "a", Type: "supervision"},
 	}
-	if err := validateRelationshipGraph(personas, rels); err != nil {
+	if err := validateRelationshipGraph(personas, rels, nil); err != nil {
 		t.Errorf("non-sequential edges should not trigger cycle detection, got: %v", err)
 	}
 }
 
 func TestValidateRelationshipGraph_EmptyRelationships(t *testing.T) {
 	personas := testPersonas("a", "b")
-	if err := validateRelationshipGraph(personas, nil); err != nil {
+	if err := validateRelationshipGraph(personas, nil, nil); err != nil {
 		t.Errorf("empty relationships should pass, got: %v", err)
+	}
+}
+
+// ── Stimulus validation tests ────────────────────────────────────────────────
+
+func TestValidateRelationshipGraph_StimulusValid(t *testing.T) {
+	personas := testPersonas("lead", "worker")
+	stimulus := &sympoziumv1alpha1.StimulusSpec{
+		Name:   "kickoff",
+		Prompt: "Begin the research workflow",
+	}
+	rels := []sympoziumv1alpha1.AgentConfigRelationship{
+		{Source: "kickoff", Target: "lead", Type: "stimulus"},
+		{Source: "lead", Target: "worker", Type: "sequential"},
+	}
+	if err := validateRelationshipGraph(personas, rels, stimulus); err != nil {
+		t.Errorf("expected valid stimulus config, got: %v", err)
+	}
+}
+
+func TestValidateRelationshipGraph_StimulusNoSpec(t *testing.T) {
+	personas := testPersonas("lead")
+	rels := []sympoziumv1alpha1.AgentConfigRelationship{
+		{Source: "kickoff", Target: "lead", Type: "stimulus"},
+	}
+	err := validateRelationshipGraph(personas, rels, nil)
+	if err == nil {
+		t.Fatal("expected error when stimulus relationship exists without spec")
+	}
+	if !strings.Contains(err.Error(), "no stimulus spec") {
+		t.Errorf("error should mention missing spec, got: %v", err)
+	}
+}
+
+func TestValidateRelationshipGraph_StimulusNoRelationship(t *testing.T) {
+	personas := testPersonas("lead")
+	stimulus := &sympoziumv1alpha1.StimulusSpec{
+		Name:   "kickoff",
+		Prompt: "Start",
+	}
+	rels := []sympoziumv1alpha1.AgentConfigRelationship{
+		{Source: "lead", Target: "lead", Type: "delegation"},
+	}
+	err := validateRelationshipGraph(personas, rels, stimulus)
+	if err == nil {
+		t.Fatal("expected error when stimulus spec exists without relationship")
+	}
+	if !strings.Contains(err.Error(), "no stimulus relationship") {
+		t.Errorf("error should mention missing relationship, got: %v", err)
+	}
+}
+
+func TestValidateRelationshipGraph_StimulusEmptyPrompt(t *testing.T) {
+	personas := testPersonas("lead")
+	stimulus := &sympoziumv1alpha1.StimulusSpec{
+		Name:   "kickoff",
+		Prompt: "   ",
+	}
+	rels := []sympoziumv1alpha1.AgentConfigRelationship{
+		{Source: "kickoff", Target: "lead", Type: "stimulus"},
+	}
+	err := validateRelationshipGraph(personas, rels, stimulus)
+	if err == nil {
+		t.Fatal("expected error for empty stimulus prompt")
+	}
+	if !strings.Contains(err.Error(), "prompt must not be empty") {
+		t.Errorf("error should mention empty prompt, got: %v", err)
+	}
+}
+
+func TestValidateRelationshipGraph_StimulusSourceMismatch(t *testing.T) {
+	personas := testPersonas("lead")
+	stimulus := &sympoziumv1alpha1.StimulusSpec{
+		Name:   "kickoff",
+		Prompt: "Begin",
+	}
+	rels := []sympoziumv1alpha1.AgentConfigRelationship{
+		{Source: "wrong-name", Target: "lead", Type: "stimulus"},
+	}
+	err := validateRelationshipGraph(personas, rels, stimulus)
+	if err == nil {
+		t.Fatal("expected error when stimulus source doesn't match name")
+	}
+	if !strings.Contains(err.Error(), "must match stimulus name") {
+		t.Errorf("error should mention name mismatch, got: %v", err)
+	}
+}
+
+func TestValidateRelationshipGraph_StimulusDanglingTarget(t *testing.T) {
+	personas := testPersonas("lead")
+	stimulus := &sympoziumv1alpha1.StimulusSpec{
+		Name:   "kickoff",
+		Prompt: "Begin",
+	}
+	rels := []sympoziumv1alpha1.AgentConfigRelationship{
+		{Source: "kickoff", Target: "nonexistent", Type: "stimulus"},
+	}
+	err := validateRelationshipGraph(personas, rels, stimulus)
+	if err == nil {
+		t.Fatal("expected error for dangling stimulus target")
+	}
+	if !strings.Contains(err.Error(), "unknown persona") {
+		t.Errorf("error should mention unknown target, got: %v", err)
+	}
+}
+
+func TestValidateRelationshipGraph_MultipleStimulusRelationships(t *testing.T) {
+	personas := testPersonas("lead", "worker")
+	stimulus := &sympoziumv1alpha1.StimulusSpec{
+		Name:   "kickoff",
+		Prompt: "Begin",
+	}
+	rels := []sympoziumv1alpha1.AgentConfigRelationship{
+		{Source: "kickoff", Target: "lead", Type: "stimulus"},
+		{Source: "kickoff", Target: "worker", Type: "stimulus"},
+	}
+	err := validateRelationshipGraph(personas, rels, stimulus)
+	if err == nil {
+		t.Fatal("expected error for multiple stimulus relationships")
+	}
+	if !strings.Contains(err.Error(), "at most one stimulus") {
+		t.Errorf("error should mention multiple stimulus, got: %v", err)
 	}
 }
