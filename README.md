@@ -5,15 +5,16 @@
 <p align="center">
 
   <em>
-  Every agent is an ephemeral Pod.<br>Every policy is a CRD. Every execution is a Job.<br>
-  Orchestrate multi-agent workflows <b>and</b> let agents diagnose, scale, and remediate your infrastructure.<br>
-  Multi-tenant. Horizontally scalable. Safe by design.</em><br><br>
+  Agents don't need better prompts. They need shared situational awareness.<br>
+  Sympozium is a <b>coordination layer</b> for multi-agent AI systems on Kubernetes &mdash;<br>
+  selective permeability, structured handoffs, and shared memory.<br>
+  Every agent is a Pod. Every policy is a CRD. Every execution is a Job.</em><br><br>
   From the creator of <a href="https://github.com/k8sgpt-ai/k8sgpt">k8sgpt</a> and <a href="https://github.com/AlexsJones/llmfit">llmfit</a>
 </p>
 
 <p align="center">
   <b>
-  This project is under active development. API's will change, things will be break. Be brave.
+  This project is under active development. API's will change, things will break. Be brave.
   <b />
 </p>
 <p align="center">
@@ -29,6 +30,18 @@
 ---
 
 > **Full documentation:** [deploy.sympozium.ai/docs](https://deploy.sympozium.ai/docs/)
+>
+> **The problem this solves:** [The Sticky-Note Problem](https://axjns.dev/blog/sticky-note-problem) &mdash; why message-passing between agents breaks down, and what to build instead.
+
+---
+
+## The Problem
+
+Most multi-agent systems communicate through messages &mdash; strings of tokens that one agent serialises and another deserialises. A detection agent spots a threat while a containment agent takes the server offline for maintenance. Neither knows what the other is doing. The breach is missed.
+
+This is the **sticky-note problem**: agents passing notes instead of sharing a situational board. Kubernetes solved this for containers with a shared control plane. Agents need the same thing &mdash; not better message-passing, but **shared coordination infrastructure**.
+
+Sympozium provides that infrastructure: a [synthetic membrane](https://axjns.dev/research/synthetic-membrane/paper) that wraps agent teams with selective permeability, shared memory, structured handoffs, and circuit breakers &mdash; all expressed as Kubernetes-native CRDs.
 
 ---
 
@@ -84,27 +97,32 @@ See [`charts/sympozium/values.yaml`](charts/sympozium/values.yaml) for configura
 
 ## Why Sympozium?
 
-Sympozium serves **two powerful use cases** on one Kubernetes-native platform:
+Containers needed orchestration. Agents need coordination.
 
-1. **Orchestrate fleets of AI agents** — customer support, code review, data pipelines, or any domain-specific workflow. Each agent gets its own pod, RBAC, and network policy with proper tenant isolation.
-2. **Administer the cluster itself agentically** — point agents inward to diagnose failures, scale deployments, triage alerts, and remediate issues, all with Kubernetes-native isolation, RBAC, and audit trails.
+Sympozium is a **Kubernetes-native coordination layer** for multi-agent AI systems. It solves the same problem Kubernetes solved for containers &mdash; but for agents that need to share context, hand off tasks, and maintain shared situational awareness.
 
-### Key Features
+### Agent Coordination
 
 | | |
 |---|---|
-| **Local Model Inference** | Declare GGUF models as CRDs — weights are downloaded, llama-server deployed, and OpenAI-compatible endpoints exposed. No API keys required |
-| **Ensembles** | Helm-like bundles for AI agent teams — activate a pack and the controller stamps out instances, schedules, and memory |
-| **Agent Workflows** | Delegation, sequential pipelines, and supervision relationships between personas — visualised on an interactive canvas |
-| **Shared Workflow Memory** | Pack-level SQLite memory pool for cross-persona knowledge sharing with per-persona access control |
+| **Synthetic Membrane** | Selective permeability for agent teams &mdash; control what agents share via trust groups, visibility tags, and field-level gating. [Read the paper](https://axjns.dev/research/synthetic-membrane/paper) |
+| **Agent Workflows** | Delegation, sequential pipelines, supervision, and stimulus triggers between personas &mdash; visualised on an interactive canvas |
+| **Shared Workflow Memory** | Pack-level SQLite memory pool for cross-persona knowledge sharing with per-persona access control and time decay |
+| **Ensembles** | Helm-like bundles for AI agent teams &mdash; activate a pack and the controller stamps out instances, schedules, and memory |
+
+### Platform Infrastructure
+
+| | |
+|---|---|
+| **Local Model Inference** | Declare GGUF models as CRDs &mdash; weights are downloaded, llama-server deployed, and OpenAI-compatible endpoints exposed. No API keys required |
 | **Skill Sidecars** | Every skill runs in its own sidecar with ephemeral least-privilege RBAC, garbage-collected on completion |
-| **Multi-Channel** | Telegram, Slack, Discord, WhatsApp — each channel is a dedicated Deployment backed by NATS JetStream |
-| **Persistent Memory** | SQLite + FTS5 on a PersistentVolume — memories survive across ephemeral pod runs |
+| **Multi-Channel** | Telegram, Slack, Discord, WhatsApp &mdash; each channel is a dedicated Deployment backed by NATS JetStream |
+| **Persistent Memory** | SQLite + FTS5 on a PersistentVolume &mdash; memories survive across ephemeral pod runs |
 | **Scheduled Heartbeats** | Cron-based recurring agent runs for health checks, alert triage, and resource right-sizing |
-| **Agent Sandbox** | Kernel-level isolation via [kubernetes-sigs/agent-sandbox](https://deploy.sympozium.ai/docs/concepts/agent-sandbox/) — gVisor or Kata with warm pools for instant starts |
+| **Agent Sandbox** | Kernel-level isolation via [kubernetes-sigs/agent-sandbox](https://deploy.sympozium.ai/docs/concepts/agent-sandbox/) &mdash; gVisor or Kata with warm pools for instant starts |
 | **MCP Servers** | External tool providers via Model Context Protocol with auto-discovery and allow/deny filtering |
 | **TUI & Web UI** | Terminal and browser dashboards with live workflow canvas, or skip the UI entirely with Helm and kubectl |
-| **Any AI Provider** | OpenAI, Anthropic, Azure, Ollama, or any compatible endpoint — no vendor lock-in |
+| **Any AI Provider** | OpenAI, Anthropic, Azure, Ollama, or any compatible endpoint &mdash; no vendor lock-in |
 
 ---
 
@@ -139,6 +157,7 @@ Sympozium serves **two powerful use cases** on one Kubernetes-native platform:
 
 ```bash
 make test        # run tests
+make test-system # run envtest system tests (no cluster needed)
 make lint        # run linter
 make manifests   # generate CRD manifests
 make run         # run controller locally (needs kubeconfig)
