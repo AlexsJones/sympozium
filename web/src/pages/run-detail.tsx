@@ -239,6 +239,7 @@ export function RunDetailPage() {
         <p className="text-muted-foreground">Runtime: {run.spec.cellnSelection.runtimeRef || "Agent default (resolved by trusted issuance)"}</p>
         <p className="text-muted-foreground">Borrowed tools: {run.spec.cellnSelection.toolRefs.map((ref) => `${ref.name}@${ref.revision}`).join(" → ") || "none"}</p>
         <p>{run.status?.conditions?.find((condition) => condition.type === "CellnIssuanceCommitted")?.message || "Waiting for a catalogue issuance observation. A submitted request does not establish readiness."}</p>
+		{run.status?.conditions?.find((condition) => condition.type === "CellnExecutionObserved")?.message && <p>{run.status.conditions.find((condition) => condition.type === "CellnExecutionObserved")?.message}</p>}
       </div>}
 
       {/* PostRunFailed condition */}

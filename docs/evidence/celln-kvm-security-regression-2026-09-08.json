@@ -1,0 +1,61 @@
+{
+  "status": "passed-with-explicit-unproven-mapping-path",
+  "cellnMergedSource": "c83be719872c97983c1cba307246503425a5a193",
+  "testedWorktreeCommit": "e683ef5eeef30d4965716e8583f81d01109a0bc1",
+  "testedTreeEqualsMergedSource": true,
+  "kernelSHA256": "c9f420c763aaf195b464715ad80da772ecf1be7061c77a430e41c58d76ebf980",
+  "builtInitramfsSHA256": "95edebb9604ef7de91200b5191836d042a8041b300047614e6d38002846f861a",
+  "builtToolfsSHA256": "2bf7291fcf0b87f85307e9c0801b92d8f55b84ace3e57ad09cf57d86b6f61bbf",
+  "warden": {
+    "command": "CARGO_TARGET_DIR=target/validation cargo test -p celln-warden --features kvm -- --nocapture",
+    "reportedTests": 38,
+    "reportedFailures": 0,
+    "initialMissingInitramfsSkips": 5,
+    "rebuiltGuestAssets": true,
+    "ring0WritablePageTableAttackPassed": true,
+    "execByHashGuestPassed": true,
+    "warmForkGuestPassed": true,
+    "unprovenPath": "guest_userspace_mapping_of_a_sealed_tool_is_the_real_thing returned early after seal_probe=mmap-failed; runner reports ok but userspace /dev/mem mapping claim is NOT proven",
+    "durationSeconds": 3.93
+  },
+  "signedClosure": {
+    "command": "CARGO_TARGET_DIR=target/validation CELLN_TEST_BINARY=<absolute built celln> cargo test -p celln-cli signed_closure_on_real_kvm -- --ignored --nocapture",
+    "initialMissingPilotSkip": true,
+    "guestPilotBuildThenRerunPassed": true,
+    "durationSeconds": 23.19,
+    "rawEvidence": "celln target/closure-proof/1190981.json",
+    "proof": {
+      "status": "passed",
+      "replacementDenied": true,
+      "executableScratchMappingDenied": true,
+      "memberMismatchDenied": true,
+      "signatureForgeryDenied": true,
+      "symlinkMemberDenied": true,
+      "daxRevocationKilledGuest": true,
+      "dependencyRevocationDenied": true,
+      "publisherWithdrawalDenied": true,
+      "liveForkSurvivedEviction": true,
+      "unusedPagesCollected": true,
+      "warmPreparations": 1,
+      "simultaneousForks": 8,
+      "additionalToolAllocations": 0,
+      "sharedToolBytes": 33554432,
+      "runs": [
+        {
+          "elapsedMicros": 138358,
+          "workspace": "none"
+        },
+        {
+          "elapsedMicros": 133115,
+          "workspace": "read-only"
+        },
+        {
+          "elapsedMicros": 139219,
+          "workspace": "read-write"
+        }
+      ]
+    }
+  },
+  "scope": "real local KVM substrate/closure regression; no model calls; not final catalogue guest-output/budget matrix or deployed Job/sandbox/Harness acceptance",
+  "sandboxSetupFinding": "isolated cluster has no RuntimeClasses or sandbox CRDs; hack/agent-sandbox-crds.yaml defines minimal test CRDs only; no gVisor/Kata runtime claim or cluster installation performed"
+}

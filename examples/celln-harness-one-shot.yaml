@@ -1,0 +1,31 @@
+# Administrator-assisted one-shot Harness-in-Celln; NOT the host-forge demo.
+# Requires an existing Agent, compatible native runtime, reviewed tool revisions,
+# independent grants/model policy, admitted composition and configured services.
+# Replace these catalogue names with the administrator's approved names. Names
+# are not content attestations: the controller freezes live identities at issuance.
+# Choose an explicit kubeconfig, context and tenant namespace when creating it.
+# See docs/guides/celln-mlp-borrowed-tools.md before submission.
+apiVersion: sympozium.ai/v1alpha1
+kind: AgentRun
+metadata:
+  generateName: borrowed-celln-
+spec:
+  agentRef: byo-agent
+  agentId: default
+  sessionKey: borrowed-celln-example
+  backend: celln
+  timeout: 180s
+  task: >-
+    Use uppercase-v1 to uppercase celln. Then use length-v1 to measure that
+    result. Return exactly: CELLN has length 5
+  model:
+    provider: deepseek
+    model: deepseek-chat
+    authSecretRef: ""
+  cellnSelection:
+    runtimeRef: approved-celln-native
+    toolRefs:
+      - name: uppercase-v1
+        revision: v1
+      - name: length-v1
+        revision: v1

@@ -49,7 +49,7 @@ describe("Harness in Celln run selection", () => {
 
   it("blocks an OCI-only runtime instead of silently changing execution", () => {
     openForm("oci");
-    cy.contains("does not declare the supported native JSON Celln contract").should("be.visible");
+    cy.get('[role="dialog"]').contains('[role="alert"]', "does not declare the supported native JSON Celln contract").scrollIntoView().should("be.visible");
     cy.contains("button", "Request catalogue run").should("be.disabled");
   });
 

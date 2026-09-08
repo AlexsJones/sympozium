@@ -1,0 +1,51 @@
+{
+  "status": "passed",
+  "includesRegisteredCleanup": true,
+  "rawEvidenceDirectory": "target/celln-live-proof/catalogue-live-2477107256",
+  "scope": "actual standalone issuer with dedicated GET-only Kubernetes service account; isolated browser/controller/KVM/DeepSeek journey and same-boot issuer process restart; not production credential renewal, systemd or host reboot",
+  "controllerImage": "localhost/sympozium-celln-controller:35b45cd",
+  "apiImage": "localhost/sympozium-celln-api:a3ba456",
+  "cellnMergedFix": "c83be719872c97983c1cba307246503425a5a193",
+  "serviceAccount": "celln-catalogue-proof-cp2jw/catalogue-issuer",
+  "bootstrapAuthenticationCopied": false,
+  "tokenRequestedLifetimeSeconds": 600,
+  "credentialStoredInEvidence": false,
+  "namedApprovalGetsPassed": 4,
+  "actualForbiddenResponses": [
+    "list Secrets",
+    "get Secret",
+    "list approval ConfigMaps",
+    "get unbound approval ConfigMap",
+    "get foreign-namespace approval ConfigMap",
+    "create approval ConfigMap (dry-run)",
+    "patch bound operator approval (dry-run)",
+    "list ClusterRoles"
+  ],
+  "runUID": "afee81b5-0c89-4918-bb6f-2a2d37a1c9e7",
+  "action": "celln-b7b39fe25f732680d98595aaffb7e1b2656650913ad7767457f56f699cd2845b",
+  "closure": "blake3:3584db9db6ccd957820d0be0895cee354a0cadbe6a6a07eda0e25e35831e8723",
+  "freshBrowserResult": "CELLN has length 5",
+  "brokerRequests": 3,
+  "toolCalls": 2,
+  "issuerRestart": {
+    "oldPID": 1152229,
+    "newPID": 1153530,
+    "authenticatedGateReopened": true,
+    "profileBytesUnchanged": true,
+    "journalBytesUnchanged": true
+  },
+  "modelPolicyWithdrawn": true,
+  "hostReissuanceRefused": true,
+  "ownerReceiptRetained": true,
+  "jobs": 0,
+  "liveCells": 0,
+  "manualFinalizerRemoval": false,
+  "proofControllerRestored": true,
+  "testDurationSeconds": 59.14,
+  "earlierSuccessfulRun": {
+    "rawEvidenceDirectory": "target/celln-live-proof/catalogue-live-3874730276",
+    "testDurationSeconds": 58.44,
+    "limit": "seven refusal checks passed but identity evidence was incorrectly placed in temporary storage; corrected and rerun above with an eighth check and issuer restart"
+  },
+  "portableChecks": "race tests for integration fixture, cellnauthority and cellnreview passed; fixture go vet and git diff --check passed; opt-in live tests are separate from portable checks"
+}

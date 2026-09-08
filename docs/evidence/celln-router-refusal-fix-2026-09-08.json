@@ -1,0 +1,41 @@
+{
+  "status": "passed",
+  "includesRegisteredCleanup": true,
+  "cellnFix": "93acb52",
+  "cellnPR": "https://github.com/sympozium-ai/celln/pull/97",
+  "cellnMergedCommit": "c83be719872c97983c1cba307246503425a5a193",
+  "cellnCI": "check passed; hardware proofs explicitly skipped on CI for missing /dev/kvm; local real KVM/model proof is separate",
+  "cellnBinarySHA256": "6f9a6a73c83b165bf931a971c7de7bca797eca4d713369ca77c84b874ebbbcd6",
+  "scope": "bounded early-refusal fix; actual router/TLS proxy regression and separate deployed API/controller/browser/KVM/DeepSeek acceptance; not systemd/fleet or separate dispatcher HTTP qualification",
+  "rawTCPRegressionFailedBeforeFix": true,
+  "rawTCPRegressionPassedAfterFix": true,
+  "routerTestsPassed": 19,
+  "cellnMakeCIPassed": true,
+  "tlsProxyRegression": {
+    "completeUnauthorizedResponses": 96,
+    "requestBodySizes": [0, 2, 32768],
+    "backendRequests": 0,
+    "retryUsed": false,
+    "kubernetesOrModelUsed": false
+  },
+  "liveJourney": {
+    "rawEvidenceDirectory": "target/celln-live-proof/catalogue-live-1389851853",
+    "controllerImage": "localhost/sympozium-celln-controller:35b45cd",
+    "apiImage": "localhost/sympozium-celln-api:a3ba456",
+    "runUID": "168c5220-5754-4db8-84db-4b9f3edb27bb",
+    "action": "celln-921a0d68af0794c307863bbf64b2c9e04f14565f1d9d6b2ca10e0114a46df1c8",
+    "freshBrowserResult": "CELLN has length 5",
+    "credentialRefusals": 9,
+    "foreignCARefusals": 2,
+    "brokerRequests": 3,
+    "toolCalls": 2,
+    "jobs": 0,
+    "liveCells": 0,
+    "modelPolicyWithdrawn": true,
+    "hostReissuanceRefused": true,
+    "ownerReceiptRetained": true,
+    "testDurationSeconds": 48.49
+  },
+  "manualFinalizerRemoval": false,
+  "proofControllerRestored": true
+}

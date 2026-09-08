@@ -4,7 +4,14 @@
 managed issuer on the Celln host. The controller can request bounded provisioning
 over TLS without mounting the host's profile store or provider credential files.
 This is a controller-only service, not a tenant API or an execution endpoint.
-It is not yet wired into the AgentRun controller, Helm or node distribution.
+It is wired into registered automatic AgentRun issuance through the
+[controller bridge](celln-catalogue-controller-bridge.md); Helm can mount the
+controller's endpoint/credential configuration. The chart does not install this
+host service or automatically distribute admitted artifacts.
+An administrator-managed [systemd unit and installation procedure](celln-issuer-systemd.md)
+are now provided separately. They preserve explicit host provisioning and require
+runtime qualification; the command's existing process proofs do not establish
+that the systemd sandbox and installed filesystem layout work on a target host.
 
 ## Operator configuration
 
@@ -103,9 +110,26 @@ real signed composition → TLS request → managed provisioning → actual seal
 member verification → identical retry → approval deletion → periodic withdrawal
 → host refusal. Kubernetes is still a fake client and no model calls are made.
 
-The [verified client](celln-issuer-client.md) now provides strict remote response
-validation and an operator `issue-remote` command. Next: wire durable controller
-issuance, selection-specific serving-node prewarm, catalogue-backed AgentRun
-dispatch and correlated results. Deployed
-Kubernetes/RBAC/network/TLS qualification, UI/YAML selection, conversational
-lifecycle and final real-model release acceptance remain open.
+The [verified client](celln-issuer-client.md) provides strict remote response
+validation and an operator `issue-remote` command. Durable registered controller
+issuance, pinned serving-process prewarm, catalogue-backed dispatch and correlated
+real-model results are implemented. UI/YAML selection and the authenticated
+API-pod/browser journey have separate evidence; see the
+[MLP installation checklist](celln-mlp-installation.md).
+
+The live catalogue test's `CELLN_LIVE_ISSUER_PROCESS=1` mode launches the actual
+`serve-issuer` executable with its strict file configuration and explicit Kind
+kubeconfig. It uses verified TLS status before submitting, then the ordinary
+model-result and periodic approval-withdrawal assertions. This mode is distinct
+from the original in-process server fixture. The test uses a private host state
+root with fresh per-run issuer/router/backend credentials and self-signed TLS
+identities pinned by the test clients. The isolated browser's UI token remains
+public test data. This is not a production credential/bootstrap recipe.
+The [standalone-issuer/browser evidence](../evidence/celln-issuer-process-browser-2026-09-08.json)
+records a passing real-model run with that command, deployed API and fresh
+browser result visit, including periodic model-policy withdrawal and host refusal.
+
+Supported host service installation, full pod-to-host network/RBAC/TLS and
+durable-storage upgrade qualification, automatic artifact distribution,
+conversations and final release acceptance remain open. Do not treat localhost
+test endpoints as addresses reachable from controller Pods.

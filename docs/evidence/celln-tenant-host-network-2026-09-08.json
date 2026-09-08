@@ -1,0 +1,65 @@
+{
+  "includesRegisteredCleanup": true,
+  "status": "passed",
+  "rawEvidenceDirectory": "target/celln-live-proof/catalogue-live-3412654850",
+  "network": {
+    "controlPlaneLabelsSpoofed": true,
+    "credentialsMounted": false,
+    "endpoints": [
+      "10.89.0.1:40893",
+      "10.89.0.1:43709"
+    ],
+    "image": "localhost/sympozium-celln-network-probe:d5afb48",
+    "namespace": "celln-tenant-network-8pnws",
+    "probes": [
+      {
+        "mode": "allow",
+        "node": "celln-deployed-worker2",
+        "pod": "before-policy",
+        "uid": "7736e182-74b9-4660-b2b1-e08ab5752695"
+      },
+      {
+        "mode": "deny",
+        "node": "celln-deployed-worker2",
+        "pod": "with-policy",
+        "uid": "e53ab095-b326-453c-b6b8-95adfc331aec"
+      },
+      {
+        "mode": "allow",
+        "node": "celln-deployed-worker2",
+        "pod": "after-policy-removal",
+        "uid": "83172225-ac0f-4acb-a649-43c19e0ebe41"
+      }
+    ],
+    "scope": "isolated tenant namespace egress exclusion for 10.89.0.1/32; before/deny/after TCP probes to actual TLS issuer/router; not host firewall, hostile cluster admin, additive allow-policy bypass or established-flow revocation",
+    "status": "network-checks-passed"
+  },
+  "liveJourney": {
+    "action": "celln-14cdb2bb1214de32c03e7346162be6f8527c1bed147b90bd886f35de9d964378",
+    "automaticRegisteredIssuance": true,
+    "brokerRequests": 3,
+    "browserSubmission": true,
+    "closure": "blake3:4e5602657617317810639a324a776e62e711948f3d61b7d0b693a3fcad09f937",
+    "controllerPodImage": "localhost/sympozium-celln-controller:35b45cd",
+    "deployedBrowserAPIImage": "localhost/sympozium-celln-api:a3ba456",
+    "hostReissuanceRefused": true,
+    "issuanceCLIUsed": false,
+    "jobs": 0,
+    "liveCells": 0,
+    "modelPolicyWithdrawn": true,
+    "namespace": "celln-catalogue-proof-rrh46",
+    "operatorAdmission": true,
+    "ownerReceiptRetained": true,
+    "runUID": "fe1f8ee5-7da4-4f5a-80ca-b29ac52d1951",
+    "scope": "actual controller/issuer/router/KVM with isolated Kind API and real DeepSeek; not production qualification; final cleanup outcome is in test-outcome.json",
+    "standaloneIssuer": true,
+    "status": "execution-checks-passed",
+    "toolCalls": 2
+  },
+  "probeImageID": "58cf86646a78ffe344b6f967a9b2505b11c3908662018133ebf1a7de2b0c94a3",
+  "cni": "Calico v3.32.2",
+  "testDurationSeconds": 74.52,
+  "proofControllerRestored": true,
+  "portableChecks": "fixture race tests and vet passed; probe has no portable unit tests; actual probe image exercised in three real Pods",
+  "limits": "temporary administrator-owned namespace egress restriction; not production network qualification, host firewall, additive-policy bypass resistance or established-flow revocation; final source additionally rejects incompatible test modes"
+}

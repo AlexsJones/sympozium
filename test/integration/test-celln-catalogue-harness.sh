@@ -5,7 +5,9 @@ repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 : "${CELLN_CONTROLLER_KUBECONFIG:?explicit isolated kubeconfig required}"
 : "${CELLN_COMPOSITION_FIXTURE:?public signed catalogue fixture required}"
 : "${CELLN_COMPOSITION_BINARY:?actual Celln binary required}"
-: "${CELLN_ISSUANCE_MATERIALIZER:?explicit public-fixture materializer required}"
+if [[ ${CELLN_LIVE_OPERATOR_ADMISSION:-} != 1 ]]; then
+  : "${CELLN_ISSUANCE_MATERIALIZER:?explicit public-fixture materializer required}"
+fi
 : "${CELLN_HARNESS_PACKAGE:?native JSON Harness package required}"
 : "${CELLN_LIVE_EVIDENCE_PARENT:?existing absolute evidence parent required}"
 [[ ${CELLN_PAUSE_TEST_CONTROLLER:-} == 1 ]] || { echo 'Explicit isolated test-controller pause required' >&2; exit 1; }

@@ -1,0 +1,22 @@
+{
+  "status": "passed",
+  "scope": "single-namespace cache on actual host controller with deployed API/browser, standalone issuer, router and KVM; not a controller-Pod RBAC isolation claim",
+  "sympoziumBase": "5f9bedd",
+  "changes": "watch-namespace implementation and proof invocation committed alongside this evidence",
+  "watchNamespace": "celln-catalogue-proof-rhknr",
+  "runUID": "7ff1ad8c-f33b-4be8-ae13-18b654c7a2be",
+  "action": "celln-ce0bc114ca534a1123db29eb37e7d9a486aac09384d231c94d543628767485fb",
+  "closure": "blake3:391504899bfcc79978686acad39ef6b395c1b0b70a5019396f6f21666e2fa509",
+  "freshBrowserResult": "CELLN has length 5",
+  "brokerRequests": 3,
+  "toolCalls": 2,
+  "liveCells": 0,
+  "jobs": 0,
+  "modelPolicyWithdrawn": true,
+  "hostReissuanceRefused": true,
+  "ownerReceiptRetained": true,
+  "invalidNamespaceStartupRefused": true,
+  "testDurationSeconds": 47.17,
+  "proofControllerRestored": true,
+  "limits": "Default remains cluster-wide; uncached/direct client authority still requires scoped RBAC. Other platform cross-namespace features are not qualified by this Celln test."
+}
