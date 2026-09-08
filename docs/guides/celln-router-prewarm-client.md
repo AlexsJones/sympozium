@@ -35,6 +35,11 @@ submission/ownership handling.
 Current HTTPS fixture tests cover exact target/credential/body handling, request
 hash and closure substitution, missing/changed execution flags, teardown,
 readiness claims, invalid epoch/node, oversized/trailing responses and redirects.
-They do not prove KVM execution or the final deployed controller user journey.
-The client needs a real dispatcher/KVM integration proof before that broader
-claim can be made.
+The opt-in real catalogue test additionally exercises this client through a TLS
+terminator, the actual Celln router and a separate actual KVM dispatcher process.
+Two prewarms bind the same request/process and fresh sealed-verification
+challenges, with zero router ownership or dispatcher execution records. These
+test-owned processes bind loopback and are stopped and joined on cleanup.
+The fixture uses fake Kubernetes metadata; there is no task submission, model
+call, deployed Kubernetes controller or final user-journey acceptance in this
+proof. See `docs/evidence/celln-router-prewarm-client-2026-09-08.json`.

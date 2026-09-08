@@ -1,0 +1,29 @@
+{
+  "date": "2026-09-08",
+  "scope": "Verified TLS prewarm client through actual router and KVM dispatcher",
+  "cellnRevision": "67b511b (source tree merged as #94)",
+  "checks": {
+    "httpsFixtures": "passed valid observation, request hash/closure/node/epoch substitution, execution and readiness flags, trailing/oversized responses, redirects and retargeting",
+    "realKVM": "passed catalogue composition -> TLS issuance -> exact dispatch hand-off -> verified TLS router client -> TLS terminator -> actual pinned router -> actual KVM dispatcher, two prewarms",
+    "sameRequestAndProcess": true,
+    "freshSealedChallenges": true,
+    "routerOwnershipRecords": 0,
+    "dispatcherExecutionRecords": 0,
+    "testOwnedProcessesJoined": true
+  },
+  "identities": {
+    "node": "catalogue-prewarm-proof",
+    "processEpoch": "blake3:9fe0cd510522aa13df08c7cf7f218b212cb41e8d94a7f967b10cbd5bee8114b6",
+    "requestHash": "blake3:bf0fed7881cb18c40ba8d659a1303612a5aecdcc20cce04e17350d1726a80374",
+    "closure": "blake3:b6196eafee4573da69f6ebd49426f83f3f7bebbe39c34a6acd17c0c08f02a6b3",
+    "grant": "blake3:65133ad1f85b1fee087c8520967615600183d8027c2bbd93c73bd10ca0149911"
+  },
+  "kubernetes": "fake metadata, no cluster mutations",
+  "taskSubmissions": 0,
+  "modelCalls": 0,
+  "limitations": [
+    "Serving-process observation, not a readiness lease or functional Harness conformance",
+    "TLS terminator and backend/router endpoints are local test fixtures, not a deployed cluster topology",
+    "Controller call site, submission, product selection and final release qualification remain open"
+  ]
+}

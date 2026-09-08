@@ -70,6 +70,7 @@ func proveCatalogueIssuance(t *testing.T, ctx context.Context, l cellnauthority.
 	if err != nil || string(dispatchBytes) != string(issued.Request) {
 		t.Fatalf("durable dispatch hand-off changed real issued request: %v", err)
 	}
+	proveRouterPrewarm(t, ctx, o, dispatchBytes)
 	grantPath := filepath.Join(o.PolicyRoot, "trusted-harness", issued.Grant[7:]+".json")
 	before, err := os.ReadFile(grantPath)
 	if err != nil {
