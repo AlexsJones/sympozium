@@ -41,10 +41,15 @@ Latest review revalidation on controller `35b45cd`: CI passed and deployed
 browser early-cancellation passed. The subsequent full success journey failed
 before dispatch because an early router auth refusal surfaced as proxy HTTP 502
 with unexpected EOF. See [Celln #96](https://github.com/sympozium-ai/celln/issues/96).
-Earlier passing credential probes remain historical evidence, not proof this
-transport path is reliable. Do not count the failed rerun as AI acceptance.
+That failed run remains failed. The bounded transport fix in
+[Celln PR #97](https://github.com/sympozium-ai/celln/pull/97) subsequently passed
+the reproducing raw TCP test, 96 complete refusals through a real TLS proxy and
+the full browser/KVM/DeepSeek journey with cleanup. See the
+[fix acceptance record](../evidence/celln-router-refusal-fix-2026-09-08.json).
+Review/CI/merge of that dependency are still required.
 
-- [ ] Fix and reproduce Celln #96, then repeat live TLS refusal and AI checks.
+- [ ] Review and merge Celln PR #97; local reproduction, corrected TLS refusal
+  tests and real AI rerun passed, but the dependency is not yet merged.
 - [ ] Qualify the persistent installed issuer/router/dispatcher layout, actual
   systemd sandbox, fixed service identity, certificates, least-privilege issuer
   kubeconfig and durable storage. The checked-in unit has syntax checks only.

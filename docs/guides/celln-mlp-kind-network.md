@@ -185,3 +185,12 @@ namespace. They are not tenant-Pod traffic or ingress/egress NetworkPolicy proof
 They are kept out of cancellation/lost-response modes so those tests retain their
 exact execution-POST accounting. Malformed authenticated payloads and the wider
 guest/tenant adversarial matrix remain distinct checks.
+
+The lower-cost `TestActualRouterRefusalsThroughTLSProxy` regression needs only an
+explicit absolute `CELLN_COMPOSITION_BINARY`. It starts the actual router and a
+real TLS reverse proxy, sends 96 rejected requests with 0/2/32768-byte bodies,
+and requires exact complete 401 JSON with no retry or backend requests. It does
+not access Kubernetes, KVM or a model. This guards the early-close regression
+in [Celln #96](https://github.com/sympozium-ai/celln/issues/96); the fixed binary
+and separate real-model rerun are recorded in the
+[fix evidence](../evidence/celln-router-refusal-fix-2026-09-08.json).
