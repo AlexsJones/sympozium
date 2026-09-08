@@ -71,6 +71,10 @@ func TestLiveCatalogueHarness(t *testing.T) {
 	}
 	cancelActive := os.Getenv("CELLN_LIVE_CANCEL_ACTIVE") == "1"
 	lostResponse := os.Getenv("CELLN_LIVE_LOST_RESPONSE") == "1"
+	restartController := os.Getenv("CELLN_LIVE_RESTART_CONTROLLER") == "1"
+	if restartController && !lostResponse {
+		t.Fatal("controller restart proof requires an uncertain accepted response")
+	}
 	if lostResponse && (!automatic || cancelActive) {
 		t.Fatal("lost-response proof requires automatic issuance and cannot be combined with active cancellation")
 	}
@@ -284,7 +288,7 @@ func TestLiveCatalogueHarness(t *testing.T) {
 	}
 	writeJSON(t, configPath, cellnreview.ControllerDispatchConfig{APIVersion: "sympozium.ai/celln-catalogue-controller-v1", Bindings: []cellnreview.ControllerDispatchBinding{{Compositions: registrations, Agent: types.NamespacedName{Namespace: ns.Name, Name: "agent"}, Issuer: cellnreview.ControllerEndpoint{URL: issuerURL, TokenFile: issuerToken, CAFile: issuerCA}, Router: cellnreview.ControllerEndpoint{URL: router.URL, TokenFile: routerToken, CAFile: routerCA}, Backend: backend, OperatorSource: l.OperatorSource, RuntimeSource: l.RuntimeSource, AgentSource: l.AgentSource, ModelSource: ml.Source}}})
 	env := cleanControllerEnv(kube, configPath)
-	startProcess(t, ctx, env, controller, "--metrics-bind-address=0", "--health-probe-bind-address=0", "--max-run-history=100")
+	restart := startProcess(t, ctx, env, controller, "--metrics-bind-address=0", "--health-probe-bind-address=0", "--max-run-history=100")
 	// Registered after the controller process cleanup: remove the run while
 	// cancellation/finalizer reconciliation is still available, even on failure.
 	t.Cleanup(func() {
@@ -314,7 +318,11 @@ func TestLiveCatalogueHarness(t *testing.T) {
 	}
 	var recoveryIdentity *api.AgentRun
 	if lostResponse {
-		recoveryIdentity = observeLostCatalogueResponse(t, ctx, c, key, loss, evidence)
+		var beforeRestore func()
+		if restartController {
+			beforeRestore = restart
+		}
+		recoveryIdentity = observeLostCatalogueResponse(t, ctx, c, key, loss, evidence, beforeRestore)
 	}
 	for time.Now().Before(deadline) {
 		must(t, c.Get(ctx, key, &run))
@@ -332,7 +340,7 @@ func TestLiveCatalogueHarness(t *testing.T) {
 		if run.UID != recoveryIdentity.UID || run.Status.CellnActionID != recoveryIdentity.Status.CellnActionID || run.Status.CellnRequest != recoveryIdentity.Status.CellnRequest || loss.posts.Load() != 1 {
 			t.Fatal("lost response recovery changed execution identity or submitted a replacement")
 		}
-		writeJSON(t, filepath.Join(evidence, "lost-response-recovery.json"), map[string]any{"status": "passed", "scope": "actual host controller with injected TLS proxy response loss; not process/host loss", "runUID": run.UID, "action": run.Status.CellnActionID, "acceptedResponseLost": loss.dropped.Load(), "uncertainStatusObserved": true, "executionPosts": loss.posts.Load(), "savedRequestUnchanged": true, "phase": run.Status.Phase})
+		writeJSON(t, filepath.Join(evidence, "lost-response-recovery.json"), map[string]any{"status": "passed", "scope": "actual host controller with injected TLS proxy response loss; surviving issuer/router/dispatcher", "controllerRestartedWhileUncertain": restartController, "runUID": run.UID, "action": run.Status.CellnActionID, "acceptedResponseLost": loss.dropped.Load(), "uncertainStatusObserved": true, "executionPosts": loss.posts.Load(), "savedRequestUnchanged": true, "phase": run.Status.Phase})
 	}
 	if browserSubmission {
 		runBrowser(t, ctx, browserURL, ns.Name, runName, "")
@@ -507,26 +515,49 @@ func waitTCP(t *testing.T, addr string) {
 	}
 	t.Fatal("listener did not start: " + addr)
 }
-func startProcess(t *testing.T, ctx context.Context, env []string, binary string, args ...string) {
+
+// The returned restart function kills and reaps the owned process before
+// starting a new one with the same configuration. Its original cleanup stays
+// registered, so restarting a controller cannot reorder finalizer cleanup.
+func startProcess(t *testing.T, ctx context.Context, env []string, binary string, args ...string) func() {
 	t.Helper()
-	child, cancel := context.WithCancel(ctx)
 	log, err := os.CreateTemp(t.TempDir(), "process.log")
 	must(t, err)
-	cmd := exec.CommandContext(child, binary, args...)
-	if env != nil {
-		cmd.Env = env
+	var cancel context.CancelFunc
+	var done chan error
+	var pid int
+	start := func() {
+		child, stop := context.WithCancel(ctx)
+		cancel = stop
+		cmd := exec.CommandContext(child, binary, args...)
+		if env != nil {
+			cmd.Env = env
+		}
+		cmd.Stdout, cmd.Stderr = log, log
+		if err := cmd.Start(); err != nil {
+			cancel()
+			t.Fatal(err)
+		}
+		pid = cmd.Process.Pid
+		done = make(chan error, 1)
+		completion := done
+		go func() { completion <- cmd.Wait() }()
 	}
-	cmd.Stdout, cmd.Stderr = log, log
-	must(t, cmd.Start())
-	done := make(chan error, 1)
-	go func() { done <- cmd.Wait() }()
-	t.Cleanup(func() {
+	stop := func() {
+		if done == nil {
+			return
+		}
 		cancel()
 		select {
 		case <-done:
+			done = nil
 		case <-time.After(10 * time.Second):
-			t.Error("owned process did not stop")
+			t.Fatal("owned process did not stop; refusing overlapping restart")
 		}
+	}
+	start()
+	t.Cleanup(func() {
+		stop()
 		_ = log.Close()
 		if t.Failed() {
 			raw, _ := os.ReadFile(log.Name())
@@ -536,6 +567,12 @@ func startProcess(t *testing.T, ctx context.Context, env []string, binary string
 			t.Logf("%s log: %s", filepath.Base(binary), raw)
 		}
 	})
+	return func() {
+		previousPID := pid
+		stop()
+		start()
+		t.Logf("restarted owned %s process: oldPID=%d newPID=%d", filepath.Base(binary), previousPID, pid)
+	}
 }
 func cleanControllerEnv(kube, config string) []string {
 	var env []string

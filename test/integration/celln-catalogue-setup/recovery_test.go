@@ -57,7 +57,7 @@ func (loss *dispatchResponseLoss) ServeHTTP(w http.ResponseWriter, r *http.Reque
 	loss.proxy.ServeHTTP(w, r)
 }
 
-func observeLostCatalogueResponse(t *testing.T, ctx context.Context, c client.Client, key types.NamespacedName, loss *dispatchResponseLoss, evidence string) *api.AgentRun {
+func observeLostCatalogueResponse(t *testing.T, ctx context.Context, c client.Client, key types.NamespacedName, loss *dispatchResponseLoss, evidence string, beforeRestore func()) *api.AgentRun {
 	t.Helper()
 	// Always restore observation before the run cleanup/finalizer on failure.
 	defer loss.released.Store(true)
@@ -70,6 +70,9 @@ func observeLostCatalogueResponse(t *testing.T, ctx context.Context, c client.Cl
 				t.Fatal("uncertain dispatch lacks original identity or safe recovery guidance")
 			}
 			writeJSON(t, filepath.Join(evidence, "lost-response-agentrun.json"), run)
+			if beforeRestore != nil {
+				beforeRestore()
+			}
 			t.Logf("accepted response lost; original request %s persisted with Unknown outcome; restoring observation", run.Status.CellnActionID)
 			return &run
 		}
