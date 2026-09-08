@@ -11,12 +11,13 @@ import (
 
 	"github.com/go-logr/logr"
 	"github.com/sympozium-ai/sympozium/internal/apiserver"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // Serve the built application with real API handlers, on loopback only. No
 // intercepted responses, default kubeconfig discovery or external dev server.
-func browserServer(t *testing.T, c client.Client) string {
+func browserServer(t *testing.T, c client.Client, namespace string) string {
 	t.Helper()
 	web := os.Getenv("CELLN_LIVE_WEB_ROOT")
 	if !filepath.IsAbs(web) {
@@ -24,7 +25,10 @@ func browserServer(t *testing.T, c client.Client) string {
 	}
 	index, err := os.ReadFile(filepath.Join(web, "dist", "index.html"))
 	must(t, err)
-	api := apiserver.NewServer(c, nil, nil, logr.Discard()).Handler(nil)
+	server := apiserver.NewServer(c, nil, nil, logr.Discard())
+	ref := func(name string) types.NamespacedName { return types.NamespacedName{Namespace: namespace, Name: name} }
+	must(t, server.ConfigureCellnPreview(c, []apiserver.CellnPreviewBinding{{Agent: ref("agent"), OperatorSource: ref("operator"), RuntimeSource: ref("runtime"), AgentSource: ref("agent")}}))
+	api := server.Handler(nil)
 	assets := http.FileServer(http.Dir(filepath.Join(web, "dist")))
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {

@@ -162,6 +162,15 @@ export interface CellnSelection {
   toolRefs: { name: string; revision: string }[];
 }
 
+export interface CellnPermissionPreview {
+  agent: { name: string; uid: string };
+  runtime: { name: string; uid: string };
+  tools: { tool: { name: string; revision: string }; limits: CellnTool["spec"]["limits"] }[];
+  runtimeLimits: { memoryBytes: number; timeoutMillis: number; workspace: string };
+  executionAuthorized: false;
+  readiness: "not-established";
+}
+
 export interface CellnTool {
   metadata: ObjectMeta;
   spec: {
@@ -1358,6 +1367,7 @@ export const api = {
 
   cellnTools: {
     list: () => apiFetch<CellnTool[]>("/api/v1/celln-tools"),
+    preview: (agentRef: string, cellnSelection: CellnSelection) => apiFetch<CellnPermissionPreview>("/api/v1/celln-selection/preview", { method: "POST", body: JSON.stringify({ agentRef, cellnSelection }) }),
   },
 
   harnessSessions: {

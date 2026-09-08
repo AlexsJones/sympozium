@@ -25,6 +25,9 @@ describe("live Harness-in-Celln", () => {
       cy.get('[data-testid="celln-harness-selection"]').contains("label", `${name}@`).find("input").check();
     }
     // Observe the real request/response; never reply with fixture data.
+    cy.get('[data-testid="celln-permission-preview"]').contains("Shared cell memory ceiling:").scrollIntoView().should("be.visible");
+    cy.get('[data-testid="celln-permission-preview"]').contains("uppercase@").should("be.visible");
+    cy.get('[data-testid="celln-permission-preview"]').contains("length@").should("be.visible");
     cy.intercept("POST", "/api/v1/runs*").as("created");
     cy.contains("button", "Request catalogue run").click();
     cy.wait("@created").then(({ request, response }) => {

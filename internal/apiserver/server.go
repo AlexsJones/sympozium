@@ -7,6 +7,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"fmt"
+	"github.com/sympozium-ai/sympozium/internal/cellnauthority"
 	"io"
 	"io/fs"
 	"net"
@@ -59,6 +60,7 @@ var memoryProxyClient = &http.Client{
 
 // Server is the Sympozium API server.
 type Server struct {
+	cellnPreview map[types.NamespacedName]cellnauthority.Loader
 	client       client.Client
 	eventBus     eventbus.EventBus
 	kube         kubernetes.Interface
@@ -146,6 +148,7 @@ func (s *Server) buildMux(frontendFS fs.FS, expected *tokenReader) http.Handler 
 	// Administrator-approved harness runtimes
 	mux.HandleFunc("GET /api/v1/runtimes", s.listRuntimes)
 	mux.HandleFunc("GET /api/v1/celln-tools", s.listCellnTools)
+	mux.HandleFunc("POST /api/v1/celln-selection/preview", s.previewCellnSelection)
 	mux.HandleFunc("POST /api/v1/runtimes/install-defaults", s.installDefaultRuntimes)
 	// Persistent harness sessions. The API server owns the only browser-facing
 	// route to a session's private in-cluster Service.
