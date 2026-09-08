@@ -73,6 +73,10 @@ func TestLiveCatalogueHarness(t *testing.T) {
 	cancelActive := os.Getenv("CELLN_LIVE_CANCEL_ACTIVE") == "1"
 	lostResponse := os.Getenv("CELLN_LIVE_LOST_RESPONSE") == "1"
 	restartController := os.Getenv("CELLN_LIVE_RESTART_CONTROLLER") == "1"
+	controllerImage := os.Getenv("CELLN_LIVE_CONTROLLER_IMAGE")
+	if controllerImage != "" && (!automatic || os.Getenv("CELLN_LIVE_ISSUER_PROCESS") != "1" || restartController) {
+		t.Fatal("controller Pod proof requires automatic standalone issuance; host-process restart mode is separate")
+	}
 	if restartController && !lostResponse {
 		t.Fatal("controller restart proof requires an uncertain accepted response")
 	}
@@ -120,6 +124,15 @@ func TestLiveCatalogueHarness(t *testing.T) {
 		must(t, os.Mkdir(evidence, 0700))
 	}
 	t.Logf("evidence directory: %s", evidence)
+	// Registered before resource/process cleanups, so a finalizer or teardown
+	// failure cannot leave an apparent overall passing evidence record.
+	t.Cleanup(func() {
+		status := "passed"
+		if t.Failed() {
+			status = "failed"
+		}
+		writeJSON(t, filepath.Join(evidence, "test-outcome.json"), map[string]any{"status": status, "includesRegisteredCleanup": true})
+	})
 	credential := os.Getenv("CELLN_LIVE_CREDENTIAL_FILE")
 	if source := os.Getenv("CELLN_LIVE_DEEPSEEK_ZSHRC"); source != "" {
 		if credential != "" || !filepath.IsAbs(source) {
@@ -262,7 +275,12 @@ func TestLiveCatalogueHarness(t *testing.T) {
 		t.Cleanup(func() { loss.released.Store(true) })
 	}
 	router := httptest.NewUnstartedServer(routerHandler)
-	router.TLS = &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{freshProofCertificate(t, "127.0.0.1")}}
+	if controllerImage != "" {
+		must(t, router.Listener.Close())
+		router.Listener, err = net.Listen("tcp", net.JoinHostPort(proofServiceHost(t), "0"))
+		must(t, err)
+	}
+	router.TLS = &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{freshProofCertificate(t, proofServiceHost(t))}}
 	router.StartTLS()
 	t.Cleanup(router.Close)
 	routerCA := filepath.Join(dir, "router-ca.pem")
@@ -297,10 +315,10 @@ func TestLiveCatalogueHarness(t *testing.T) {
 	}
 	writeJSON(t, configPath, cellnreview.ControllerDispatchConfig{APIVersion: "sympozium.ai/celln-catalogue-controller-v1", Bindings: []cellnreview.ControllerDispatchBinding{{Compositions: registrations, Agent: types.NamespacedName{Namespace: ns.Name, Name: "agent"}, Issuer: cellnreview.ControllerEndpoint{URL: issuerURL, TokenFile: issuerToken, CAFile: issuerCA}, Router: cellnreview.ControllerEndpoint{URL: router.URL, TokenFile: routerToken, CAFile: routerCA}, Backend: backend, OperatorSource: l.OperatorSource, RuntimeSource: l.RuntimeSource, AgentSource: l.AgentSource, ModelSource: ml.Source}}})
 	env := cleanControllerEnv(kube, configPath)
-	restart := startProcess(t, ctx, env, controller, "--metrics-bind-address=0", "--health-probe-bind-address=0", "--max-run-history=100", "--watch-namespace="+ns.Name)
+	var restart func()
 	// Registered after the controller process cleanup: remove the run while
 	// cancellation/finalizer reconciliation is still available, even on failure.
-	t.Cleanup(func() {
+	cleanupRun := func() {
 		cleanup, stop := context.WithTimeout(context.Background(), 50*time.Second)
 		defer stop()
 		if err := c.Delete(cleanup, &api.AgentRun{ObjectMeta: metav1.ObjectMeta{Namespace: ns.Name, Name: runName}}); client.IgnoreNotFound(err) != nil {
@@ -319,7 +337,14 @@ func TestLiveCatalogueHarness(t *testing.T) {
 			time.Sleep(time.Second)
 		}
 		t.Error("run finalizer did not complete before controller shutdown")
-	})
+	}
+	if controllerImage != "" {
+		t.Cleanup(cleanupRun)
+		deployCatalogueController(t, ctx, c, ns.Name, controllerImage, configPath)
+	} else {
+		restart = startProcess(t, ctx, env, controller, "--metrics-bind-address=0", "--health-probe-bind-address=0", "--max-run-history=100", "--watch-namespace="+ns.Name)
+		t.Cleanup(cleanupRun)
+	}
 	deadline := time.Now().Add(200 * time.Second)
 	if cancelActive {
 		proveActiveCatalogueCancellation(t, ctx, c, key, run.UID, root, backend, backendToken, router, routerToken, evidence)
@@ -440,7 +465,7 @@ func TestLiveCatalogueHarness(t *testing.T) {
 			t.Fatal("owner receipt changed after withdrawal")
 		}
 	}
-	writeJSON(t, filepath.Join(evidence, "summary.json"), map[string]any{"status": "passed", "scope": "actual host controller/issuer/router/KVM with isolated Kind API and real DeepSeek; not full deployed control-plane topology or production qualification", "deployedBrowserAPIImage": os.Getenv("CELLN_LIVE_APISERVER_IMAGE"), "browserSubmission": browserSubmission, "operatorAdmission": operatorAdmission, "automaticRegisteredIssuance": automatic, "issuanceCLIUsed": !automatic, "namespace": ns.Name, "runUID": run.UID, "action": run.Status.CellnActionID, "closure": composition.Closure, "brokerRequests": 3, "toolCalls": 2, "jobs": 0, "liveCells": 0, "modelPolicyWithdrawn": true, "hostReissuanceRefused": true, "ownerReceiptRetained": true})
+	writeJSON(t, filepath.Join(evidence, "summary.json"), map[string]any{"status": "execution-checks-passed", "scope": "actual controller/issuer/router/KVM with isolated Kind API and real DeepSeek; not production qualification; final cleanup outcome is in test-outcome.json", "controllerPodImage": controllerImage, "standaloneIssuer": issuerProcess, "deployedBrowserAPIImage": os.Getenv("CELLN_LIVE_APISERVER_IMAGE"), "browserSubmission": browserSubmission, "operatorAdmission": operatorAdmission, "automaticRegisteredIssuance": automatic, "issuanceCLIUsed": !automatic, "namespace": ns.Name, "runUID": run.UID, "action": run.Status.CellnActionID, "closure": composition.Closure, "brokerRequests": 3, "toolCalls": 2, "jobs": 0, "liveCells": 0, "modelPolicyWithdrawn": true, "hostReissuanceRefused": true, "ownerReceiptRetained": true})
 	t.Logf("PASS actual Kind named catalogue -> signed composition -> TLS issuer -> durable status -> configured controller -> TLS pinned router -> KVM -> DeepSeek uppercase and length -> terminal receipt -> model-policy withdrawal -> retained owner receipt; automaticRegisteredIssuance=%t namespace=%s runUID=%s action=%s closure=%s", automatic, ns.Name, run.UID, run.Status.CellnActionID, composition.Closure)
 }
 
@@ -596,7 +621,7 @@ func cleanControllerEnv(kube, config string) []string {
 }
 func issuerTLSFiles(t *testing.T, dir string) (string, string, string) {
 	t.Helper()
-	cert := freshProofCertificate(t, "127.0.0.1")
+	cert := freshProofCertificate(t, proofServiceHost(t))
 	key, err := x509.MarshalPKCS8PrivateKey(cert.PrivateKey)
 	must(t, err)
 	token, ca, private := filepath.Join(dir, "issuer-token"), filepath.Join(dir, "issuer-ca.pem"), filepath.Join(dir, "issuer-key.pem")

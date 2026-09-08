@@ -18,7 +18,7 @@ import (
 func liveIssuerProcess(t *testing.T, ctx context.Context, dir, cli, kube, binary, root, publisher, namespace string) (string, string, string) {
 	t.Helper()
 	token, ca, private := issuerTLSFiles(t, dir)
-	addr := freeAddress(t)
+	addr := freeServiceAddress(t)
 	ref := func(name string) map[string]string { return map[string]string{"namespace": namespace, "name": name} }
 	config := filepath.Join(dir, "issuer-service.json")
 	writeJSON(t, config, map[string]any{

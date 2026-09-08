@@ -5403,6 +5403,14 @@ func (r *AgentRunReconciler) reconcileClusterRoleBinding(ctx context.Context, de
 // Namespace-scoped resources (Role, RoleBinding) are cleaned up automatically
 // via owner references and garbage collection.
 func (r *AgentRunReconciler) cleanupSkillRBAC(ctx context.Context, log logr.Logger, agentRun *sympoziumv1alpha1.AgentRun) {
+	// A recorded Celln-only execution cannot have created skill-sidecar RBAC.
+	// Avoid starting a cluster-wide informer just to clean up nonexistent Job
+	// authority: a scoped Celln controller intentionally lacks that permission.
+	// Preserve legacy/mixed workload cleanup whenever any pod-plane state exists.
+	status := agentRun.Status
+	if status.CellnActionID != "" && status.CellnRequest != "" && status.JobName == "" && status.PodName == "" && status.SandboxName == "" && status.SandboxClaimName == "" && status.DeploymentName == "" && status.ServiceName == "" && status.PostRunJobName == "" {
+		return
+	}
 	// List ClusterRoles owned by this run
 	crList := &rbacv1.ClusterRoleList{}
 	if err := r.List(ctx, crList, client.MatchingLabels{
