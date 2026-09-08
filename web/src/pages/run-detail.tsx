@@ -234,6 +234,13 @@ export function RunDetailPage() {
         </div>
       )}
 
+      {run.spec.cellnSelection && <div className="space-y-2 rounded-lg border border-amber-500/30 p-3 text-sm" data-testid="catalogue-run-summary">
+        <p className="font-medium">Harness in Celln — catalogue request</p>
+        <p className="text-muted-foreground">Runtime: {run.spec.cellnSelection.runtimeRef || "Agent default (resolved by trusted issuance)"}</p>
+        <p className="text-muted-foreground">Borrowed tools: {run.spec.cellnSelection.toolRefs.map((ref) => `${ref.name}@${ref.revision}`).join(" → ") || "none"}</p>
+        <p>{run.status?.conditions?.find((condition) => condition.type === "CellnIssuanceCommitted")?.message || "Waiting for a catalogue issuance observation. A submitted request does not establish readiness."}</p>
+      </div>}
+
       {/* PostRunFailed condition */}
       {run.status?.conditions?.some(
         (c) => c.type === "PostRunFailed" && c.status === "True",

@@ -9,6 +9,7 @@ import {
   useGateVerdict,
   useCapabilities,
   useRuntimes,
+  useCellnTools,
 } from "@/hooks/use-api";
 import { StatusBadge } from "@/components/status-badge";
 import {
@@ -74,6 +75,8 @@ export function RunsPage() {
   const observability = useObservabilityMetrics();
   const capabilities = useCapabilities();
   const runtimes = useRuntimes();
+  const catalogue = useCellnTools();
+  const [lentTools, setLentTools] = useState<{ name: string; revision: string }[]>([]);
   const deleteRun = useDeleteRun();
   const createRun = useCreateRun();
   const gateVerdict = useGateVerdict();
@@ -91,6 +94,13 @@ export function RunsPage() {
     runtimeRef: "",
   });
   const selectedAgent = (instances.data || []).find((agent) => agent.metadata.name === form.agentRef);
+  const runtimeName = form.runtimeRef || selectedAgent?.spec.runtimeRef || "";
+  const selectedRuntime = (runtimes.data || []).find((runtime) => runtime.metadata.name === runtimeName);
+  const cellnHarness = form.backend === "celln" && !!runtimeName;
+  const compatibleHarness = selectedRuntime?.spec.celln?.contractVersion === "celln.json-tools/v1";
+  const staleTools = lentTools.some((ref) => !(catalogue.data || []).some((tool) => tool.metadata.name === ref.name && tool.spec.revision === ref.revision));
+  const blockedSelection = cellnHarness && (!compatibleHarness || !form.model.trim() || catalogue.isLoading || catalogue.isError || staleTools);
+  const jobIncompatible = form.backend === "job" && !!selectedRuntime?.spec.celln && !selectedRuntime.spec.image;
 
   useEffect(() => {
     if (searchParams.get("create") === "1") {
@@ -127,10 +137,15 @@ export function RunsPage() {
   const hasCellnRuns = sorted.some((r) => r.spec.backend === "celln");
 
   const handleCreate = () => {
-    createRun.mutate(form, {
+    if (blockedSelection || jobIncompatible) return;
+    const request = cellnHarness
+      ? { ...form, runtimeRef: undefined, provider: "deepseek", cellnSelection: { runtimeRef: form.runtimeRef || undefined, toolRefs: lentTools } }
+      : form;
+    createRun.mutate(request, {
       onSuccess: () => {
         setOpen(false);
         setForm({ agentRef: "", task: "", model: "", timeout: "5m", backend: "job", runtimeRef: "" });
+        setLentTools([]);
       },
     });
   };
@@ -153,7 +168,7 @@ export function RunsPage() {
               <Plus className="mr-2 h-4 w-4" /> New Run
             </Button>
           </DialogTrigger>
-          <DialogContent>
+          <DialogContent className="max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>Create Run</DialogTitle>
               <DialogDescription>
@@ -165,7 +180,7 @@ export function RunsPage() {
                 <Label>Instance</Label>
                 <Select
                   value={form.agentRef}
-                  onValueChange={(v) => setForm({ ...form, agentRef: v })}
+                  onValueChange={(v) => { setForm({ ...form, agentRef: v, runtimeRef: "" }); setLentTools([]); }}
                 >
                   <SelectTrigger>
                     <SelectValue placeholder="Select agent" />
@@ -195,7 +210,7 @@ export function RunsPage() {
                 <Label>One-run harness override (advanced)</Label>
                 <Select
                   value={form.runtimeRef || "inherit"}
-                  onValueChange={(v) => setForm({ ...form, runtimeRef: v === "inherit" ? "" : v })}
+                  onValueChange={(v) => { setForm({ ...form, runtimeRef: v === "inherit" ? "" : v }); setLentTools([]); }}
                 >
                   <SelectTrigger>
                     <SelectValue placeholder="Use Agent default" />
@@ -215,13 +230,13 @@ export function RunsPage() {
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <Label>Model (optional)</Label>
+                  <Label>{cellnHarness ? "Model (required — DeepSeek)" : "Model (optional)"}</Label>
                   <Input
                     value={form.model}
                     onChange={(e) =>
                       setForm({ ...form, model: e.target.value })
                     }
-                    placeholder="gpt-4o"
+                    placeholder={cellnHarness ? "deepseek-chat" : "gpt-4o"}
                   />
                 </div>
                 <div className="space-y-2">
@@ -239,7 +254,7 @@ export function RunsPage() {
                 <Label>Backend</Label>
                 <Select
                   value={form.backend}
-                  onValueChange={(v) => setForm({ ...form, backend: v })}
+                  onValueChange={(v) => { setForm({ ...form, backend: v, model: v === "celln" && !form.model ? "deepseek-chat" : form.model }); setLentTools([]); }}
                 >
                   <SelectTrigger>
                     <SelectValue placeholder="Standard (Kubernetes Job)" />
@@ -249,6 +264,7 @@ export function RunsPage() {
                     <SelectItem value="celln">Celln — hermetic, hardware-isolated</SelectItem>
                   </SelectContent>
                 </Select>
+                {jobIncompatible && <p role="alert" className="text-xs text-red-400">This Harness has no OCI image for the Job backend. Select Celln or choose an OCI-compatible Harness.</p>}
                 {form.backend === "celln" && (
                   <>
                     <p className="text-xs text-muted-foreground mt-1">
@@ -256,10 +272,35 @@ export function RunsPage() {
                       No ensembles, delegation, shared memory, or streaming.
                       Best for single-shot high-risk or sensitive tasks.
                     </p>
-                    <p className="text-xs text-amber-500/80 mt-1">
+                    {!cellnHarness && <p className="text-xs text-amber-500/80 mt-1">
                       Uses whatever AI provider is configured on the KVM
                       host, not this run's Model field.
-                    </p>
+                    </p>}
+                    {cellnHarness && <div className="space-y-3 rounded-md border p-3" data-testid="celln-harness-selection">
+                      <p className="text-sm font-medium">Harness in Celln — {runtimeName}</p>
+                      {!compatibleHarness && <p role="alert" className="text-xs text-red-400">This Harness does not declare the supported native JSON Celln contract. No backend fallback will be used.</p>}
+                      <p className="text-xs text-muted-foreground">The model loop runs inside the cell. DeepSeek model access is independently approved by the host; Kubernetes model credentials are not used. One-shot tasks only; conversations are not supported yet.</p>
+                      <Label>Borrowed catalogue tools (optional, maximum 16)</Label>
+                      {catalogue.isLoading && <p className="text-xs">Loading catalogue…</p>}
+                      {catalogue.isError && <p role="alert" className="text-xs text-red-400">Cannot load the catalogue. Submission is disabled.</p>}
+                      {!catalogue.isLoading && !catalogue.isError && !(catalogue.data || []).length && <p className="text-xs">No reviewed tools in this namespace. An empty selection lends no tools.</p>}
+                      {(catalogue.data || []).map((tool) => {
+                        const checked = lentTools.some((ref) => ref.name === tool.metadata.name && ref.revision === tool.spec.revision);
+                        const supported = tool.spec.invocationABI === "celln.json-stdio/v1" && tool.spec.lane === "tool";
+                        return <label key={tool.metadata.uid || tool.metadata.name} className="block space-y-1 rounded border p-2 text-xs">
+                          <span className="flex items-center gap-2"><input type="checkbox" checked={checked} disabled={!compatibleHarness || !supported || (!checked && lentTools.length >= 16)} onChange={() => setLentTools(checked ? lentTools.filter((ref) => ref.name !== tool.metadata.name) : [...lentTools, { name: tool.metadata.name, revision: tool.spec.revision }])} />
+                            <span>{tool.metadata.name}@{tool.spec.revision}{!supported ? " — unsupported ABI/lane" : ""}</span></span>
+                          <span className="block text-muted-foreground">{tool.spec.description}</span>
+                          <span className="block text-muted-foreground">Support owner: {tool.spec.supportOwner}</span>
+                          <span className="block break-all text-muted-foreground">Publisher: {tool.spec.publisherKey}</span>
+                          <span className="block text-muted-foreground">Declared limits: {tool.spec.limits.timeoutMillis} ms · {tool.spec.limits.memoryBytes} bytes memory · workspace {tool.spec.limits.workspace} · effects {tool.spec.limits.effects}</span>
+                        </label>;
+                      })}
+                      <p className="text-xs">Lending order: {lentTools.map((ref) => `${ref.name}@${ref.revision}`).join(" → ") || "none"}</p>
+                      {staleTools && <p role="alert" className="text-xs text-red-400">The catalogue changed. Clear and reselect the borrowed tools before submitting.</p>}
+                      {!!lentTools.length && <Button type="button" variant="outline" size="sm" onClick={() => setLentTools([])}>Clear borrowed tools</Button>}
+                      <p className="text-xs text-amber-500">Selection readiness is not established. Catalogue metadata is not permission to run. This request waits for operator issuance, which checks the effective permissions and prepares the approved artifacts. No automatic provisioning yet.</p>
+                    </div>}
                     {capabilities.data && !capabilities.data.celln.available ? (
                       <p className="flex items-start gap-1 text-xs text-red-400 mt-1">
                         <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
@@ -284,10 +325,10 @@ export function RunsPage() {
                 className="w-full bg-primary hover:bg-primary/90 text-primary-foreground border-0"
                 onClick={handleCreate}
                 disabled={
-                  !form.agentRef || !form.task || createRun.isPending
+                  !form.agentRef || !form.task || createRun.isPending || blockedSelection || jobIncompatible
                 }
               >
-                {createRun.isPending ? "Creating…" : "Create Run"}
+                {createRun.isPending ? "Creating…" : cellnHarness ? "Request catalogue run" : "Create Run"}
               </Button>
             </div>
           </DialogContent>

@@ -35,7 +35,7 @@ export function HarnessDetailPage() {
         <Card>
           <CardHeader><CardTitle className="text-base">Artifact and contract</CardTitle></CardHeader>
           <CardContent className="space-y-4 text-sm">
-            <Field label="Approved image" value={runtime.spec.image} mono />
+            <Field label="Approved OCI image" value={runtime.spec.image || "No OCI image — native Celln profile"} mono />
             <Field label="Resolved immutable digest" value={runtime.status?.resolvedImageDigest || "Pending resolution"} mono />
             <Field label="Adapter contract" value={runtime.spec.contractVersion || "Not declared"} />
             <Field label="Support owner" value={runtime.spec.supportOwner || "Not declared"} />

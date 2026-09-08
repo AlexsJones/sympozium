@@ -91,7 +91,7 @@ export function HarnessesPage() {
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-3 text-sm">
-                  <Field label="Executed image" value={runtime.status?.resolvedImageDigest || runtime.spec.image} mono />
+                  <Field label="OCI image" value={runtime.status?.resolvedImageDigest || runtime.spec.image || "No OCI image — native Celln profile"} mono />
                   <div className="grid grid-cols-2 gap-3">
                     <Field label="Contract" value={runtime.spec.contractVersion || "not declared"} />
                     <Field label="Support owner" value={runtime.spec.supportOwner || "not declared"} />

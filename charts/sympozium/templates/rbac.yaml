@@ -208,6 +208,10 @@ metadata:
   labels:
     {{- include "sympozium.labels" . | nindent 4 }}
 rules:
+  # Catalogue selection UI can inspect reviewed metadata, never approve tools.
+  - apiGroups: ["sympozium.ai"]
+    resources: ["cellntools"]
+    verbs: ["get", "list", "watch"]
   # Sympozium CRDs — CRUD for REST API / web UI operations
   - apiGroups: ["sympozium.ai"]
     resources:

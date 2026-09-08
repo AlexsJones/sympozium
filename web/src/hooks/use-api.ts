@@ -69,6 +69,10 @@ export function useRuntimes() {
   return useQuery({ queryKey: ["runtimes"], queryFn: api.runtimes.list });
 }
 
+export function useCellnTools() {
+  return useQuery({ queryKey: ["celln-tools"], queryFn: api.cellnTools.list });
+}
+
 export function useInstallDefaultRuntimes() {
   const qc = useQueryClient();
   return useMutation({

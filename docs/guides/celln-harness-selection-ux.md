@@ -1,11 +1,33 @@
-# Harness + Celln selection UX: API foundation, UI still pending
+# Harness + Celln selection UX: initial UI/API selection, provisioning pending
 
 Recorded for [epic #426](https://github.com/sympozium-ai/sympozium/issues/426)
 after the user's UI/YAML question. The approved experience has three distinct
 choices: Harness identity, execution placement, and explicitly borrowed tools.
 The [advanced JSON API](celln-json-harness.md) and the high-level AgentRun
-`cellnSelection` schema are implemented. The UI selector and automatic
-provisioning remain pending: a catalogue request waits for trusted issuance.
+`cellnSelection` schema are implemented. Runs → New Run now supports initial
+catalogue selection. Automatic provisioning remains pending: a catalogue
+request waits for trusted issuance.
+
+## Current run form
+
+Select an Agent, inherit its Harness or choose a one-run override, then select
+Celln. A compatible native JSON profile opens **Harness in Celln**, with an
+explicit DeepSeek model and ordered tool checkboxes. Empty selection lends no
+tools. The form shows catalogue descriptions, support owners, publisher keys
+and declared limits; these are not the final effective grant intersection.
+Incompatible runtimes and unavailable catalogues block the request. A native
+runtime without an OCI image cannot be submitted to the Job backend.
+
+The button says **Request catalogue run** because readiness is not established.
+The operator must still provision the selected artifacts and commit issuance.
+Run details show the selected tools and the controller's issuance observation.
+Without a selected Harness, the existing Celln host-forge path retains its
+separate ambient-host-model warning. No Celln chat/session button is exposed.
+
+Catalogue listing uses a namespace-scoped read-only endpoint and read-only
+apiserver RBAC. It does not expose tool approval or grant mutation. Browser
+contract tests use intercepted responses; they do not establish live deployment
+or full UI → model → tool acceptance.
 
 ## UI requirements
 
