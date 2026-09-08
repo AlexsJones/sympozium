@@ -32,6 +32,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -88,6 +89,9 @@ func TestLiveCatalogueHarness(t *testing.T) {
 	lostResponse := os.Getenv("CELLN_LIVE_LOST_RESPONSE") == "1"
 	restartController := os.Getenv("CELLN_LIVE_RESTART_CONTROLLER") == "1"
 	controllerImage := os.Getenv("CELLN_LIVE_CONTROLLER_IMAGE")
+	if os.Getenv("CELLN_LIVE_NETWORK_PROBE_IMAGE") != "" && (controllerImage == "" || lostResponse || cancelActive || cancelUnissued) {
+		t.Fatal("tenant network proof requires the normal controller-Pod journey")
+	}
 	if controllerImage != "" && (!automatic || os.Getenv("CELLN_LIVE_ISSUER_PROCESS") != "1") {
 		t.Fatal("controller Pod proof requires automatic standalone issuance")
 	}
@@ -117,6 +121,7 @@ func TestLiveCatalogueHarness(t *testing.T) {
 	must(t, appsv1.AddToScheme(scheme))
 	must(t, batchv1.AddToScheme(scheme))
 	must(t, rbacv1.AddToScheme(scheme))
+	must(t, networkingv1.AddToScheme(scheme))
 	c, err := client.New(rest, client.Options{Scheme: scheme})
 	must(t, err)
 	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
@@ -312,6 +317,9 @@ func TestLiveCatalogueHarness(t *testing.T) {
 	// Run separately from response-loss/cancellation modes, whose exact POST
 	// counts describe execution attempts rather than authentication probes.
 	if !lostResponse && !cancelActive && !cancelUnissued {
+		if image := os.Getenv("CELLN_LIVE_NETWORK_PROBE_IMAGE"); image != "" {
+			proveTenantHostNetwork(t, ctx, c, image, issuerURL, router.URL, evidence)
+		}
 		approval, err := ml.Resolve(ctx, *frozen)
 		must(t, err)
 		proveLiveServiceCredentialSeparation(t, ctx, issuerURL, issuerCA, issuerToken, router.URL, routerCA, routerToken, backendToken, evidence, root, filepath.Join(dir, "ownership"), cellnreview.IssuerRequest{APIVersion: "sympozium.ai/celln-issuer-request-v1", Frozen: *frozen, Approval: *approval, Artifacts: artifacts})

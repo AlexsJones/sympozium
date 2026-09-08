@@ -170,6 +170,44 @@ qualification or the broader epic.
 
 ## Live service credential separation
 
+### Optional tenant-to-host network probe
+
+The isolated cluster must actually enforce Kubernetes NetworkPolicy. The checked
+cluster runs Calico; creating a policy on a non-enforcing CNI is not evidence.
+Build the small credential-free static probe from this reviewed source tree:
+
+```sh
+set -eu
+probe_build=$(mktemp -d /tmp/celln-network-probe.XXXXXX)
+CGO_ENABLED=0 go build -o "$probe_build/probe" ./test/integration/celln-network-probe
+podman build -f test/integration/celln-network-probe/Dockerfile \
+  -t localhost/sympozium-celln-network-probe:reviewed "$probe_build"
+podman save --format docker-archive --output "$probe_build/image.tar" \
+  localhost/sympozium-celln-network-probe:reviewed
+KIND_EXPERIMENTAL_PROVIDER=podman kind load image-archive \
+  "$probe_build/image.tar" --name celln-deployed
+```
+
+Add `CELLN_LIVE_NETWORK_PROBE_IMAGE=localhost/sympozium-celln-network-probe:reviewed`
+to the ordinary controller-Pod/browser invocation above. Record the actual image
+ID and source revision; the label `reviewed` is not a content pin.
+The test creates its own tenant namespace and non-root Pods with no credentials,
+service-account token or host access. Pods copy controller labels. It verifies
+TCP reachability to both actual host TLS services, applies namespace-wide egress
+allow-all-except-`10.89.0.1/32`, requires connection timeouts from a new Pod, then
+removes only its own policy by UID and requires restored access from another Pod.
+The normal AI journey follows. Read `tenant-host-network.json` together with final
+`test-outcome.json`; cleanup deletes the test namespace.
+
+This is a scoped egress-policy proof, not a host firewall or production tenant
+boundary. Kubernetes allow policies are additive: another matching allow rule can
+restore access. Administrators must own tenant network policy, protect namespace
+and workload privilege controls, and qualify their actual IPv4/IPv6 addresses,
+routes and CNI. No claim is made for hostNetwork Pods, privileged tenants,
+established-flow revocation, ingress enforcement on external hosts, or concurrent
+controller execution while this temporary policy is installed. Never copy the
+private fixture address into a production installation.
+
 Every standalone issuer variant now uses its own `catalogue-issuer` service
 account, a namespaced GET-only Role and a ten-minute TokenRequest. The bootstrap
 kubeconfig is used only to create the isolated fixture. The issuer kubeconfig
