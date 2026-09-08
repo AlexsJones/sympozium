@@ -69,6 +69,10 @@ func TestLiveCatalogueHarness(t *testing.T) {
 	if os.Getenv("CELLN_LIVE_APISERVER_IMAGE") != "" && !browserSubmission {
 		t.Fatal("deployed API image requires browser submission; no silent loopback fallback")
 	}
+	cancelActive := os.Getenv("CELLN_LIVE_CANCEL_ACTIVE") == "1"
+	if cancelActive && (httpSubmission || !automatic) {
+		t.Fatal("active cancellation proof requires automatic YAML submission; browser result mode expects success")
+	}
 	if httpSubmission && !automatic {
 		t.Fatal("HTTP submission requires automatic issuance")
 	}
@@ -293,6 +297,10 @@ func TestLiveCatalogueHarness(t *testing.T) {
 		t.Error("run finalizer did not complete before controller shutdown")
 	})
 	deadline := time.Now().Add(200 * time.Second)
+	if cancelActive {
+		proveActiveCatalogueCancellation(t, ctx, c, key, run.UID, root, backend, backendToken, router, routerToken, evidence)
+		return
+	}
 	for time.Now().Before(deadline) {
 		must(t, c.Get(ctx, key, &run))
 		if run.Status.Phase == api.AgentRunPhaseSucceeded || run.Status.Phase == api.AgentRunPhaseFailed {
