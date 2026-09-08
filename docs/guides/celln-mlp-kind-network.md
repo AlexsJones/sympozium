@@ -133,7 +133,16 @@ Further isolated controller-Pod cases passed:
   result appeared in the browser, and registered cleanup passed. The issuer,
   router, dispatcher and API stayed alive; this is not host failure qualification.
 
-Persistent installation, unissued-run cancellation, browser cancellation,
+- [Unissued cancellation](../evidence/celln-controller-pod-unissued-cancellation-2026-09-08.json):
+  set `CELLN_LIVE_CANCEL_UNISSUED=1` with the controller-Pod browser variant,
+  without other fault flags. Install the matching boundary-aware CRD and image
+  first. The fixture omits automatic composition registration, waits for the
+  persisted Celln-only boundary and `AwaitingRegisteredComposition`, checks real
+  API refusal of boundary removal and backend changes, and deletes the run by
+  UID. Zero execution submissions/Jobs and completed finalization are required.
+  This is browser creation followed by Kubernetes deletion, not browser cancellation.
+
+Persistent installation, browser cancellation,
 host restart, network-policy refusal and general platform/RBAC
 qualification remain open. These bounded checks do not complete MLP release
 qualification or the broader epic.

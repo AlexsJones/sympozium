@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -71,6 +72,10 @@ func TestLiveCatalogueHarness(t *testing.T) {
 		t.Fatal("deployed API image requires browser submission; no silent loopback fallback")
 	}
 	cancelActive := os.Getenv("CELLN_LIVE_CANCEL_ACTIVE") == "1"
+	cancelUnissued := os.Getenv("CELLN_LIVE_CANCEL_UNISSUED") == "1"
+	if cancelUnissued && (!automatic || os.Getenv("CELLN_LIVE_CONTROLLER_IMAGE") == "" || cancelActive || os.Getenv("CELLN_LIVE_LOST_RESPONSE") == "1" || os.Getenv("CELLN_LIVE_RESTART_CONTROLLER") == "1") {
+		t.Fatal("unissued cancellation requires automatic controller-Pod mode without other fault modes")
+	}
 	lostResponse := os.Getenv("CELLN_LIVE_LOST_RESPONSE") == "1"
 	restartController := os.Getenv("CELLN_LIVE_RESTART_CONTROLLER") == "1"
 	controllerImage := os.Getenv("CELLN_LIVE_CONTROLLER_IMAGE")
@@ -269,6 +274,15 @@ func TestLiveCatalogueHarness(t *testing.T) {
 	t.Cleanup(transport.CloseIdleConnections)
 	var loss *dispatchResponseLoss
 	var routerHandler http.Handler = proxy
+	var executionPosts atomic.Int32
+	if cancelUnissued {
+		routerHandler = http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+			if request.Method == http.MethodPost && request.URL.Path == "/v1/executions" {
+				executionPosts.Add(1)
+			}
+			proxy.ServeHTTP(w, request)
+		})
+	}
 	if lostResponse {
 		loss = newDispatchResponseLoss(proxy)
 		routerHandler = loss
@@ -310,7 +324,7 @@ func TestLiveCatalogueHarness(t *testing.T) {
 	}
 	configPath := filepath.Join(dir, "controller.json")
 	var registrations []cellnreview.RegisteredComposition
-	if automatic {
+	if automatic && !cancelUnissued {
 		registrations = []cellnreview.RegisteredComposition{{Sources: frozen.Prepared.Composition.Sources, ImageBytes: frozen.Prepared.Composition.ImageBytes, Artifacts: artifacts}}
 	}
 	writeJSON(t, configPath, cellnreview.ControllerDispatchConfig{APIVersion: "sympozium.ai/celln-catalogue-controller-v1", Bindings: []cellnreview.ControllerDispatchBinding{{Compositions: registrations, Agent: types.NamespacedName{Namespace: ns.Name, Name: "agent"}, Issuer: cellnreview.ControllerEndpoint{URL: issuerURL, TokenFile: issuerToken, CAFile: issuerCA}, Router: cellnreview.ControllerEndpoint{URL: router.URL, TokenFile: routerToken, CAFile: routerCA}, Backend: backend, OperatorSource: l.OperatorSource, RuntimeSource: l.RuntimeSource, AgentSource: l.AgentSource, ModelSource: ml.Source}}})
@@ -347,6 +361,10 @@ func TestLiveCatalogueHarness(t *testing.T) {
 		t.Cleanup(cleanupRun)
 	}
 	deadline := time.Now().Add(200 * time.Second)
+	if cancelUnissued {
+		proveUnissuedCatalogueCancellation(t, ctx, c, key, run.UID, &executionPosts, evidence)
+		return
+	}
 	if cancelActive {
 		proveActiveCatalogueCancellation(t, ctx, c, key, run.UID, root, backend, backendToken, router, routerToken, evidence)
 		return

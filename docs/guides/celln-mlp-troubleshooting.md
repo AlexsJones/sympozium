@@ -111,6 +111,9 @@ pod-plane resources still require the existing cleanup path.
 
 Unit tests cover record-before-finalizer ordering, backend-change refusal,
 unissued finalizer completion without cluster-RBAC reads, and conservative
-legacy/mixed-state cleanup. The generated CRD passes server-side dry-run
-validation on the isolated Kind API. This is not yet a deployed-controller
-early-cancellation proof; that acceptance check remains open.
+legacy/mixed-state cleanup. The [deployed early-cancellation proof](../evidence/celln-controller-pod-unissued-cancellation-2026-09-08.json)
+also passed on the isolated Kind API with image/schema `f3e1f64`: browser-created
+run, recorded boundary, waiting before issuance, real API refusal of boundary
+removal/status removal/backend change, zero execution submissions or Jobs, and
+automatic finalizer completion. Cancellation used Kubernetes deletion, not a
+browser cancel button.
