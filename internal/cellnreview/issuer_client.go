@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"time"
 
@@ -25,15 +26,37 @@ import (
 // not permission to renew approval, create another execution or dispatch twice.
 var ErrIssuerOutcomeUnknown = errors.New("issuer outcome unknown; preserve frozen identity")
 
-type IssuerClientOptions struct{ URL, TokenFile, CAFile string }
+type IssuerClientOptions struct {
+	URL, TokenFile, CAFile string
+	// Route is operator configuration, frozen before remote provisioning.
+	// Nil supports provisioning-only callers, not routed execution.
+	Route *DispatchRoute
+}
+
+// DispatchRoute binds a protected router origin to one of its exact configured
+// host endpoints. Neither URL is accepted from AgentRun/task data. These names
+// do not establish cryptographic host identity or authorize DNS retargeting.
+type DispatchRoute struct {
+	RouterURL string `json:"routerURL"`
+	Backend   string `json:"backend"`
+}
 
 type IssuerClient struct {
 	endpoint  string
 	tokenFile string
 	http      *http.Client
+	route     *DispatchRoute
 }
 
 func NewIssuerClient(o IssuerClientOptions) (*IssuerClient, error) {
+	var route *DispatchRoute
+	if o.Route != nil {
+		copy := *o.Route
+		if !routeOrigin(copy.RouterURL, "https", 2048) || !routeOrigin(copy.Backend, "http", 1024) {
+			return nil, fmt.Errorf("route requires an HTTPS router origin and exact HTTP backend origin")
+		}
+		route = &copy
+	}
 	u, err := url.Parse(o.URL)
 	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.Opaque != "" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.RawPath != "" || (u.Path != "" && u.Path != "/") || !filepath.IsAbs(o.TokenFile) {
 		return nil, fmt.Errorf("issuer requires an explicit HTTPS origin and absolute controller credential path")
@@ -60,7 +83,24 @@ func NewIssuerClient(o IssuerClientOptions) (*IssuerClient, error) {
 		IdleConnTimeout: 30 * time.Second, MaxIdleConns: 2, MaxConnsPerHost: 2, DisableCompression: true,
 	}
 	client := &http.Client{Transport: transport, Timeout: 95 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	return &IssuerClient{endpoint: strings.TrimRight(u.String(), "/") + "/v1/issuances", tokenFile: o.TokenFile, http: client}, nil
+	return &IssuerClient{endpoint: strings.TrimRight(u.String(), "/") + "/v1/issuances", tokenFile: o.TokenFile, http: client, route: route}, nil
+}
+
+func routeOrigin(raw, scheme string, maxBytes int) bool {
+	if len(raw) > maxBytes || strings.ContainsAny(raw, "\r\n\t ?#") {
+		return false
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != scheme || u.Hostname() == "" || u.User != nil || u.Opaque != "" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.RawPath != "" || u.Path != "" || strings.HasSuffix(u.Host, ":") {
+		return false
+	}
+	if u.Port() != "" {
+		port, err := strconv.Atoi(u.Port())
+		if err != nil || port < 1 || port > 65535 {
+			return false
+		}
+	}
+	return true
 }
 
 func (c *IssuerClient) CloseIdleConnections() { c.http.CloseIdleConnections() }

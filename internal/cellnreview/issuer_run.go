@@ -22,6 +22,7 @@ type runIssuancePayload struct {
 	APIVersion string                            `json:"apiVersion"`
 	Request    IssuerRequest                     `json:"request"`
 	Candidate  cellnauthority.ExecutionCandidate `json:"candidate"`
+	Route      *DispatchRoute                    `json:"route,omitempty"`
 }
 
 func payloadHash(raw string) string {
@@ -58,7 +59,7 @@ func (c *IssuerClient) IssueForRun(ctx context.Context, writer client.Client, re
 		if err != nil {
 			return nil, err
 		}
-		body, err := json.Marshal(runIssuancePayload{APIVersion: "sympozium.ai/celln-run-issuance-v1", Request: *seed, Candidate: *expected})
+		body, err := json.Marshal(runIssuancePayload{APIVersion: "sympozium.ai/celln-run-issuance-v1", Request: *seed, Candidate: *expected, Route: c.route})
 		if err != nil || len(body) > 393216 || len(c.endpoint) > 2048 {
 			return nil, fmt.Errorf("issuance payload exceeds status bound")
 		}
@@ -92,6 +93,9 @@ func (c *IssuerClient) IssueForRun(ctx context.Context, writer client.Client, re
 	payload, issued, err := decodeRunIssuance(wanted, c.endpoint)
 	if err != nil {
 		return nil, err
+	}
+	if !reflect.DeepEqual(payload.Route, c.route) {
+		return nil, fmt.Errorf("configured serving route differs from durable issuance")
 	}
 	if err := sameIssuanceRun(&run, payload.Request.Frozen.Run); err != nil {
 		return nil, err

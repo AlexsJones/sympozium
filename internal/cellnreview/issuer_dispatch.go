@@ -38,6 +38,9 @@ func (c *IssuerClient) FreezeIssuedDispatch(ctx context.Context, writer client.C
 		if err != nil {
 			return err
 		}
+		if !reflect.DeepEqual(payload.Route, c.route) {
+			return fmt.Errorf("configured serving route differs from durable issuance")
+		}
 		if issued == nil {
 			return fmt.Errorf("issuance has no committed outcome")
 		}
