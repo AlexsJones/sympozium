@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"errors"
 	"io"
 	"io/fs"
@@ -15,11 +16,13 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/sympozium-ai/sympozium/internal/cellnreview"
 )
 
 // Real host-origin requests to the live issuer/router TLS endpoints. This is
 // credential/CA separation evidence, not tenant-Pod NetworkPolicy evidence.
-func proveLiveServiceCredentialSeparation(t *testing.T, ctx context.Context, issuer, issuerCA, issuerToken, router, routerCA, routerToken, backendToken, evidence, root, ownership string) {
+func proveLiveServiceCredentialSeparation(t *testing.T, ctx context.Context, issuer, issuerCA, issuerToken, router, routerCA, routerToken, backendToken, evidence, root, ownership string, baseline cellnreview.IssuerRequest) {
 	t.Helper()
 	readToken := func(path string) string {
 		raw, err := os.ReadFile(path)
@@ -170,4 +173,52 @@ func proveLiveServiceCredentialSeparation(t *testing.T, ctx context.Context, iss
 		}
 	}
 	writeJSON(t, filepath.Join(evidence, "authenticated-request-refusals.json"), map[string]any{"status": "refusal-checks-passed", "cases": refused, "authorityAndOwnerFilesUnchanged": true, "scope": "actual TLS services; malformed requests rejected before issuance/ownership; not guest output flooding, tenant network isolation or a complete adversarial matrix"})
+
+	// Start with a real API-derived, currently approved request, not an already
+	// invalid zero-value fixture. Clone deeply so each attack changes one field.
+	if len(baseline.Frozen.Snapshot.Tools) != 2 || len(baseline.Frozen.Snapshot.Sources) != 3 {
+		t.Fatal("authority substitution proof requires real two-tool approval")
+	}
+	valid, err := json.Marshal(baseline)
+	must(t, err)
+	var substitutions []string
+	issuerClient := clientFor(issuerCA)
+	for _, attack := range []struct {
+		name   string
+		change func(*cellnreview.IssuerRequest)
+	}{
+		{"foreign Agent namespace", func(r *cellnreview.IssuerRequest) { r.Frozen.Snapshot.Agent.Namespace = "default" }},
+		{"foreign AgentRun namespace", func(r *cellnreview.IssuerRequest) { r.Frozen.Run.Namespace = "default" }},
+		{"replaced AgentRun UID", func(r *cellnreview.IssuerRequest) { r.Frozen.Run.UID = "foreign-run-uid" }},
+		{"foreign runtime namespace", func(r *cellnreview.IssuerRequest) { r.Frozen.Snapshot.Runtime.Namespace = "default" }},
+		{"foreign tool namespace", func(r *cellnreview.IssuerRequest) { r.Frozen.Snapshot.Tools[0].Identity.Namespace = "default" }},
+		{"foreign tool-approval source", func(r *cellnreview.IssuerRequest) { r.Frozen.Snapshot.Sources[0].Namespace = "default" }},
+		{"foreign model-approval source", func(r *cellnreview.IssuerRequest) { r.Approval.Source.Namespace = "default" }},
+		{"substituted host credential profile", func(r *cellnreview.IssuerRequest) { r.Approval.Policy.CredentialProfile = "foreign-profile" }},
+		{"substituted model URL", func(r *cellnreview.IssuerRequest) { r.Approval.Policy.URL = "https://example.invalid/chat/completions" }},
+		{"expanded model request budget", func(r *cellnreview.IssuerRequest) { r.Approval.Policy.MaxRequests++ }},
+	} {
+		var candidate cellnreview.IssuerRequest
+		must(t, json.Unmarshal(valid, &candidate))
+		attack.change(&candidate)
+		raw, err := json.Marshal(candidate)
+		must(t, err)
+		request, err := http.NewRequestWithContext(ctx, http.MethodPost, issuer+"/v1/issuances", strings.NewReader(string(raw)))
+		must(t, err)
+		request.Header.Set("Authorization", "Bearer "+issuerCredential)
+		request.Header.Set("Content-Type", "application/json")
+		response, err := issuerClient.Do(request)
+		must(t, err)
+		_, err = io.Copy(io.Discard, io.LimitReader(response.Body, 8192))
+		response.Body.Close()
+		must(t, err)
+		if response.StatusCode != http.StatusConflict {
+			t.Fatalf("%s: got %d want authority refusal 409", attack.name, response.StatusCode)
+		}
+		if !reflect.DeepEqual(before, snapshot()) {
+			t.Fatalf("%s changed issuance/owner state", attack.name)
+		}
+		substitutions = append(substitutions, attack.name)
+	}
+	writeJSON(t, filepath.Join(evidence, "authority-substitution-refusals.json"), map[string]any{"status": "refusal-checks-passed", "cases": substitutions, "authorityAndOwnerFilesUnchanged": true, "scope": "single-field substitutions in a real approved request against actual issuer; not tenant-network isolation or exhaustive coordinated forgery"})
 }

@@ -208,8 +208,18 @@ execution identities, and an empty execution body. Each requires its exact HTTP
 400 or 413 refusal and unchanged content in the trusted model profile, issuer
 journal and router ownership directories. Read `authenticated-request-refusals.json`
 with the final outcome; the subsequent real AI journey must still pass. These
-checks do not cover valid-shaped foreign grants, oversized/flooded guest output,
-tenant networking or exhausted execution budgets.
+checks do not cover oversized/flooded guest output, tenant networking or exhausted
+execution budgets.
+
+`authority-substitution-refusals.json` records a separate ten-case check using a
+real API-derived frozen selection, current model approval and admitted artifacts.
+Each request changes one field: Agent/run/runtime/tool namespace, run UID,
+tool/model approval source namespace, host credential profile, model URL or model
+request budget. Valid issuer authentication and well-formed typed JSON must still
+produce HTTP 409, with unchanged profile/journal/owner files. The normal controller
+then completes the real approved journey. This proves rejection of these specific
+substitutions, not exhaustive coordinated forgery, a second fully provisioned
+tenant, Pod-network isolation or guest-enforced budget exhaustion.
 
 The lower-cost `TestActualRouterRefusalsThroughTLSProxy` regression needs only an
 explicit absolute `CELLN_COMPOSITION_BINARY`. It starts the actual router and a
