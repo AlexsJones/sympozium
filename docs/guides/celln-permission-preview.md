@@ -33,8 +33,13 @@ configuration intentionally contains no issuer/router credential or host path.
 The API server uses its uncached Kubernetes reader. Grant ConfigMaps must deny
 tenant writes; naming or labelling a ConfigMap cannot establish ownership.
 Provide narrowly scoped read access to these sources using deployment RBAC.
-Do not grant approval writes to enable preview. No new Helm mount is implicit:
-mount this operator-owned file and set the environment variable explicitly.
+Do not grant approval writes to enable preview. With Helm, set
+`celln.permissionPreviewConfigMap` to an existing operator-owned ConfigMap in
+the API-server namespace containing the `config.json` key. The chart mounts
+only that key read-only and sets the environment variable. It neither creates
+the ConfigMap nor shares the controller's issuer/router credential Secret.
+The default is disabled; configuring preview does not enable Celln execution.
+For non-Helm deployments, mount the file and set the variable explicitly.
 Restart the API server to change its source bindings. Grant document changes
 are observed on subsequent requests without restart.
 

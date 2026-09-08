@@ -34,6 +34,10 @@ spec:
             - --serve-ui=false
           {{- end }}
           env:
+          {{- if .Values.celln.permissionPreviewConfigMap }}
+            - name: CELLN_PERMISSION_PREVIEW_CONFIG
+              value: /etc/sympozium/celln-preview/config.json
+          {{- end }}
           {{- if and .Values.nats.enabled .Values.nats.auth.enabled }}
             - name: NATS_USERNAME
               value: sympozium-control
@@ -120,8 +124,13 @@ spec:
           securityContext:
             {{- toYaml .Values.containerSecurityContext | nindent 12 }}
           {{- /* Gate must match apiserver-ui-secret.yaml */}}
-          {{- if or .Values.celln.enabled (and .Values.apiserver.webUI.enabled (not .Values.apiserver.webUI.token)) }}
+          {{- if or .Values.celln.permissionPreviewConfigMap .Values.celln.enabled (and .Values.apiserver.webUI.enabled (not .Values.apiserver.webUI.token)) }}
           volumeMounts:
+          {{- if .Values.celln.permissionPreviewConfigMap }}
+            - name: celln-permission-preview
+              mountPath: /etc/sympozium/celln-preview
+              readOnly: true
+          {{- end }}
           {{- if .Values.celln.enabled }}
             - name: celln-capability-token
               mountPath: /etc/celln/capability
@@ -149,8 +158,16 @@ spec:
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- if or .Values.celln.enabled (not .Values.apiserver.webUI.token) }}
+      {{- if or .Values.celln.permissionPreviewConfigMap .Values.celln.enabled (not .Values.apiserver.webUI.token) }}
       volumes:
+      {{- if .Values.celln.permissionPreviewConfigMap }}
+        - name: celln-permission-preview
+          configMap:
+            name: {{ .Values.celln.permissionPreviewConfigMap | quote }}
+            items:
+              - key: config.json
+                path: config.json
+      {{- end }}
       {{- if .Values.celln.enabled }}
         - name: celln-capability-token
           secret:
