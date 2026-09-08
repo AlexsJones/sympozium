@@ -52,6 +52,14 @@ controller admission gates are required before issuance and submission.
 
 ## Proof and limits
 
+Set `CELLN_LIVE_HTTP_SUBMISSION=1` as well to create the execution run through
+the actual HTTP API handler backed by the isolated Kubernetes API. This variant
+replaces the unissued setup run before starting the controller and freezes the
+new persisted identity/spec without patching the API output. It records
+`http-created-run.json`. The loopback test server deliberately has no API auth;
+this proves HTTP request translation and automatic execution, not browser,
+deployed authentication, or production topology acceptance.
+
 Set `CELLN_LIVE_AUTOMATIC_ISSUANCE=1` when running the opt-in
 `test/integration/test-celln-catalogue-harness.sh`. The test creates a named
 selection and registers public fixture artifacts, skips the issuance CLI, and

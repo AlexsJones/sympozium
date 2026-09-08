@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/x509"
 	"encoding/json"
@@ -20,7 +21,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-logr/logr"
 	api "github.com/sympozium-ai/sympozium/api/v1alpha1"
+	"github.com/sympozium-ai/sympozium/internal/apiserver"
 	"github.com/sympozium-ai/sympozium/internal/cellnauthority"
 	"github.com/sympozium-ai/sympozium/internal/cellnreview"
 	appsv1 "k8s.io/api/apps/v1"
@@ -53,6 +56,10 @@ func TestLiveCatalogueHarness(t *testing.T) {
 	packagePath := path("CELLN_HARNESS_PACKAGE")
 	cli := path("CELLN_LIVE_SYMPOZIUM_BINARY")
 	automatic := os.Getenv("CELLN_LIVE_AUTOMATIC_ISSUANCE") == "1"
+	httpSubmission := os.Getenv("CELLN_LIVE_HTTP_SUBMISSION") == "1"
+	if httpSubmission && !automatic {
+		t.Fatal("HTTP submission requires automatic issuance")
+	}
 	controller := path("CELLN_LIVE_CONTROLLER_BINARY")
 	config, err := clientcmd.LoadFromFile(kube)
 	must(t, err)
@@ -125,6 +132,49 @@ func TestLiveCatalogueHarness(t *testing.T) {
 	must(t, err)
 	frozen := report["frozen"].(*cellnauthority.FrozenSelection)
 	l := cellnauthority.Loader{Reader: c, OperatorSource: types.NamespacedName{Namespace: ns.Name, Name: "operator"}, RuntimeSource: types.NamespacedName{Namespace: ns.Name, Name: "runtime"}, AgentSource: types.NamespacedName{Namespace: ns.Name, Name: "agent"}}
+	runName := "run"
+	if httpSubmission {
+		// The setup run has never been issued and the controller is stopped.
+		// Replace it with a run created by the actual HTTP handler, then freeze
+		// that persisted UID/spec. Do not patch HTTP output to fit the fixture.
+		var setup api.AgentRun
+		must(t, c.Get(ctx, types.NamespacedName{Namespace: ns.Name, Name: runName}, &setup))
+		if setup.Status.CellnIssuance != nil || setup.Status.CellnActionID != "" || len(setup.Finalizers) != 0 {
+			t.Fatal("setup run unexpectedly active")
+		}
+		uid := setup.UID
+		must(t, c.Delete(ctx, &setup, &client.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &uid}}))
+		// Loopback-only test HTTP server; this is not a deployment/auth proof.
+		server := httptest.NewServer(apiserver.NewServer(c, nil, nil, logr.Discard()).Handler(nil))
+		t.Cleanup(server.Close)
+		body, err := json.Marshal(apiserver.CreateRunRequest{AgentRef: setup.Spec.AgentRef, Task: setup.Spec.Task.GetPrompt(), Model: "deepseek-chat", Provider: "deepseek", Backend: "celln", Timeout: "180s", CellnSelection: setup.Spec.CellnSelection})
+		must(t, err)
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, server.URL+"/api/v1/runs?namespace="+url.QueryEscape(ns.Name), bytes.NewReader(body))
+		must(t, err)
+		req.Header.Set("Content-Type", "application/json")
+		response, err := server.Client().Do(req)
+		must(t, err)
+		raw, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+		response.Body.Close()
+		must(t, err)
+		if response.StatusCode != http.StatusCreated {
+			t.Fatalf("HTTP create failed: %d %s", response.StatusCode, raw)
+		}
+		var created api.AgentRun
+		must(t, json.Unmarshal(raw, &created))
+		if created.Namespace != ns.Name || created.UID == "" || created.UID == uid || created.Name == "" {
+			t.Fatal("HTTP did not return a new persisted run")
+		}
+		runName = created.Name
+		selected := make([]cellnauthority.Selection, 0, len(setup.Spec.CellnSelection.ToolRefs))
+		for _, ref := range setup.Spec.CellnSelection.ToolRefs {
+			selected = append(selected, cellnauthority.Selection{Name: ref.Name, Revision: ref.Revision})
+		}
+		frozen, err = l.FreezeRun(ctx, client.ObjectKeyFromObject(&created), selected, 33554432)
+		must(t, err)
+		writeJSON(t, filepath.Join(evidence, "http-created-run.json"), created)
+		t.Logf("actual HTTP submission persisted run %s/%s UID=%s; no Kubernetes patch applied", created.Namespace, created.Name, created.UID)
+	}
 	ml := cellnauthority.ModelLoader{Selection: l, Source: types.NamespacedName{Namespace: ns.Name, Name: "model"}}
 	o := cellnreview.ComposeOptions{Binary: binary, PolicyRoot: root, KeyFile: filepath.Join(root, "public-fixture-seed"), OutputDir: filepath.Join(dir, "composed")}
 	composition, err := cellnreview.Compose(ctx, l, *frozen, o)
@@ -175,7 +225,7 @@ func TestLiveCatalogueHarness(t *testing.T) {
 		}
 	}
 	var run api.AgentRun
-	key := types.NamespacedName{Namespace: ns.Name, Name: "run"}
+	key := types.NamespacedName{Namespace: ns.Name, Name: runName}
 	must(t, c.Get(ctx, key, &run))
 	if !automatic && (run.Status.CellnIssuance == nil || run.Status.CellnIssuance.Phase != "Issued" || run.Status.CellnActionID != "") {
 		t.Fatal("issuance did not precede dispatch")
@@ -196,7 +246,7 @@ func TestLiveCatalogueHarness(t *testing.T) {
 	t.Cleanup(func() {
 		cleanup, stop := context.WithTimeout(context.Background(), 50*time.Second)
 		defer stop()
-		if err := c.Delete(cleanup, &api.AgentRun{ObjectMeta: metav1.ObjectMeta{Namespace: ns.Name, Name: "run"}}); client.IgnoreNotFound(err) != nil {
+		if err := c.Delete(cleanup, &api.AgentRun{ObjectMeta: metav1.ObjectMeta{Namespace: ns.Name, Name: runName}}); client.IgnoreNotFound(err) != nil {
 			t.Errorf("run cleanup: %v", err)
 			return
 		}
