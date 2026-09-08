@@ -127,6 +127,29 @@ checked on submission; a successful hand-off is not a readiness or live grant
 guarantee. In particular, do not replace the catalogue-derived ID with the legacy
 name/UID ID, or remarshal the request through a different wire representation.
 
+### Frozen serving route
+
+`IssuerClientOptions.Route` optionally takes operator-selected `routerURL` and
+`backend` origins. The router URL must be HTTPS; the backend must be an exact HTTP
+origin from that router's configured list, matching the router's current backend
+transport contract. No paths (including trailing slash), URL credentials, query,
+fragment, whitespace or invalid ports are accepted. The constructor copies this
+configuration so changing the input object cannot retarget the client.
+
+The route is included in the existing immutable, hashed Prepared payload before
+provisioning. Both `IssueForRun` and `FreezeIssuedDispatch` compare it to current
+operator configuration. A changed router/backend, adding a route to historical
+unrouted issuance, or removing an existing route refuses. These are identity
+changes, not retry configuration. Existing nil-route provisioning callers remain
+compatible; that compatibility does not authorize routed submission.
+
+This freezes names, not network identity: it does not verify that the issuer and
+serving endpoint are the same host, qualify DNS/load-balancer failover, contact
+the router, or claim that artifacts are warm. The forthcoming controller bridge
+must require a configured route, use a separately scoped router credential,
+verify prewarm responses and send `X-Celln-Backend` only from this frozen operator
+configuration. Ordinary tenant task/spec data must never supply that header.
+
 ## Evidence
 
 Tests cover verified TLS, token rotation, untrusted certificates, changed
