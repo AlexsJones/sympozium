@@ -22,7 +22,7 @@ import (
 // This mode is deliberately separate from success evidence. It cancels via a
 // Kubernetes deletion with the actual controller/finalizer, not a direct backend
 // cancel request. No terminal-before-cancel execution is accepted as a pass.
-func proveActiveCatalogueCancellation(t *testing.T, ctx context.Context, c client.Client, key types.NamespacedName, uid types.UID, root, backend, backendToken string, router *httptest.Server, routerToken, evidence string) {
+func proveActiveCatalogueCancellation(t *testing.T, ctx context.Context, c client.Client, key types.NamespacedName, uid types.UID, root, backend, backendToken string, router *httptest.Server, routerToken, evidence string, browserDelete func()) {
 	t.Helper()
 	var run api.AgentRun
 	var node struct {
@@ -78,7 +78,11 @@ func proveActiveCatalogueCancellation(t *testing.T, ctx context.Context, c clien
 	writeJSON(t, filepath.Join(evidence, "before-cancel-agentrun.json"), run)
 	writeJSON(t, filepath.Join(evidence, "before-cancel-node.json"), node)
 	started := time.Now()
-	must(t, c.Delete(ctx, &run, &client.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &uid}}))
+	if browserDelete != nil {
+		browserDelete()
+	} else {
+		must(t, c.Delete(ctx, &run, &client.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &uid}}))
+	}
 	deleted := false
 	for end := time.Now().Add(45 * time.Second); time.Now().Before(end) && ctx.Err() == nil; {
 		var current api.AgentRun
@@ -135,6 +139,6 @@ func proveActiveCatalogueCancellation(t *testing.T, ctx context.Context, c clien
 	}
 	writeJSON(t, filepath.Join(evidence, "cancelled-owner.json"), owner)
 	writeJSON(t, filepath.Join(evidence, "cancelled-audit.json"), audit)
-	writeJSON(t, filepath.Join(evidence, "summary.json"), map[string]any{"status": "execution-checks-passed", "scope": "actual controller/issuer/router/KVM and isolated Kind deletion; not API/browser cancellation; final cleanup outcome is in test-outcome.json", "controllerPodImage": os.Getenv("CELLN_LIVE_CONTROLLER_IMAGE"), "standaloneIssuer": os.Getenv("CELLN_LIVE_ISSUER_PROCESS") == "1", "namespace": key.Namespace, "runUID": uid, "action": run.Status.CellnActionID, "activeCellObserved": true, "cellID": activeCell, "ownerPhase": owner.Phase, "finalizerCompleted": true, "liveCells": node.Node.LiveCells, "jobs": len(jobs.Items), "dissolved": dissolved, "cancelToDeletionMilliseconds": cancelToDeletion})
+	writeJSON(t, filepath.Join(evidence, "summary.json"), map[string]any{"status": "execution-checks-passed", "scope": "actual controller/issuer/router/KVM and isolated Kind deletion; final cleanup outcome is in test-outcome.json", "browserCancellation": browserDelete != nil, "controllerPodImage": os.Getenv("CELLN_LIVE_CONTROLLER_IMAGE"), "standaloneIssuer": os.Getenv("CELLN_LIVE_ISSUER_PROCESS") == "1", "namespace": key.Namespace, "runUID": uid, "action": run.Status.CellnActionID, "activeCellObserved": true, "cellID": activeCell, "ownerPhase": owner.Phase, "finalizerCompleted": true, "liveCells": node.Node.LiveCells, "jobs": len(jobs.Items), "dissolved": dissolved, "cancelToDeletionMilliseconds": cancelToDeletion})
 	t.Logf("PASS active catalogue cancellation: uid=%s action=%s terminal owner retained, dissolved, zero live cells/Jobs", uid, run.Status.CellnActionID)
 }

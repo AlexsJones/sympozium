@@ -1,0 +1,41 @@
+{
+  "status": "passed",
+  "includesRegisteredCleanup": true,
+  "scope": "actual browser creation and run-list Delete action through deployed authenticated API/controller Pods; standalone host issuer/router/dispatcher; waiting and active cancellation, not production installation or fleet revocation",
+  "controllerImage": "localhost/sympozium-celln-controller:f3e1f64",
+  "apiImage": "localhost/sympozium-celln-api:a3ba456",
+  "cluster": "kind-celln-deployed",
+  "actualBrowserDeleteStatus": 204,
+  "stubbedAPIResponses": false,
+  "manualFinalizerRemoval": false,
+  "proofControllerRestored": true,
+  "waitingRun": {
+    "rawEvidenceDirectory": "target/celln-live-proof/catalogue-live-3586917932",
+    "namespace": "celln-catalogue-proof-gbg2t",
+    "runUID": "3f1292ab-8f06-40f6-9696-da70534b896d",
+    "boundaryRecorded": true,
+    "boundaryRemovalRefused": true,
+    "statusRemovalRefused": true,
+    "backendChangeRefused": true,
+    "executionPosts": 0,
+    "jobs": 0,
+    "finalizerCompleted": true,
+    "testDurationSeconds": 23.09
+  },
+  "activeRun": {
+    "rawEvidenceDirectory": "target/celln-live-proof/catalogue-live-3941339622",
+    "namespace": "celln-catalogue-proof-j55qv",
+    "runUID": "77ea9eda-c203-46df-a74b-07d6f272ec79",
+    "action": "celln-f71da7c9e206cb5655b13adcfabdaab0814ac2ab7a05205887780acc168e9c78",
+    "cellID": "d03852b139ec",
+    "activeCellObserved": true,
+    "cancelledReceiptMatchesObservedCell": true,
+    "ownerPhase": "Cancelled",
+    "dissolved": true,
+    "finalizerCompleted": true,
+    "liveCells": 0,
+    "jobs": 0,
+    "testDurationSeconds": 47.36
+  },
+  "uxLimit": "The existing control is labelled Delete and removes the run record after finalization. The retained execution owner receipt is host-side evidence, not a persistent cancelled-run detail page."
+}

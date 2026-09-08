@@ -40,13 +40,18 @@ still an MLP acceptance item.
 
 Run the existing isolated live catalogue test with `CELLN_LIVE_CANCEL_ACTIVE=1`
 and `CELLN_LIVE_AUTOMATIC_ISSUANCE=1`, using the same explicit pinned operator
-admission inputs. Do not combine this mode with HTTP/browser submission: it
-exercises the Kubernetes/YAML deletion path with the real host controller,
-issuer, router and KVM, not browser result rendering. The authorized model
+admission inputs. By default it exercises the Kubernetes/YAML deletion path
+with the real controller, issuer, router and KVM. For the deployed API/browser
+variant, also set `CELLN_LIVE_BROWSER_CANCEL=1` and the existing deployed API,
+controller image and browser submission flags. The authorized model
 credential stays in the host mapping, as in the success proof.
 
 The test requires an issued AgentRun, its correlated nonterminal owner, a live
-cell registry entry and a node reservation before issuing UID-bound deletion.
+cell registry entry and a node reservation before issuing UID-bound Kubernetes
+deletion or invoking the browser's run-list Delete action. Browser mode observes
+the actual DELETE response (204), then independently verifies finalization and
+the correlated cancelled receipt; it does not stub responses or count UI
+disappearance alone as teardown.
 The reservation count alone is insufficient: it includes admission/preparation.
 The current owner phase can remain `Resolving` throughout synchronous Harness
 execution; the live registry and matching terminal receipt establish which
@@ -55,8 +60,7 @@ receipt, a dissolution audit, completed Kubernetes finalizer and zero remaining
 live cells or workload Jobs. A run finishing before cancellation fails this test
 rather than being counted as a cancellation pass.
 
-This is separate evidence from model-task success and from deployed
-API/browser cancellation. Neither this mode nor local mote withdrawal proves
+This is separate evidence from model-task success. Neither this mode nor local mote withdrawal proves
 fleet-wide revocation or interruption recovery.
 
 ## Lost dispatch response integration mode
@@ -116,4 +120,6 @@ also passed on the isolated Kind API with image/schema `f3e1f64`: browser-create
 run, recorded boundary, waiting before issuance, real API refusal of boundary
 removal/status removal/backend change, zero execution submissions or Jobs, and
 automatic finalizer completion. Cancellation used Kubernetes deletion, not a
-browser cancel button.
+browser cancel button. Add `CELLN_LIVE_BROWSER_CANCEL=1` to the unissued browser
+variant to exercise the real run-list Delete action instead of direct Kubernetes
+deletion, retaining all boundary and finalization checks.

@@ -51,6 +51,10 @@ func browserServer(t *testing.T, ctx context.Context, c client.Client, namespace
 }
 
 func runBrowser(t *testing.T, ctx context.Context, endpoint, namespace, run, task string) {
+	runBrowserAction(t, ctx, endpoint, namespace, run, task, "")
+}
+
+func runBrowserAction(t *testing.T, ctx context.Context, endpoint, namespace, run, task, action string) {
 	t.Helper()
 	web := os.Getenv("CELLN_LIVE_WEB_ROOT")
 	var env []string
@@ -61,7 +65,7 @@ func runBrowser(t *testing.T, ctx context.Context, endpoint, namespace, run, tas
 		}
 		env = append(env, entry)
 	}
-	env = append(env, "CYPRESS_BASE_URL="+endpoint, "CYPRESS_PROOF_NAMESPACE="+namespace, "CYPRESS_PROOF_RUN="+run, "CYPRESS_PROOF_TASK="+task)
+	env = append(env, "CYPRESS_BASE_URL="+endpoint, "CYPRESS_PROOF_NAMESPACE="+namespace, "CYPRESS_PROOF_RUN="+run, "CYPRESS_PROOF_TASK="+task, "CYPRESS_PROOF_ACTION="+action)
 	out := command(t, ctx, env, filepath.Join(web, "node_modules", ".bin", "cypress"), "run", "--project", web, "--config-file", "cypress.celln-live.config.ts", "--browser", "electron")
 	t.Logf("browser proof: %s", out)
 }

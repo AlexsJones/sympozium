@@ -73,6 +73,10 @@ func TestLiveCatalogueHarness(t *testing.T) {
 	}
 	cancelActive := os.Getenv("CELLN_LIVE_CANCEL_ACTIVE") == "1"
 	cancelUnissued := os.Getenv("CELLN_LIVE_CANCEL_UNISSUED") == "1"
+	browserCancel := os.Getenv("CELLN_LIVE_BROWSER_CANCEL") == "1"
+	if browserCancel && (!(cancelUnissued || cancelActive) || !browserSubmission || os.Getenv("CELLN_LIVE_APISERVER_IMAGE") == "") {
+		t.Fatal("browser cancellation requires deployed API/browser and a cancellation mode")
+	}
 	if cancelUnissued && (!automatic || os.Getenv("CELLN_LIVE_CONTROLLER_IMAGE") == "" || cancelActive || os.Getenv("CELLN_LIVE_LOST_RESPONSE") == "1" || os.Getenv("CELLN_LIVE_RESTART_CONTROLLER") == "1") {
 		t.Fatal("unissued cancellation requires automatic controller-Pod mode without other fault modes")
 	}
@@ -88,8 +92,8 @@ func TestLiveCatalogueHarness(t *testing.T) {
 	if lostResponse && (!automatic || cancelActive) {
 		t.Fatal("lost-response proof requires automatic issuance and cannot be combined with active cancellation")
 	}
-	if cancelActive && (httpSubmission || !automatic) {
-		t.Fatal("active cancellation proof requires automatic YAML submission; browser result mode expects success")
+	if cancelActive && ((httpSubmission && !browserCancel) || !automatic) {
+		t.Fatal("active cancellation requires automatic submission and explicit browser cancellation for HTTP runs")
 	}
 	if httpSubmission && !automatic {
 		t.Fatal("HTTP submission requires automatic issuance")
@@ -361,12 +365,16 @@ func TestLiveCatalogueHarness(t *testing.T) {
 		t.Cleanup(cleanupRun)
 	}
 	deadline := time.Now().Add(200 * time.Second)
+	var browserDelete func()
+	if browserCancel {
+		browserDelete = func() { runBrowserAction(t, ctx, browserURL, ns.Name, runName, "", "cancel") }
+	}
 	if cancelUnissued {
-		proveUnissuedCatalogueCancellation(t, ctx, c, key, run.UID, &executionPosts, evidence)
+		proveUnissuedCatalogueCancellation(t, ctx, c, key, run.UID, &executionPosts, evidence, browserDelete)
 		return
 	}
 	if cancelActive {
-		proveActiveCatalogueCancellation(t, ctx, c, key, run.UID, root, backend, backendToken, router, routerToken, evidence)
+		proveActiveCatalogueCancellation(t, ctx, c, key, run.UID, root, backend, backendToken, router, routerToken, evidence, browserDelete)
 		return
 	}
 	var recoveryIdentity *api.AgentRun

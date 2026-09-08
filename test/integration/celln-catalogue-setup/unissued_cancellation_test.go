@@ -19,7 +19,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-func proveUnissuedCatalogueCancellation(t *testing.T, ctx context.Context, c client.Client, key types.NamespacedName, uid types.UID, posts *atomic.Int32, evidence string) {
+func proveUnissuedCatalogueCancellation(t *testing.T, ctx context.Context, c client.Client, key types.NamespacedName, uid types.UID, posts *atomic.Int32, evidence string, browserDelete func()) {
 	t.Helper()
 	var run api.AgentRun
 	ready := false
@@ -53,7 +53,11 @@ func proveUnissuedCatalogueCancellation(t *testing.T, ctx context.Context, c cli
 		t.Fatalf("backend change was not refused by validation: %v", err)
 	}
 	started := time.Now()
-	must(t, c.Delete(ctx, &run, &client.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &uid}}))
+	if browserDelete != nil {
+		browserDelete()
+	} else {
+		must(t, c.Delete(ctx, &run, &client.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &uid}}))
+	}
 	deleted := false
 	for end := time.Now().Add(45 * time.Second); time.Now().Before(end) && ctx.Err() == nil; {
 		var current api.AgentRun
@@ -76,6 +80,6 @@ func proveUnissuedCatalogueCancellation(t *testing.T, ctx context.Context, c cli
 	if len(jobs.Items) != 0 {
 		t.Fatal("unissued cancellation created Jobs")
 	}
-	writeJSON(t, filepath.Join(evidence, "unissued-cancellation.json"), map[string]any{"status": "execution-checks-passed", "scope": "controller-Pod cancellation before registered issuance; Kubernetes deletion, not browser cancellation or active-cell teardown; final cleanup in test-outcome.json", "controllerPodImage": os.Getenv("CELLN_LIVE_CONTROLLER_IMAGE"), "runUID": uid, "namespace": key.Namespace, "boundaryRecorded": true, "boundaryRemovalRefused": true, "statusRemovalRefused": true, "backendChangeRefused": true, "finalizerCompleted": true, "executionPosts": posts.Load(), "jobs": len(jobs.Items), "cancelToDeletionMilliseconds": time.Since(started).Milliseconds()})
+	writeJSON(t, filepath.Join(evidence, "unissued-cancellation.json"), map[string]any{"status": "execution-checks-passed", "scope": "controller-Pod cancellation before registered issuance; not active-cell teardown; final cleanup in test-outcome.json", "browserCancellation": browserDelete != nil, "controllerPodImage": os.Getenv("CELLN_LIVE_CONTROLLER_IMAGE"), "runUID": uid, "namespace": key.Namespace, "boundaryRecorded": true, "boundaryRemovalRefused": true, "statusRemovalRefused": true, "backendChangeRefused": true, "finalizerCompleted": true, "executionPosts": posts.Load(), "jobs": len(jobs.Items), "cancelToDeletionMilliseconds": time.Since(started).Milliseconds()})
 	t.Log("PASS unissued controller-Pod cancellation and real API boundary refusals")
 }

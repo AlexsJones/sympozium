@@ -142,7 +142,16 @@ Further isolated controller-Pod cases passed:
   UID. Zero execution submissions/Jobs and completed finalization are required.
   This is browser creation followed by Kubernetes deletion, not browser cancellation.
 
-Persistent installation, browser cancellation,
+- [Browser cancellation](../evidence/celln-browser-cancellation-2026-09-08.json):
+  add `CELLN_LIVE_BROWSER_CANCEL=1` to either cancellation mode, retaining the
+  deployed API/browser inputs. Both the waiting and actual-live-cell cases
+  passed using the existing run-list Delete action. The test observes the real
+  DELETE/204 response and row removal, then independently checks finalization;
+  active mode also requires the matching cancelled-cell receipt, dissolution
+  and zero live cells/Jobs. The UI removes the run rather than retaining a
+  cancelled-run detail page; the execution owner retains the receipt separately.
+
+Persistent installation,
 host restart, network-policy refusal and general platform/RBAC
 qualification remain open. These bounded checks do not complete MLP release
 qualification or the broader epic.

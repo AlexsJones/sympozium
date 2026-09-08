@@ -1,15 +1,27 @@
-// No stubbed responses: create through the UI, or inspect the real final run.
+// No stubbed responses: create/delete through the UI, or inspect the real result.
 describe("live Harness-in-Celln", () => {
   it("uses the actual API and renders the selected run", () => {
     const namespace = Cypress.env("PROOF_NAMESPACE");
     expect(namespace).to.match(/^celln-catalogue-proof-/);
     const run = Cypress.env("PROOF_RUN");
-    cy.visit(run ? `/runs/${run}` : "/runs?create=1", {
+    const cancel = Cypress.env("PROOF_ACTION") === "cancel";
+    if (cancel) expect(run).to.be.a("string").and.not.be.empty;
+    cy.visit(cancel ? "/runs" : run ? `/runs/${run}` : "/runs?create=1", {
       onBeforeLoad(win) {
         win.localStorage.setItem("sympozium_token", "public-loopback-browser-fixture");
         win.localStorage.setItem("sympozium_namespace", namespace);
       },
     });
+    if (cancel) {
+      // Observe the actual authenticated DELETE; do not stub acceptance or
+      // disappearance. The Go proof independently waits for finalization.
+      cy.intercept("DELETE", `/api/v1/runs/${run}*`).as("deleted");
+      cy.get(`a[href="/runs/${run}"]`, { timeout: 20000 })
+        .closest("tr").find('button[title="Delete"]').click();
+      cy.wait("@deleted").its("response.statusCode").should("eq", 204);
+      cy.get(`a[href="/runs/${run}"]`, { timeout: 20000 }).should("not.exist");
+      return;
+    }
     if (run) {
       cy.contains("Succeeded", { timeout: 20000 }).should("be.visible");
       cy.contains('[role="tab"]', "Result").click();
