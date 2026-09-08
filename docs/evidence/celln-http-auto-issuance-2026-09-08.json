@@ -1,0 +1,32 @@
+{
+  "status": "passed",
+  "date": "2026-09-08",
+  "scope": "Actual HTTP handler with real isolated Kind API, automatic registered issuance, actual host controller/issuer/router and KVM, real DeepSeek",
+  "sourceBase": "6ebfde6c622bc08cc040d7377e65a072c4501466",
+  "sourceChanges": "HTTP submission variant committed alongside this evidence; subsequent extra logging does not change execution",
+  "command": "test/integration/test-celln-catalogue-harness.sh with CELLN_LIVE_AUTOMATIC_ISSUANCE=1 and CELLN_LIVE_HTTP_SUBMISSION=1 plus explicit isolated fixture and credential paths",
+  "durationSeconds": 38.43,
+  "namespace": "celln-catalogue-proof-gtc6h",
+  "runUID": "45fab0cb-5116-4b68-9699-a78cc456664a",
+  "action": "celln-339046c21ea831787e07da95f3bc982f9d64f8d5f8e30fc11e9823968db74abd",
+  "closure": "blake3:4253cf9a68aab5b0ade27a7444a4b294f489ebd07696e7bb5ce2817876ea5fa6",
+  "httpCreatedRunSHA256": "6c0e907afb6725e28d844548023992161a0370d51095e23ba39fec30c695e926",
+  "terminalRunSHA256": "3560f2cf3aa62b87346f5a193f4ad3440df7d5741582d29e252ee3151861ac0c",
+  "auditSHA256": "f0aa2e9294fb25b300714cfa9899b025f050ad617d2be2c4550a14e8af4f6696",
+  "manualIssuance": false,
+  "httpRunPatched": false,
+  "modelRequests": 3,
+  "toolCalls": ["uppercase", "length"],
+  "answer": "CELLN has length 5",
+  "jobs": 0,
+  "liveCellsAfterCompletion": 0,
+  "modelPolicyWithdrawalAndHostReissuanceRefusal": true,
+  "ownerReceiptRetained": true,
+  "proofControllerRestored": true,
+  "limitations": [
+    "Loopback test HTTP server without API authentication; not deployed auth or browser proof",
+    "Public fixture materializer and registered artifacts, not production on-demand admission/distribution",
+    "One-shot native JSON Harness, not conversations or arbitrary OCI Harness compatibility",
+    "No fleet/release qualification claim"
+  ]
+}
