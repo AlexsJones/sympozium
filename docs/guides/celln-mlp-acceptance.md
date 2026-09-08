@@ -28,6 +28,7 @@ of the full epic, not completed requirements or silent fallbacks.
 | Issuer process recovery | [Issuer restart](../evidence/celln-issuer-restart-2026-09-08.json): unchanged profile/journal bytes and subsequent withdrawal/refusal. Same boot, after issuance, not systemd qualification. |
 | Dedicated read-only issuer Kubernetes identity | [Restricted-identity journey and restart](../evidence/celln-issuer-kubernetes-identity-2026-09-08.json): four named approval reads, eight actual Forbidden responses, real browser/KVM/DeepSeek result and withdrawal after issuer restart. Short-lived test identity, not production renewal or installed sandbox. |
 | Service credential and CA separation | [Live negative checks](../evidence/celln-service-credential-separation-2026-09-08.json): nine HTTP credential refusals and two CA refusals, then valid AI journey. Host-origin probes, not tenant NetworkPolicy. |
+| Authenticated malformed-request refusal | [Ten actual service refusals](../evidence/celln-authenticated-request-refusals-2026-09-08.json): exact 400/413 responses with unchanged issuer/profile/owner files after each request, followed by valid real AI and cleanup. Not guest flooding, tenant networking or the complete negative matrix. |
 | Portable regressions | Full local Go race/build/vet passes recorded in PR history; CI verifies formatting, vet/build, short race tests, generation and Helm CRD synchronization. Hardware-skipped CI is not hardware proof. |
 
 The cleanup exemption was tightened during review in `35b45cd`: only an immutable

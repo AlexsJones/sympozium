@@ -199,8 +199,17 @@ Read `service-credential-separation.json` together with the final
 `test-outcome.json`. Probes originate on the host inside the private network
 namespace. They are not tenant-Pod traffic or ingress/egress NetworkPolicy proof.
 They are kept out of cancellation/lost-response modes so those tests retain their
-exact execution-POST accounting. Malformed authenticated payloads and the wider
-guest/tenant adversarial matrix remain distinct checks.
+exact execution-POST accounting.
+
+The same ordinary variant sends ten malformed requests with valid issuer/router
+credentials: truncated JSON, missing or unsupported issuer version, multiple JSON
+values, an unknown tenant policy-root override, absent/non-string/path-traversal
+execution identities, and an empty execution body. Each requires its exact HTTP
+400 or 413 refusal and unchanged content in the trusted model profile, issuer
+journal and router ownership directories. Read `authenticated-request-refusals.json`
+with the final outcome; the subsequent real AI journey must still pass. These
+checks do not cover valid-shaped foreign grants, oversized/flooded guest output,
+tenant networking or exhausted execution budgets.
 
 The lower-cost `TestActualRouterRefusalsThroughTLSProxy` regression needs only an
 explicit absolute `CELLN_COMPOSITION_BINARY`. It starts the actual router and a
