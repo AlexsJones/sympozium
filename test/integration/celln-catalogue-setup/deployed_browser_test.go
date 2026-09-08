@@ -45,8 +45,8 @@ func browserDeploymentObjects(namespace, image string) ([]client.Object, error) 
 	// catalogue/run reads cluster-wide; approval reads and run writes
 	// remain namespaced. No cluster-wide Secret/ConfigMap or write permission.
 	clusterRole := &rbacv1.ClusterRole{ObjectMeta: metav1.ObjectMeta{Name: namespace + "-browser"}, Rules: []rbacv1.PolicyRule{
-		{APIGroups: []string{"sympozium.ai"}, Resources: []string{"agents", "agentruns", "agentruntimes", "cellntools", "skillpacks", "sympoziumpolicies", "models"}, Verbs: []string{"get", "list", "watch"}},
-		{APIGroups: []string{""}, Resources: []string{"nodes", "namespaces"}, Verbs: []string{"get", "list", "watch"}},
+		{APIGroups: []string{"sympozium.ai"}, Resources: []string{"agents", "agentruns", "agentruntimes", "cellntools", "skillpacks", "sympoziumpolicies", "models", "sympoziumconfigs"}, Verbs: []string{"get", "list", "watch"}},
+		{APIGroups: []string{""}, Resources: []string{"nodes", "namespaces", "pods"}, Verbs: []string{"get", "list", "watch"}},
 	}}
 	role := &rbacv1.Role{ObjectMeta: meta("browser"), Rules: []rbacv1.PolicyRule{
 		{APIGroups: []string{"sympozium.ai"}, Resources: []string{"agentruns"}, Verbs: []string{"create", "patch", "update", "delete"}},

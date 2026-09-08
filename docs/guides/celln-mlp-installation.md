@@ -1,8 +1,9 @@
 # One-shot Harness-in-Celln: MLP installation checklist
 
 This is the installation entry point for the administrator-assisted MLP. The
-native JSON Harness/browser/operator-admission journey has passed in an isolated
-Kind/host-process fixture. **The complete deployment described here still needs
+native JSON Harness/browser/operator-admission journey has passed with an
+authenticated API-server pod in isolated Kind and host-process controller,
+issuer and router. **The complete deployment described here still needs
 qualification; it is not a GA or arbitrary-Harness compatibility claim.**
 
 The supported scope is a bounded one-shot native JSON Harness with explicitly
@@ -118,6 +119,26 @@ tag alongside `CELLN_LIVE_BROWSER_SUBMISSION=1` and the existing explicit live
 test inputs. The pod uses `imagePullPolicy: Never`; there is no remote-image or
 loopback-server fallback if the selected image cannot start.
 
+Check which container provider owns the cluster before building or loading.
+The development `celln-deployed` cluster used for these proofs is rootless
+Podman, not Docker. For that cluster, export and load the reviewed image with
+an explicit archive (set `CELLN_API_IMAGE` to the reviewed local tag first):
+
+```sh
+image_archive_dir=$(mktemp -d /tmp/celln-mlp-image.XXXXXX)
+podman save --format docker-archive --output "$image_archive_dir/apiserver.tar" \
+  "$CELLN_API_IMAGE"
+KIND_EXPERIMENTAL_PROVIDER=podman kind load image-archive \
+  "$image_archive_dir/apiserver.tar" --name celln-deployed
+```
+
+On this host, Kind's `load docker-image` lookup failed despite the image being
+present in Podman; the explicit archive avoids that image-discovery path.
+Build with `podman build -f images/apiserver/Dockerfile -t <image> <context>`
+using a clean archive of the reviewed Git revision as the context. Do not include
+untracked host credentials or live-test stores in the image build context. A
+Docker socket permission failure does not diagnose a Podman-backed Kind cluster.
+
 This mode creates a separate API Deployment, ClusterIP Service, service account,
 UI-token Secret and preview ConfigMap in the test's private namespace. It never
 replaces the installed API server. It forwards only to `127.0.0.1`, verifies
@@ -127,10 +148,17 @@ credential; use this mode only in the isolated test cluster. No model, issuer or
 router credential is mounted in this API pod.
 
 The current API cache needs cluster-wide list/watch permission for the selected
-catalogue/run resource types and node/namespace discovery. Test RBAC gives only
+catalogue/run resource types, SympoziumConfig pricing enrichment and node/namespace/
+Pod discovery (the density poller watches Pods). Test RBAC gives only
 those read permissions; AgentRun writes and the three named approval ConfigMap
 reads remain scoped to the private namespace. It grants no Secret read or
 approval write permission. Cluster-scoped test RBAC is deleted by UID as well as
 namespace cleanup. API deployment alone does not qualify the host-process
 controller/issuer/router fixture as a fully deployed control plane. Record live
 results separately; the portable deployment-boundary test is not live evidence.
+
+The [2026-09-08 deployed API/browser evidence](../evidence/celln-deployed-api-browser-2026-09-08.json)
+records the image ID, actual UI selection/permission preview and fresh result
+visit, bearer refusal checks, real DeepSeek two-tool execution and cleanup.
+It does not qualify a fully deployed controller/issuer/router or production
+authentication and tenant isolation beyond the declared test permissions.
