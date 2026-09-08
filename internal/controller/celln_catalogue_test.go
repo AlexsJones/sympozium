@@ -2,7 +2,9 @@ package controller
 
 import (
 	"context"
+	"fmt"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/go-logr/logr"
@@ -20,6 +22,7 @@ type catalogueFixture struct {
 	record                  *cellnreview.RouterExecution
 	pending, lookup, cancel int
 	beforePending           func()
+	pendingErr              error
 }
 
 func TestUnissuedCatalogueRunWaitsWithoutLegacyExecution(t *testing.T) {
@@ -65,7 +68,68 @@ func (f *catalogueFixture) ReconcilePending(context.Context, types.NamespacedNam
 	if f.beforePending != nil {
 		f.beforePending()
 	}
-	return f.record, nil
+	return f.record, f.pendingErr
+}
+
+type failedCatalogueProvisioner struct{ catalogueFixture }
+
+func (f *failedCatalogueProvisioner) EnsureIssued(context.Context, types.NamespacedName, func(context.Context, *api.AgentRun) error) error {
+	return fmt.Errorf("private issuer token/secret detail")
+}
+
+func TestCatalogueProgressReportsSafeRetryAndDoesNotChangeTerminal(t *testing.T) {
+	ctx := context.Background()
+	run := newTestCellnRun(t, "progress", "progress-uid")
+	run.Spec.Celln = nil
+	run.Spec.CellnSelection = &api.CellnCatalogueSelection{ToolRefs: []api.CellnCatalogueToolRef{}}
+	r := newAgentRunTestReconciler(t, run)
+	r.APIReader = r.Client
+	r.CatalogueDispatcher = &failedCatalogueProvisioner{}
+	if _, err := r.awaitCatalogueIssuance(ctx, logr.Discard(), run); err == nil {
+		t.Fatal("issuance error swallowed")
+	}
+	var got api.AgentRun
+	if err := r.Get(ctx, client.ObjectKeyFromObject(run), &got); err != nil {
+		t.Fatal(err)
+	}
+	c := meta.FindStatusCondition(got.Status.Conditions, "CellnIssuanceCommitted")
+	if c == nil || c.Reason != "IssuanceNeedsAttention" || strings.Contains(c.Message, "secret") || got.Status.CellnActionID != "" {
+		t.Fatalf("unsafe or missing progress: %+v", c)
+	}
+	r.CatalogueDispatcher = &catalogueFixture{pendingErr: fmt.Errorf("ambiguous POST secret")}
+	if _, err := r.reconcilePendingCatalogue(ctx, logr.Discard(), run); err == nil {
+		t.Fatal("dispatch error swallowed")
+	}
+	if err := r.Get(ctx, client.ObjectKeyFromObject(run), &got); err != nil {
+		t.Fatal(err)
+	}
+	c = meta.FindStatusCondition(got.Status.Conditions, "CellnExecutionObserved")
+	if c == nil || c.Status != "Unknown" || strings.Contains(c.Message, "secret") || !strings.Contains(c.Message, "Do not resubmit") {
+		t.Fatalf("ambiguous outcome misreported: %+v", c)
+	}
+	rv := got.ResourceVersion
+	if _, err := r.reconcilePendingCatalogue(ctx, logr.Discard(), run); err == nil {
+		t.Fatal("dispatch error swallowed")
+	}
+	if err := r.Get(ctx, client.ObjectKeyFromObject(run), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.ResourceVersion != rv {
+		t.Fatal("identical observation churned status")
+	}
+	got.Status.Phase = api.AgentRunPhaseSucceeded
+	if err := r.Status().Update(ctx, &got); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.catalogueProgress(ctx, run, "CellnExecutionObserved", "False", "Stale", "stale"); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Get(ctx, client.ObjectKeyFromObject(run), &got); err != nil {
+		t.Fatal(err)
+	}
+	if meta.FindStatusCondition(got.Status.Conditions, "CellnExecutionObserved").Reason == "Stale" {
+		t.Fatal("terminal state changed")
+	}
 }
 func (f *catalogueFixture) Lookup(context.Context, types.NamespacedName) (*cellnreview.RouterExecution, error) {
 	f.lookup++
