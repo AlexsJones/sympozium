@@ -52,6 +52,19 @@ controller admission gates are required before issuance and submission.
 
 ## Proof and limits
 
+For the actual browser journey, build the UI with `npm run build --prefix web`,
+then set `CELLN_LIVE_BROWSER_SUBMISSION=1`, `CELLN_LIVE_AUTOMATIC_ISSUANCE=1`
+and `CELLN_LIVE_WEB_ROOT` to the absolute `web` directory when running the same
+isolated proof script. This requires installed web dependencies and Cypress.
+The test serves the built UI on loopback, chooses the Harness-in-Celln backend
+and the two tools through the form, and observes the real create response.
+After actual controller/model completion, a second browser visit checks the
+Succeeded state and rendered answer. No API responses are stubbed. The API
+uses the real explicit Kind client; no default kubeconfig is discovered.
+This fixture uses polling without NATS/WebSocket streaming and an unauthenticated
+loopback API, not the deployed authentication/topology. The explicit browser
+mode implies HTTP submission; neither mode performs manual issuance.
+
 Set `CELLN_LIVE_HTTP_SUBMISSION=1` as well to create the execution run through
 the actual HTTP API handler backed by the isolated Kubernetes API. This variant
 replaces the unissued setup run before starting the controller and freezes the

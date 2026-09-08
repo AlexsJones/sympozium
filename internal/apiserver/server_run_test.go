@@ -65,6 +65,9 @@ func TestCreateCatalogueRunPreservesIntentAndUsesHostModelAuthority(t *testing.T
 	if response.Code != http.StatusCreated {
 		t.Fatalf("catalogue create: %d %s", response.Code, response.Body.String())
 	}
+	if got := response.Result().Header.Get("Content-Type"); got != "application/json" {
+		t.Fatalf("committed response content type = %q, want application/json", got)
+	}
 	var run sympoziumv1alpha1.AgentRun
 	if err := json.Unmarshal(response.Body.Bytes(), &run); err != nil {
 		t.Fatal(err)
