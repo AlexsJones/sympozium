@@ -297,7 +297,7 @@ func TestLiveCatalogueHarness(t *testing.T) {
 	}
 	writeJSON(t, configPath, cellnreview.ControllerDispatchConfig{APIVersion: "sympozium.ai/celln-catalogue-controller-v1", Bindings: []cellnreview.ControllerDispatchBinding{{Compositions: registrations, Agent: types.NamespacedName{Namespace: ns.Name, Name: "agent"}, Issuer: cellnreview.ControllerEndpoint{URL: issuerURL, TokenFile: issuerToken, CAFile: issuerCA}, Router: cellnreview.ControllerEndpoint{URL: router.URL, TokenFile: routerToken, CAFile: routerCA}, Backend: backend, OperatorSource: l.OperatorSource, RuntimeSource: l.RuntimeSource, AgentSource: l.AgentSource, ModelSource: ml.Source}}})
 	env := cleanControllerEnv(kube, configPath)
-	restart := startProcess(t, ctx, env, controller, "--metrics-bind-address=0", "--health-probe-bind-address=0", "--max-run-history=100")
+	restart := startProcess(t, ctx, env, controller, "--metrics-bind-address=0", "--health-probe-bind-address=0", "--max-run-history=100", "--watch-namespace="+ns.Name)
 	// Registered after the controller process cleanup: remove the run while
 	// cancellation/finalizer reconciliation is still available, even on failure.
 	t.Cleanup(func() {

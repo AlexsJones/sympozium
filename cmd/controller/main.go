@@ -52,9 +52,11 @@ func main() {
 	var natsURL string
 	var maxRunHistory int
 	var delegationControllerExecutor bool
+	var watchNamespace string
 
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
+	flag.StringVar(&watchNamespace, "watch-namespace", "", "Restrict namespaced cache watches to one namespace; empty watches all. This is not an authorization boundary; scope Kubernetes RBAC separately.")
 	flag.BoolVar(&enableLeaderElection, "leader-elect", false,
 		"Enable leader election for controller manager. "+
 			"Enabling this will ensure there is only one active controller manager.")
@@ -93,6 +95,11 @@ func main() {
 	}
 
 	ctrl.SetLogger(zap.New(zap.UseDevMode(true)))
+	cacheOptions, err := controllerCacheOptions(watchNamespace)
+	if err != nil {
+		setupLog.Error(err, "invalid watch namespace")
+		os.Exit(1)
+	}
 
 	// Initialize OpenTelemetry SDK. Falls back to noop if OTEL_EXPORTER_OTLP_ENDPOINT is unset.
 	tel, err := telemetry.Init(context.Background(), telemetry.Config{
@@ -105,12 +112,14 @@ func main() {
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme: scheme,
+		Cache:  cacheOptions,
 		Metrics: metricsserver.Options{
 			BindAddress: metricsAddr,
 		},
-		HealthProbeBindAddress: probeAddr,
-		LeaderElection:         enableLeaderElection,
-		LeaderElectionID:       "sympozium-controller-leader",
+		HealthProbeBindAddress:  probeAddr,
+		LeaderElection:          enableLeaderElection,
+		LeaderElectionID:        "sympozium-controller-leader",
+		LeaderElectionNamespace: watchNamespace,
 	})
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")

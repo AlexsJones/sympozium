@@ -41,3 +41,20 @@ certificate and use the intended Kind cluster. Do not assume the outer-host
 loopback API URL remains reachable, or modify the user's original kubeconfig.
 The standalone issuer must retain only the required approval-read authority;
 provider credentials and the admitted store stay out of controller/API Pods.
+
+## Controller watch scope
+
+The controller accepts `--watch-namespace=<proof-namespace>` for a single
+namespaced cache scope. Empty/default retains cluster-wide behavior; malformed
+names, wildcards and comma-separated lists refuse startup. In scoped mode its
+leader-election Lease also uses that namespace. The previously prepared
+`e2edef1` image predates this flag and must be rebuilt before using it.
+
+This is **not tenant authorization**: cluster-scoped resources are still
+cluster-scoped, and uncached/direct clients can access separately configured
+approval sources if RBAC allows it. Pair the flag with a service account whose
+write permissions are restricted to the proof namespace and whose approval
+reads are restricted to the configured objects. Do not grant cluster-wide
+writes just because the informer cache is scoped. Features expecting other
+namespaces may need separate readers/configuration; scoped mode is not a claim
+that every cross-namespace platform feature has been qualified.
