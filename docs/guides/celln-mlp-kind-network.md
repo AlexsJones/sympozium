@@ -170,6 +170,22 @@ qualification or the broader epic.
 
 ## Live service credential separation
 
+Every standalone issuer variant now uses its own `catalogue-issuer` service
+account, a namespaced GET-only Role and a ten-minute TokenRequest. The bootstrap
+kubeconfig is used only to create the isolated fixture. The issuer kubeconfig
+is constructed from the verified API endpoint/CA and the new token, not copied
+administrator authentication. It lives in private temporary storage and is
+removed with that storage; deleting the fixture namespace removes the account.
+The issuer can GET the configured Agent/runtime, namespace runs/tools and four
+named approval ConfigMaps. It cannot list approvals, read Secrets, create or
+edit approvals, read unbound or foreign-namespace approvals, or list cluster RBAC.
+Those eight refusals require actual Kubernetes `Forbidden` responses; mutation
+probes additionally use dry-run so an unexpected permission cannot change policy.
+Read `issuer-kubernetes-identity.json` alongside `test-outcome.json`. Neither
+record contains the Kubernetes token. Successful issuance and withdrawal exercise
+the actual shipped issuer with this identity. This short-lived test credential
+does not qualify production credential renewal or a systemd installation.
+
 The ordinary success variant now checks the live TLS service endpoints before
 controller dispatch. Issuer status/provisioning and router execution endpoints
 must reject missing credentials and credentials belonging to the other services

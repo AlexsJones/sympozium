@@ -15,8 +15,9 @@ import (
 
 // Exercise the shipped command and strict operator configuration, not an
 // in-process issuer substitute. Model credentials remain in the host mapping.
-func liveIssuerProcess(t *testing.T, ctx context.Context, dir, cli, kube, binary, root, publisher, namespace string) (string, string, string, func()) {
+func liveIssuerProcess(t *testing.T, ctx context.Context, dir, evidence, cli, kube, binary, root, publisher, namespace string) (string, string, string, func()) {
 	t.Helper()
+	kube = liveIssuerKubeconfig(t, ctx, dir, evidence, kube, namespace)
 	token, ca, private := issuerTLSFiles(t, dir)
 	addr := freeServiceAddress(t)
 	ref := func(name string) map[string]string { return map[string]string{"namespace": namespace, "name": name} }

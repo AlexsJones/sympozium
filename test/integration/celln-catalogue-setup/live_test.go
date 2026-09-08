@@ -261,7 +261,7 @@ func TestLiveCatalogueHarness(t *testing.T) {
 	var issuerURL, issuerToken, issuerCA string
 	var restartIssuerProcess func()
 	if issuerProcess {
-		issuerURL, issuerToken, issuerCA, restartIssuerProcess = liveIssuerProcess(t, ctx, dir, cli, kube, binary, root, signed.Publisher, ns.Name)
+		issuerURL, issuerToken, issuerCA, restartIssuerProcess = liveIssuerProcess(t, ctx, dir, evidence, cli, kube, binary, root, signed.Publisher, ns.Name)
 	} else {
 		managed, err := cellnreview.NewManagedIssuer(cellnreview.IssueOptions{Binary: binary, PolicyRoot: root, ComposerPublisher: signed.Publisher, ProfileLifetime: 5 * time.Minute}, map[types.NamespacedName]cellnauthority.ModelLoader{{Namespace: ns.Name, Name: "agent"}: ml}, time.Second)
 		must(t, err)

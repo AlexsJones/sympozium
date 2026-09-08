@@ -26,6 +26,7 @@ of the full epic, not completed requirements or silent fallbacks.
 | Ambiguous accepted-response recovery | [Deployed recovery](../evidence/celln-controller-pod-recovery-2026-09-08.json): unchanged saved identity, exactly one submission, real model result. Surviving execution owner. |
 | Controller replacement | [Controller-Pod replacement](../evidence/celln-controller-pod-restart-2026-09-08.json): different ready Pod recovers original request, no replay. Host services survive. |
 | Issuer process recovery | [Issuer restart](../evidence/celln-issuer-restart-2026-09-08.json): unchanged profile/journal bytes and subsequent withdrawal/refusal. Same boot, after issuance, not systemd qualification. |
+| Dedicated read-only issuer Kubernetes identity | [Restricted-identity journey and restart](../evidence/celln-issuer-kubernetes-identity-2026-09-08.json): four named approval reads, eight actual Forbidden responses, real browser/KVM/DeepSeek result and withdrawal after issuer restart. Short-lived test identity, not production renewal or installed sandbox. |
 | Service credential and CA separation | [Live negative checks](../evidence/celln-service-credential-separation-2026-09-08.json): nine HTTP credential refusals and two CA refusals, then valid AI journey. Host-origin probes, not tenant NetworkPolicy. |
 | Portable regressions | Full local Go race/build/vet passes recorded in PR history; CI verifies formatting, vet/build, short race tests, generation and Helm CRD synchronization. Hardware-skipped CI is not hardware proof. |
 
