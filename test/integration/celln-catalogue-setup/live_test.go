@@ -309,6 +309,11 @@ func TestLiveCatalogueHarness(t *testing.T) {
 	t.Cleanup(router.Close)
 	routerCA := filepath.Join(dir, "router-ca.pem")
 	must(t, os.WriteFile(routerCA, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: router.Certificate().Raw}), 0600))
+	// Run separately from response-loss/cancellation modes, whose exact POST
+	// counts describe execution attempts rather than authentication probes.
+	if !lostResponse && !cancelActive && !cancelUnissued {
+		proveLiveServiceCredentialSeparation(t, ctx, issuerURL, issuerCA, issuerToken, router.URL, routerCA, routerToken, backendToken, evidence)
+	}
 	args := []string{"--kubeconfig", kube, "--namespace", ns.Name, "celln-tool", "issue-run", "agent", "--run", "run", "--grant-namespace", ns.Name, "--operator-grants", "operator", "--runtime-grants", "runtime", "--agent-grants", "agent", "--model-policy", "model", "--execution-mote", artifacts.Mote.Hash, "--execution-closure", artifacts.Closure.Hash, "--issuer-url", issuerURL, "--issuer-token-file", issuerToken, "--issuer-ca-file", issuerCA, "--router-url", router.URL, "--backend", backend}
 	for _, tool := range source.Tools {
 		args = append(args, "--tool", tool.Name+"@"+tool.Spec.Revision)

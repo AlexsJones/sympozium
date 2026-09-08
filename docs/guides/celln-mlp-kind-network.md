@@ -163,3 +163,21 @@ Persistent installation,
 host restart, network-policy refusal and general platform/RBAC
 qualification remain open. These bounded checks do not complete MLP release
 qualification or the broader epic.
+
+## Live service credential separation
+
+The ordinary success variant now checks the live TLS service endpoints before
+controller dispatch. Issuer status/provisioning and router execution endpoints
+must reject missing credentials and credentials belonging to the other services
+with 401 before request parsing. In particular, the dispatcher/backend token is
+not accepted as either ingress credential. Each endpoint must also reject the
+other endpoint's CA at TLS verification. No credentials or response bodies are
+written to the evidence; the subsequent successful real model journey establishes
+that the valid path still works.
+
+Read `service-credential-separation.json` together with the final
+`test-outcome.json`. Probes originate on the host inside the private network
+namespace. They are not tenant-Pod traffic or ingress/egress NetworkPolicy proof.
+They are kept out of cancellation/lost-response modes so those tests retain their
+exact execution-POST accounting. Malformed authenticated payloads and the wider
+guest/tenant adversarial matrix remain distinct checks.
