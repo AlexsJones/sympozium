@@ -31,8 +31,13 @@ func newCellnSelectionRemoteIssueCmd() *cobra.Command {
 	return newCellnSelectionCmd("issue-remote")
 }
 
+func newCellnSelectionRunIssueCmd() *cobra.Command {
+	return newCellnSelectionCmd("issue-run")
+}
+
 func newCellnSelectionCmd(mode string) *cobra.Command {
-	remote := mode == "issue-remote"
+	durable := mode == "issue-run"
+	remote := mode == "issue-remote" || durable
 	compose, issue := mode == "compose", mode == "issue" || remote
 	var sourceNamespace, operatorSource, runtimeSource, agentSource string
 	var selected []string
@@ -43,10 +48,14 @@ func newCellnSelectionCmd(mode string) *cobra.Command {
 	var options cellnreview.ComposeOptions
 	var issueOptions cellnreview.IssueOptions
 	var remoteOptions cellnreview.IssuerClientOptions
+	var route cellnreview.DispatchRoute
 	cmd := &cobra.Command{Use: "plan AGENT", Args: cobra.ExactArgs(1), SilenceUsage: true,
 		Short: "Resolve live grants and emit a Celln composition plan without executing",
 		Long:  "Operator-only planning input. Read three independently configured grant ConfigMaps and live Agent/runtime/tool identities. Prints the resolved authority snapshot and exact compositor input; does not grant authority, certify readiness, write resources, compose images or execute. Tenant-facing callers must not accept these source flags from run requests.",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if durable {
+				remoteOptions.Route = &route
+			}
 			if executionMote != "" || executionClosure != "" {
 				if compose || executionMote == "" || executionClosure == "" || modelPolicy == "" || runName == "" {
 					return fmt.Errorf("execution candidate requires plan, --run, --model-policy, --execution-mote and --execution-closure")
@@ -97,12 +106,24 @@ func newCellnSelectionCmd(mode string) *cobra.Command {
 								return clientErr
 							}
 							defer issuerClient.CloseIdleConnections()
-							issued, err = issuerClient.Issue(cmd.Context(), modelLoader, *frozen, *modelApproval, artifacts)
+							if durable {
+								seed := &cellnreview.IssuerRequest{APIVersion: "sympozium.ai/celln-issuer-request-v1", Frozen: *frozen, Approval: *modelApproval, Artifacts: artifacts}
+								// The CLI client is uncached. Preserve the exact seed on retry;
+								// IssueForRun refuses changed history instead of replacing it.
+								issued, err = issuerClient.IssueForRun(cmd.Context(), k8sClient, k8sClient, types.NamespacedName{Namespace: namespace, Name: runName}, modelLoader, seed)
+							} else {
+								issued, err = issuerClient.Issue(cmd.Context(), modelLoader, *frozen, *modelApproval, artifacts)
+							}
 						} else {
 							issued, err = cellnreview.Issue(cmd.Context(), modelLoader, *frozen, *modelApproval, artifacts, issueOptions)
 						}
 						if err != nil {
 							return err
+						}
+						if durable {
+							// Output failure must not withdraw a committed grant: the
+							// controller may already be executing this durable run.
+							return json.NewEncoder(cmd.OutOrStdout()).Encode(map[string]any{"apiVersion": "sympozium.ai/celln-run-issuance-report-v1", "namespace": namespace, "run": runName, "issuancePersisted": true, "controllerMayExecute": true, "artifactReadiness": "not_checked"})
 						}
 						version := "sympozium.ai/celln-issuance-report-v1"
 						if remote {
@@ -198,6 +219,17 @@ func newCellnSelectionCmd(mode string) *cobra.Command {
 		for _, name := range []string{"celln-binary", "policy-root", "composer-publisher"} {
 			_ = cmd.MarkFlagRequired(name)
 		}
+	}
+	if durable {
+		cmd.Use = "issue-run AGENT"
+		cmd.Short = "Persist trusted issuance on an AgentRun for catalogue controller execution"
+		cmd.Long = "Operator-only execution hand-off: persist an immutable Prepared request and serving route before remote issuance, then commit the verified Issued result on the AgentRun. A configured controller may immediately execute it. Retry only with the identical inputs; changed approvals, run identity or route refuse instead of replacing history. Lost CLI output does not undo issuance. Requires AgentRun status write access and controller configuration matching these trusted sources and route. No readiness claim."
+		cmd.Flags().StringVar(&route.RouterURL, "router-url", "", "Exact configured HTTPS router origin frozen before issuance")
+		cmd.Flags().StringVar(&route.Backend, "backend", "", "Exact configured HTTP dispatcher origin behind the router; no fallback")
+		for _, name := range []string{"router-url", "backend"} {
+			_ = cmd.MarkFlagRequired(name)
+		}
+		cmd.Flags().Lookup("run").Usage = "Existing same-namespace AgentRun to durably issue; controller may execute immediately"
 	}
 	return cmd
 }
