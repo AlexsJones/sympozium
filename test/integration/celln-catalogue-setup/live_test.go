@@ -374,7 +374,7 @@ func TestLiveCatalogueHarness(t *testing.T) {
 		if run.UID != recoveryIdentity.UID || run.Status.CellnActionID != recoveryIdentity.Status.CellnActionID || run.Status.CellnRequest != recoveryIdentity.Status.CellnRequest || loss.posts.Load() != 1 {
 			t.Fatal("lost response recovery changed execution identity or submitted a replacement")
 		}
-		writeJSON(t, filepath.Join(evidence, "lost-response-recovery.json"), map[string]any{"status": "passed", "scope": "actual host controller with injected TLS proxy response loss; surviving issuer/router/dispatcher", "controllerRestartedWhileUncertain": restartController, "runUID": run.UID, "action": run.Status.CellnActionID, "acceptedResponseLost": loss.dropped.Load(), "uncertainStatusObserved": true, "executionPosts": loss.posts.Load(), "savedRequestUnchanged": true, "phase": run.Status.Phase})
+		writeJSON(t, filepath.Join(evidence, "lost-response-recovery.json"), map[string]any{"status": "execution-checks-passed", "scope": "actual controller with injected TLS proxy response loss; surviving issuer/router/dispatcher; final cleanup outcome is in test-outcome.json", "controllerPodImage": controllerImage, "controllerRestartedWhileUncertain": restartController, "runUID": run.UID, "action": run.Status.CellnActionID, "acceptedResponseLost": loss.dropped.Load(), "uncertainStatusObserved": true, "executionPosts": loss.posts.Load(), "savedRequestUnchanged": true, "phase": run.Status.Phase})
 	}
 	if browserSubmission {
 		runBrowser(t, ctx, browserURL, ns.Name, runName, "")

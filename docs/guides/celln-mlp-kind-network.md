@@ -109,6 +109,24 @@ legacy/mixed Job cleanup stays intact. That failed run required verified manual
 test-finalizer release and is not counted as a pass.
 
 Read `test-outcome.json` for the result including registered cleanup;
-`summary.json` now describes execution checks only. Persistent installation,
-unissued-run cancellation, deployed active cancellation/recovery, host restart,
-network-policy refusal and general platform/RBAC qualification remain open.
+`summary.json` now describes execution checks only.
+
+Two further isolated controller-Pod cases passed:
+
+- [Active cancellation](../evidence/celln-controller-pod-cancellation-2026-09-08.json):
+  use `CELLN_LIVE_CANCEL_ACTIVE=1` and omit the browser/API image flags. The
+  YAML-created run is deleted only after an actual live cell is observed. Its
+  matching cancelled receipt, dissolution, finalizer completion and zero live
+  cells/Jobs are required. This is Kubernetes deletion, not browser cancellation.
+- [Lost-response recovery](../evidence/celln-controller-pod-recovery-2026-09-08.json):
+  add `CELLN_LIVE_LOST_RESPONSE=1` to the browser variant. After the real router
+  accepts the submission, the TLS proxy discards its response and blocks
+  observation until persisted uncertainty is visible. Recovery retained the
+  original request and made exactly one execution POST; the real two-tool model
+  result appeared on a fresh browser visit. No controller or host restart was
+  injected in this case.
+
+Persistent installation, unissued-run cancellation, browser cancellation,
+deployed Pod/host restart, network-policy refusal and general platform/RBAC
+qualification remain open. These bounded checks do not complete MLP release
+qualification or the broader epic.
