@@ -95,6 +95,19 @@ cleanup assertions still apply. This tests recovery from durable Kubernetes
 issuance/request state rather than the original controller's memory; it does
 not prove dispatcher or serving-host restart recovery.
 
+## Issuer process recovery
+
+For an issuer process recovery check, add `CELLN_LIVE_RESTART_ISSUER=1` with
+`CELLN_LIVE_ISSUER_PROCESS=1` to the successful live journey (not either
+cancellation mode). After the real model task and terminal audit, the fixture
+kills and reaps only its issuer process, restarts the same command over the same
+state, and waits for the authenticated TLS provisioning gate to reopen. Existing
+profile and journal bytes must remain identical: renewal is not recovery. It
+then withdraws model approval and requires the restarted issuer to remove the
+profile, refuse new host issuance and retain the existing execution receipt.
+This is same-boot issuer-process recovery with surviving controller/router/
+dispatcher, not systemd sandbox qualification or serving-host reboot.
+
 ## Cancellation before issuance
 
 New untouched Celln runs record `status.cellnOnly: true` before their finalizer

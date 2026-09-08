@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
@@ -73,6 +74,10 @@ func TestLiveCatalogueHarness(t *testing.T) {
 	}
 	cancelActive := os.Getenv("CELLN_LIVE_CANCEL_ACTIVE") == "1"
 	cancelUnissued := os.Getenv("CELLN_LIVE_CANCEL_UNISSUED") == "1"
+	restartIssuer := os.Getenv("CELLN_LIVE_RESTART_ISSUER") == "1"
+	if restartIssuer && (os.Getenv("CELLN_LIVE_ISSUER_PROCESS") != "1" || cancelActive || cancelUnissued) {
+		t.Fatal("issuer restart requires standalone issuer and a successful execution journey")
+	}
 	browserCancel := os.Getenv("CELLN_LIVE_BROWSER_CANCEL") == "1"
 	if browserCancel && (!(cancelUnissued || cancelActive) || !browserSubmission || os.Getenv("CELLN_LIVE_APISERVER_IMAGE") == "") {
 		t.Fatal("browser cancellation requires deployed API/browser and a cancellation mode")
@@ -254,8 +259,9 @@ func TestLiveCatalogueHarness(t *testing.T) {
 	writeJSON(t, filepath.Join(root, "model-credentials.json"), map[string]any{"apiVersion": "sympozium.ai/celln-host-credentials-v1", "profiles": map[string]string{"catalogue-proof": credential}})
 	issuerProcess := os.Getenv("CELLN_LIVE_ISSUER_PROCESS") == "1"
 	var issuerURL, issuerToken, issuerCA string
+	var restartIssuerProcess func()
 	if issuerProcess {
-		issuerURL, issuerToken, issuerCA = liveIssuerProcess(t, ctx, dir, cli, kube, binary, root, signed.Publisher, ns.Name)
+		issuerURL, issuerToken, issuerCA, restartIssuerProcess = liveIssuerProcess(t, ctx, dir, cli, kube, binary, root, signed.Publisher, ns.Name)
 	} else {
 		managed, err := cellnreview.NewManagedIssuer(cellnreview.IssueOptions{Binary: binary, PolicyRoot: root, ComposerPublisher: signed.Publisher, ProfileLifetime: 5 * time.Minute}, map[types.NamespacedName]cellnauthority.ModelLoader{{Namespace: ns.Name, Name: "agent"}: ml}, time.Second)
 		must(t, err)
@@ -456,12 +462,28 @@ func TestLiveCatalogueHarness(t *testing.T) {
 	must(t, os.WriteFile(filepath.Join(evidence, "audit.json"), auditBytes, 0600))
 	writeJSON(t, filepath.Join(evidence, "node.json"), node)
 	writeJSON(t, filepath.Join(evidence, "jobs.json"), jobs)
-	// Current approval withdrawal must not prevent retrieving the existing
-	// owner, but must remove host admission before any new use.
-	must(t, c.Delete(ctx, &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Namespace: ns.Name, Name: "model"}}))
 	var issued cellnreview.IssuedSelection
 	must(t, json.Unmarshal([]byte(run.Status.CellnIssuance.Result), &issued))
 	profilePath := filepath.Join(root, "trusted-model-profiles", issued.Profile+".json")
+	if restartIssuer {
+		journalPath := filepath.Join(root, "sympozium-issuer-journal", issued.Profile+".json")
+		profileBefore, err := os.ReadFile(profilePath)
+		must(t, err)
+		journalBefore, err := os.ReadFile(journalPath)
+		must(t, err)
+		restartIssuerProcess()
+		profileAfter, err := os.ReadFile(profilePath)
+		must(t, err)
+		journalAfter, err := os.ReadFile(journalPath)
+		must(t, err)
+		if !bytes.Equal(profileBefore, profileAfter) || !bytes.Equal(journalBefore, journalAfter) {
+			t.Fatal("issuer restart changed existing profile or journal; renewal/replacement is not recovery")
+		}
+		writeJSON(t, filepath.Join(evidence, "issuer-restart.json"), map[string]any{"status": "recovery-checks-passed", "scope": "actual issuer process killed/reaped/restarted after successful execution; same boot and surviving controller/router/dispatcher; not systemd installation or host reboot", "runUID": run.UID, "action": run.Status.CellnActionID, "authenticatedGateReopened": true, "profileBytesUnchanged": true, "journalBytesUnchanged": true, "profileSHA256": fmt.Sprintf("%x", sha256.Sum256(profileAfter)), "journalSHA256": fmt.Sprintf("%x", sha256.Sum256(journalAfter)), "withdrawalAndCleanupOutcome": "subsequent checks and test-outcome.json"})
+	}
+	// Current approval withdrawal must not prevent retrieving the existing
+	// owner, but must remove host admission before any new use.
+	must(t, c.Delete(ctx, &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Namespace: ns.Name, Name: "model"}}))
 	for end := time.Now().Add(10 * time.Second); time.Now().Before(end); {
 		if _, err := os.Stat(profilePath); os.IsNotExist(err) {
 			break

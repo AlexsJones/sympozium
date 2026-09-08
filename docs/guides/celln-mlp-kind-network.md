@@ -151,6 +151,14 @@ Further isolated controller-Pod cases passed:
   and zero live cells/Jobs. The UI removes the run rather than retaining a
   cancelled-run detail page; the execution owner retains the receipt separately.
 
+- [Issuer process recovery](../evidence/celln-issuer-restart-2026-09-08.json):
+  add `CELLN_LIVE_RESTART_ISSUER=1` to the successful standalone-issuer/browser
+  variant. After terminal model execution the actual issuer is killed/reaped and
+  restarted over the same state. Its authenticated gate reopens without changing
+  profile/journal bytes, and subsequent approval withdrawal and refusal pass.
+  This is same-boot recovery after issuance, not the systemd sandbox, in-flight
+  issuance interruption or serving-host reboot.
+
 Persistent installation,
 host restart, network-policy refusal and general platform/RBAC
 qualification remain open. These bounded checks do not complete MLP release
