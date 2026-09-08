@@ -39,6 +39,10 @@ balancer that silently substitutes another host after an ambiguous request.
 
 ## 2. Prepare and admit the Harness/tool composition
 
+Use the [borrowed-tool handoff](celln-mlp-borrowed-tools.md) to coordinate
+administrator review/admission with the user's UI or complete one-shot YAML.
+The example references are illustrative; they do not install or approve artifacts.
+
 Follow [runtime profiles](celln-runtime-profile.md), [tool catalogue metadata](celln-tool-catalogue.md),
 [tool review](celln-tool-review.md) and [independent tool authority](celln-tool-authority.md).
 An administrator reviews BYO tool artifacts and their signed sources; adding a

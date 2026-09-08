@@ -95,5 +95,7 @@ cleanup and withdrawal refusal.
 
 This proves registered automatic issuance/execution. The fixture materializer
 is not production admission. On-demand packaging/distribution, selection-specific
-readiness, live browser-to-model, conversations and fleet qualification remain
-separate release gates.
+readiness, conversations and fleet qualification remain separate release gates.
+Actual browser-to-model and deployed API/controller variants now have separate
+evidence in the [MLP acceptance index](celln-mlp-acceptance.md); their isolated
+topology does not complete persistent installation qualification.

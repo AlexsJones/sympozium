@@ -1,4 +1,4 @@
-# Harness + Celln selection UX: initial UI/API selection, provisioning pending
+# Harness + Celln selection UX: administrator-assisted one-shot delivery
 
 Recorded for [epic #426](https://github.com/sympozium-ai/sympozium/issues/426)
 after the user's UI/YAML question. The approved experience has three distinct
@@ -15,7 +15,10 @@ Select an Agent, inherit its Harness or choose a one-run override, then select
 Celln. A compatible native JSON profile opens **Harness in Celln**, with an
 explicit DeepSeek model and ordered tool checkboxes. Empty selection lends no
 tools. The form shows catalogue descriptions, support owners, publisher keys
-and declared limits; these are not the final effective grant intersection.
+and declared limits. The effective-permission preview separately resolves the
+current grant intersection; it is not executable readiness or permission to
+bypass subsequent issuance checks. See the [borrowed-tool handoff](celln-mlp-borrowed-tools.md)
+for the complete user YAML example and administrator prerequisites.
 Incompatible runtimes and unavailable catalogues block the request. A native
 runtime without an OCI image cannot be submitted to the Job backend.
 
@@ -28,8 +31,10 @@ separate ambient-host-model warning. No Celln chat/session button is exposed.
 
 Catalogue listing uses a namespace-scoped read-only endpoint and read-only
 apiserver RBAC. It does not expose tool approval or grant mutation. Browser
-contract tests use intercepted responses; they do not establish live deployment
-or full UI → model → tool acceptance.
+contract tests use intercepted responses; they do not establish live deployment.
+Separate actual browser/API/controller/KVM/DeepSeek evidence now exists in the
+[MLP acceptance index](celln-mlp-acceptance.md), including cancellation, recovery
+and selected security checks. Persistent installation qualification remains open.
 
 ## UI requirements
 
