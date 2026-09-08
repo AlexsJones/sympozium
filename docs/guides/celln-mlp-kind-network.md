@@ -1,7 +1,7 @@
 # Isolated Kind pod-to-host proof: network boundary
 
-This is a test-topology preparation note, not a completed controller-Pod proof
-or production network recipe. Keep the explicit `kind-celln-deployed` context;
+The controller-Pod/browser-to-host proof now passes in this isolated topology;
+it is not a production network recipe. Keep the explicit `kind-celln-deployed` context;
 do not use the ambient/default cluster or bind services to the host LAN.
 
 The development cluster is owned by rootless Podman. On 2026-09-08 its private
@@ -21,13 +21,13 @@ A credential-free TCP diagnostic established these facts:
   networking, TLS authentication, Kubernetes approval reads or KVM execution in
   that namespace. Those must pass together before deployment is claimed.
 
-The prepared controller image is `localhost/sympozium-celln-controller:e2edef1`,
-image ID `2b02f54ba75244ea9eb03abd514f76fbfcc6f5b29836d2ea7ed61a570200816e`.
+The passing controller image is `localhost/sympozium-celln-controller:0cd9668`,
+built image ID `3dd10b2d9f304cb461e04ddb8233adbc49d7b560bf944861af25e7b4ae00c253`.
 It was built from the committed source archive and loaded into the isolated
 cluster with the Podman image-archive workflow in the MLP installation guide.
 Loading an image is not a controller rollout or an execution proof.
 
-The planned private-gateway proof must retain verified TLS on the controller's
+The private-gateway proof retains verified TLS on the controller's
 issuer/router connections. Certificates must name their actual reachable IP or
 DNS endpoint and use fresh private keys, not Go's publicly known httptest key.
 The integration helper now generates independent, short-lived certificates and
@@ -47,8 +47,8 @@ provider credentials and the admitted store stay out of controller/API Pods.
 The controller accepts `--watch-namespace=<proof-namespace>` for a single
 namespaced cache scope. Empty/default retains cluster-wide behavior; malformed
 names, wildcards and comma-separated lists refuse startup. In scoped mode its
-leader-election Lease also uses that namespace. The previously prepared
-`e2edef1` image predates this flag and must be rebuilt before using it.
+leader-election Lease also uses that namespace. The older `e2edef1` image
+predates this flag and cannot be used for the scoped controller proof.
 
 This is **not tenant authorization**: cluster-scoped resources are still
 cluster-scoped, and uncached/direct clients can access separately configured
@@ -58,3 +58,57 @@ reads are restricted to the configured objects. Do not grant cluster-wide
 writes just because the informer cache is scoped. Features expecting other
 namespaces may need separate readers/configuration; scoped mode is not a claim
 that every cross-namespace platform feature has been qualified.
+
+## Running the controller-Pod variant
+
+Keep the original kubeconfig untouched. Create a private copy for the test
+network namespace, and change only that copy's endpoint/name verification:
+
+```sh
+kube_proof_dir=$(mktemp -d /tmp/celln-private-kube.XXXXXX)
+cp "$CELLN_CONTROLLER_KUBECONFIG" "$kube_proof_dir/kubeconfig"
+chmod 600 "$kube_proof_dir/kubeconfig"
+kubectl --kubeconfig "$kube_proof_dir/kubeconfig" config set-cluster \
+  kind-celln-deployed --server=https://10.89.0.2:6443 --tls-server-name=kubernetes
+podman unshare --rootless-netns kubectl --kubeconfig "$kube_proof_dir/kubeconfig" \
+  --context kind-celln-deployed get nodes
+```
+
+These addresses were verified for the recorded cluster, not discovered as a
+production default. The original CA/client credentials remain in the copy;
+verification is not disabled. Confirm the provider and addresses before use.
+
+Run `test/integration/test-celln-catalogue-harness.sh` under
+`podman unshare --rootless-netns env`, with the existing explicit pinned
+operator-admission/model/browser inputs and these additional settings:
+
+- `CELLN_CONTROLLER_KUBECONFIG`: the private copy above.
+- `CELLN_LIVE_CONTROLLER_IMAGE`: the loaded reviewed controller image.
+- `CELLN_LIVE_ISSUER_PROCESS=1` and `CELLN_LIVE_AUTOMATIC_ISSUANCE=1`.
+
+Issuer and router TLS listeners bind only the private gateway. Their certificates
+name that IP. The router's backend remains loopback within the same private
+network namespace; the controller does not connect to the backend directly.
+No provider key, host store, backend token or TLS private key enters the controller
+Pod. Its dedicated Secret holds only its config, separate issuer/router tokens
+and CA files. The API Pod does not mount that Secret.
+
+The controller gets namespace-only read/watch permissions (including ConfigMaps
+needed by registered controllers), AgentRun patch/status/finalizer permission,
+and Agent/AgentRuntime status writes. It gets no Secret API reads, approval
+writes, Job creation or cluster-wide RBAC. Other registered platform controllers
+can log permission refusals; this restricted fixture is not a general-purpose
+Sympozium controller installation.
+
+The [passing evidence](../evidence/celln-controller-pod-browser-2026-09-08.json)
+includes real browser selection/results, host KVM/model execution, withdrawal,
+finalizer completion and zero live cells/Jobs. An earlier run completed the AI
+task but failed cleanup by entering Job-sidecar ClusterRole discovery. The fix
+skips that path only for recorded Celln-only executions with no pod-plane state;
+legacy/mixed Job cleanup stays intact. That failed run required verified manual
+test-finalizer release and is not counted as a pass.
+
+Read `test-outcome.json` for the result including registered cleanup;
+`summary.json` now describes execution checks only. Persistent installation,
+unissued-run cancellation, deployed active cancellation/recovery, host restart,
+network-policy refusal and general platform/RBAC qualification remain open.
