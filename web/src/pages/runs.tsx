@@ -61,6 +61,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useRunsSeen } from "@/hooks/use-runs-seen";
 import type { AgentRun } from "@/lib/api";
+import { CellnPermissionPreview } from "@/components/celln-permission-preview";
 
 /** Returns true when a run is in PostRunning with a gate hook awaiting a verdict. */
 function isAwaitingGate(run: AgentRun): boolean {
@@ -297,6 +298,7 @@ export function RunsPage() {
                         </label>;
                       })}
                       <p className="text-xs">Lending order: {lentTools.map((ref) => `${ref.name}@${ref.revision}`).join(" → ") || "none"}</p>
+                      {compatibleHarness && !staleTools && <CellnPermissionPreview agentRef={form.agentRef} selection={{ runtimeRef: form.runtimeRef || undefined, toolRefs: lentTools }} />}
                       {staleTools && <p role="alert" className="text-xs text-red-400">The catalogue changed. Clear and reselect the borrowed tools before submitting.</p>}
                       {!!lentTools.length && <Button type="button" variant="outline" size="sm" onClick={() => setLentTools([])}>Clear borrowed tools</Button>}
                       <p className="text-xs text-amber-500">Selection readiness is not established. Catalogue metadata is not permission to run. Registered compositions can receive trusted issuance automatically; new combinations require operator preparation. Current approvals and effective permissions are checked before execution.</p>

@@ -154,7 +154,7 @@ func TestLiveCatalogueHarness(t *testing.T) {
 		t.Cleanup(server.Close)
 		var created api.AgentRun
 		if browserSubmission {
-			browserURL = browserServer(t, c)
+			browserURL = browserServer(t, c, ns.Name)
 			runBrowser(t, ctx, browserURL, ns.Name, "", setup.Spec.Task.GetPrompt())
 			var runs api.AgentRunList
 			must(t, c.List(ctx, &runs, client.InNamespace(ns.Name)))

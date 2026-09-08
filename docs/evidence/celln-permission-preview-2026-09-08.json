@@ -1,0 +1,21 @@
+{
+  "status": "passed",
+  "sourceBase": "356ca5a",
+  "sourceChanges": "permission preview implementation and live browser assertions committed alongside this evidence",
+  "scope": "Actual browser displays trusted grant intersection, then actual automatic controller/KVM/DeepSeek execution returns rendered result",
+  "durationSeconds": 45.27,
+  "namespace": "celln-catalogue-proof-w4gxx",
+  "runUID": "a9394627-6771-46bc-a182-e3a8253205cc",
+  "action": "celln-05f9244eebf2537c5a6bd4baf340085c3042e749d63ab6248571cb006d288581",
+  "closure": "blake3:a8b61214f9ec4bda37fdbce1fcc48d33a444a7e21f2b912ca4c8a199b244fc2b",
+  "modelRequests": 3,
+  "toolCalls": ["uppercase", "length"],
+  "visibleAnswer": "CELLN has length 5",
+  "jobs": 0,
+  "liveCellsAfterCompletion": 0,
+  "modelPolicyWithdrawalAndReissuanceRefusal": true,
+  "ownerReceiptRetained": true,
+  "proofControllerRestored": true,
+  "portableTests": "narrower grant intersection/shared memory cap, immediate withdrawal refusal, empty lending, invalid/duplicate/cross-namespace refs, strict bounded configuration and caller authority injection refusal",
+  "limitations": ["Loopback API without deployed authentication or WebSocket streaming", "No model authority or host readiness claim from preview", "Pre-registered fixture artifacts, not production on-demand admission/distribution", "No conversations/fleet/release qualification claim"]
+}
