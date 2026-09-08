@@ -17,8 +17,11 @@ import (
 
 // Serve the built application with real API handlers, on loopback only. No
 // intercepted responses, default kubeconfig discovery or external dev server.
-func browserServer(t *testing.T, c client.Client, namespace string) string {
+func browserServer(t *testing.T, ctx context.Context, c client.Client, namespace string) string {
 	t.Helper()
+	if image := os.Getenv("CELLN_LIVE_APISERVER_IMAGE"); image != "" {
+		return deployedBrowserServer(t, ctx, c, namespace, image)
+	}
 	web := os.Getenv("CELLN_LIVE_WEB_ROOT")
 	if !filepath.IsAbs(web) {
 		t.Fatal("absolute CELLN_LIVE_WEB_ROOT required")

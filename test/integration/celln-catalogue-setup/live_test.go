@@ -29,6 +29,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -65,6 +66,9 @@ func TestLiveCatalogueHarness(t *testing.T) {
 	if browserSubmission {
 		httpSubmission = true
 	}
+	if os.Getenv("CELLN_LIVE_APISERVER_IMAGE") != "" && !browserSubmission {
+		t.Fatal("deployed API image requires browser submission; no silent loopback fallback")
+	}
 	if httpSubmission && !automatic {
 		t.Fatal("HTTP submission requires automatic issuance")
 	}
@@ -81,6 +85,7 @@ func TestLiveCatalogueHarness(t *testing.T) {
 	must(t, corev1.AddToScheme(scheme))
 	must(t, appsv1.AddToScheme(scheme))
 	must(t, batchv1.AddToScheme(scheme))
+	must(t, rbacv1.AddToScheme(scheme))
 	c, err := client.New(rest, client.Options{Scheme: scheme})
 	must(t, err)
 	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
@@ -153,12 +158,9 @@ func TestLiveCatalogueHarness(t *testing.T) {
 		}
 		uid := setup.UID
 		must(t, c.Delete(ctx, &setup, &client.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &uid}}))
-		// Loopback-only test HTTP server; this is not a deployment/auth proof.
-		server := httptest.NewServer(apiserver.NewServer(c, nil, nil, logr.Discard()).Handler(nil))
-		t.Cleanup(server.Close)
 		var created api.AgentRun
 		if browserSubmission {
-			browserURL = browserServer(t, c, ns.Name)
+			browserURL = browserServer(t, ctx, c, ns.Name)
 			runBrowser(t, ctx, browserURL, ns.Name, "", setup.Spec.Task.GetPrompt())
 			var runs api.AgentRunList
 			must(t, c.List(ctx, &runs, client.InNamespace(ns.Name)))
@@ -167,6 +169,9 @@ func TestLiveCatalogueHarness(t *testing.T) {
 			}
 			created = runs.Items[0]
 		} else {
+			// Loopback HTTP-only mode is not a deployment/auth proof.
+			server := httptest.NewServer(apiserver.NewServer(c, nil, nil, logr.Discard()).Handler(nil))
+			t.Cleanup(server.Close)
 			body, err := json.Marshal(apiserver.CreateRunRequest{AgentRef: setup.Spec.AgentRef, Task: setup.Spec.Task.GetPrompt(), Model: "deepseek-chat", Provider: "deepseek", Backend: "celln", Timeout: "180s", CellnSelection: setup.Spec.CellnSelection})
 			must(t, err)
 			req, err := http.NewRequestWithContext(ctx, http.MethodPost, server.URL+"/api/v1/runs?namespace="+url.QueryEscape(ns.Name), bytes.NewReader(body))
@@ -389,7 +394,7 @@ func TestLiveCatalogueHarness(t *testing.T) {
 			t.Fatal("owner receipt changed after withdrawal")
 		}
 	}
-	writeJSON(t, filepath.Join(evidence, "summary.json"), map[string]any{"status": "passed", "scope": "actual host controller/issuer/router/KVM with isolated Kind API and real DeepSeek; not deployed pod topology or production admission", "automaticRegisteredIssuance": automatic, "issuanceCLIUsed": !automatic, "namespace": ns.Name, "runUID": run.UID, "action": run.Status.CellnActionID, "closure": composition.Closure, "brokerRequests": 3, "toolCalls": 2, "jobs": 0, "liveCells": 0, "modelPolicyWithdrawn": true, "hostReissuanceRefused": true, "ownerReceiptRetained": true})
+	writeJSON(t, filepath.Join(evidence, "summary.json"), map[string]any{"status": "passed", "scope": "actual host controller/issuer/router/KVM with isolated Kind API and real DeepSeek; not full deployed control-plane topology or production qualification", "deployedBrowserAPIImage": os.Getenv("CELLN_LIVE_APISERVER_IMAGE"), "browserSubmission": browserSubmission, "operatorAdmission": operatorAdmission, "automaticRegisteredIssuance": automatic, "issuanceCLIUsed": !automatic, "namespace": ns.Name, "runUID": run.UID, "action": run.Status.CellnActionID, "closure": composition.Closure, "brokerRequests": 3, "toolCalls": 2, "jobs": 0, "liveCells": 0, "modelPolicyWithdrawn": true, "hostReissuanceRefused": true, "ownerReceiptRetained": true})
 	t.Logf("PASS actual Kind named catalogue -> signed composition -> TLS issuer -> durable status -> configured controller -> TLS pinned router -> KVM -> DeepSeek uppercase and length -> terminal receipt -> model-policy withdrawal -> retained owner receipt; automaticRegisteredIssuance=%t namespace=%s runUID=%s action=%s closure=%s", automatic, ns.Name, run.UID, run.Status.CellnActionID, composition.Closure)
 }
 

@@ -107,3 +107,30 @@ Before declaring this installation usable, exercise its real UI and YAML paths:
 Use [MLP troubleshooting](celln-mlp-troubleshooting.md) for status meanings. Keep
 these acceptance results distinct from the existing loopback fixture evidence.
 Until they pass on the deployed topology, the MLP installation gate remains open.
+
+### Isolated deployed API/browser proof
+
+The live catalogue integration test has an opt-in deployed API mode. Build the
+actual `images/apiserver/Dockerfile` from the tested source revision, use a unique
+`localhost/sympozium-celln-api:<revision>` tag, and load that image into the
+explicit `celln-deployed` Kind cluster. Set `CELLN_LIVE_APISERVER_IMAGE` to that
+tag alongside `CELLN_LIVE_BROWSER_SUBMISSION=1` and the existing explicit live
+test inputs. The pod uses `imagePullPolicy: Never`; there is no remote-image or
+loopback-server fallback if the selected image cannot start.
+
+This mode creates a separate API Deployment, ClusterIP Service, service account,
+UI-token Secret and preview ConfigMap in the test's private namespace. It never
+replaces the installed API server. It forwards only to `127.0.0.1`, verifies
+missing/wrong bearer tokens refuse, then uses the real UI to submit and inspect
+the run. The ephemeral fixture UI token is public test data, not a production
+credential; use this mode only in the isolated test cluster. No model, issuer or
+router credential is mounted in this API pod.
+
+The current API cache needs cluster-wide list/watch permission for the selected
+catalogue/run resource types and node/namespace discovery. Test RBAC gives only
+those read permissions; AgentRun writes and the three named approval ConfigMap
+reads remain scoped to the private namespace. It grants no Secret read or
+approval write permission. Cluster-scoped test RBAC is deleted by UID as well as
+namespace cleanup. API deployment alone does not qualify the host-process
+controller/issuer/router fixture as a fully deployed control plane. Record live
+results separately; the portable deployment-boundary test is not live evidence.
