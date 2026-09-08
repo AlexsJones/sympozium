@@ -58,3 +58,20 @@ rather than being counted as a cancellation pass.
 This is separate evidence from model-task success and from deployed
 API/browser cancellation. Neither this mode nor local mote withdrawal proves
 fleet-wide revocation or interruption recovery.
+
+## Lost dispatch response integration mode
+
+Set `CELLN_LIVE_LOST_RESPONSE=1` with automatic issuance and the existing explicit
+live test inputs. This mode is separate from active cancellation. The real router
+must accept the execution POST before the test TLS proxy discards its successful
+response and returns an injected 503. The proxy then temporarily refuses owner
+lookups until the Kubernetes run reports `ExecutionOutcomeUnconfirmed` with its
+saved request identity. It never synthesizes a successful execution response.
+
+After restoring connectivity, the test requires the original UID, request ID and
+request bytes, exactly one execution POST through the proxy, and the ordinary
+real-model two-tool result, correlated audit/receipt, cleanup and approval
+withdrawal checks. A passing portable proxy test only validates fault injection;
+it is not evidence for the controller/KVM journey. This scenario is response
+loss with a surviving owner, not host/process loss, fleet failover or deployed
+browser recovery. Those remain distinct qualification requirements.

@@ -70,6 +70,10 @@ func TestLiveCatalogueHarness(t *testing.T) {
 		t.Fatal("deployed API image requires browser submission; no silent loopback fallback")
 	}
 	cancelActive := os.Getenv("CELLN_LIVE_CANCEL_ACTIVE") == "1"
+	lostResponse := os.Getenv("CELLN_LIVE_LOST_RESPONSE") == "1"
+	if lostResponse && (!automatic || cancelActive) {
+		t.Fatal("lost-response proof requires automatic issuance and cannot be combined with active cancellation")
+	}
 	if cancelActive && (httpSubmission || !automatic) {
 		t.Fatal("active cancellation proof requires automatic YAML submission; browser result mode expects success")
 	}
@@ -239,7 +243,14 @@ func TestLiveCatalogueHarness(t *testing.T) {
 	transport := &http.Transport{Proxy: nil}
 	proxy.Transport = transport
 	t.Cleanup(transport.CloseIdleConnections)
-	router := httptest.NewTLSServer(proxy)
+	var loss *dispatchResponseLoss
+	var routerHandler http.Handler = proxy
+	if lostResponse {
+		loss = newDispatchResponseLoss(proxy)
+		routerHandler = loss
+		t.Cleanup(func() { loss.released.Store(true) })
+	}
+	router := httptest.NewTLSServer(routerHandler)
 	t.Cleanup(router.Close)
 	routerCA := filepath.Join(dir, "router-ca.pem")
 	must(t, os.WriteFile(routerCA, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: router.Certificate().Raw}), 0600))
@@ -301,6 +312,10 @@ func TestLiveCatalogueHarness(t *testing.T) {
 		proveActiveCatalogueCancellation(t, ctx, c, key, run.UID, root, backend, backendToken, router, routerToken, evidence)
 		return
 	}
+	var recoveryIdentity *api.AgentRun
+	if lostResponse {
+		recoveryIdentity = observeLostCatalogueResponse(t, ctx, c, key, loss, evidence)
+	}
 	for time.Now().Before(deadline) {
 		must(t, c.Get(ctx, key, &run))
 		if run.Status.Phase == api.AgentRunPhaseSucceeded || run.Status.Phase == api.AgentRunPhaseFailed {
@@ -313,6 +328,12 @@ func TestLiveCatalogueHarness(t *testing.T) {
 		t.Fatalf("catalogue run did not succeed: phase=%s error=%s", run.Status.Phase, run.Status.Error)
 	}
 	validateLiveResult(t, run)
+	if lostResponse {
+		if run.UID != recoveryIdentity.UID || run.Status.CellnActionID != recoveryIdentity.Status.CellnActionID || run.Status.CellnRequest != recoveryIdentity.Status.CellnRequest || loss.posts.Load() != 1 {
+			t.Fatal("lost response recovery changed execution identity or submitted a replacement")
+		}
+		writeJSON(t, filepath.Join(evidence, "lost-response-recovery.json"), map[string]any{"status": "passed", "scope": "actual host controller with injected TLS proxy response loss; not process/host loss", "runUID": run.UID, "action": run.Status.CellnActionID, "acceptedResponseLost": loss.dropped.Load(), "uncertainStatusObserved": true, "executionPosts": loss.posts.Load(), "savedRequestUnchanged": true, "phase": run.Status.Phase})
+	}
 	if browserSubmission {
 		runBrowser(t, ctx, browserURL, ns.Name, runName, "")
 	}
