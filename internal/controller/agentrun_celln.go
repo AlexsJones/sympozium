@@ -196,7 +196,7 @@ func (r *AgentRunReconciler) reconcilePendingCelln(
 	// Catalogue issuance cannot fall through to the legacy task-forge path.
 	// Its separately verified dispatch bridge must consume the saved outcome.
 	if agentRun.Status.CellnIssuance != nil {
-		return ctrl.Result{}, fmt.Errorf("Celln catalogue issuance dispatch is not yet connected")
+		return r.reconcilePendingCatalogue(ctx, log, agentRun)
 	}
 	log.Info("Dispatching AgentRun to Celln backend")
 
@@ -367,6 +367,9 @@ func (r *AgentRunReconciler) reconcileRunningCelln(
 		}
 	}
 
+	if agentRun.Status.CellnIssuance != nil {
+		return r.reconcileRunningCatalogue(ctx, log, agentRun)
+	}
 	req, err := cellnRequest(ctx, http.MethodGet, "/v1/executions/"+actionID, nil)
 	if err != nil {
 		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
@@ -407,7 +410,11 @@ func (r *AgentRunReconciler) reconcileRunningCelln(
 	if decoder.Decode(new(any)) != io.EOF {
 		return ctrl.Result{}, r.failRun(ctx, agentRun, "Celln: trailing execution response data")
 	}
-	if record.RequestID != actionID {
+	return r.applyCellnRecord(ctx, log, agentRun, record)
+}
+
+func (r *AgentRunReconciler) applyCellnRecord(ctx context.Context, log logr.Logger, agentRun *sympoziumv1alpha1.AgentRun, record executionRecord) (ctrl.Result, error) {
+	if record.RequestID != agentRun.Status.CellnActionID {
 		return ctrl.Result{}, r.failRun(ctx, agentRun, "Celln: mismatched execution record identity")
 	}
 

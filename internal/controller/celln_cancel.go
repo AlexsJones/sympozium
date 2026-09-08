@@ -20,6 +20,9 @@ func (r *AgentRunReconciler) cancelCelln(ctx context.Context, run *sympoziumv1al
 	if id == "" {
 		return true, nil
 	}
+	if run.Status.CellnIssuance != nil {
+		return r.cancelCatalogue(ctx, run)
+	}
 	if id != cellnActionID(run) {
 		return false, fmt.Errorf("Celln: cancellation identity mismatch")
 	}
