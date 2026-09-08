@@ -145,6 +145,7 @@ func (s *Server) buildMux(frontendFS fs.FS, expected *tokenReader) http.Handler 
 
 	// Administrator-approved harness runtimes
 	mux.HandleFunc("GET /api/v1/runtimes", s.listRuntimes)
+	mux.HandleFunc("GET /api/v1/celln-tools", s.listCellnTools)
 	mux.HandleFunc("POST /api/v1/runtimes/install-defaults", s.installDefaultRuntimes)
 	// Persistent harness sessions. The API server owns the only browser-facing
 	// route to a session's private in-cluster Service.
@@ -421,6 +422,25 @@ func (s *Server) listRuntimes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sort.Slice(list.Items, func(i, j int) bool { return list.Items[i].Name < list.Items[j].Name })
+	writeJSON(w, list.Items)
+}
+
+// Catalogue metadata is review input, not per-Agent authority or readiness.
+// This endpoint intentionally provides no create/approve/status mutation.
+func (s *Server) listCellnTools(w http.ResponseWriter, r *http.Request) {
+	ns := r.URL.Query().Get("namespace")
+	if ns == "" {
+		ns = "default"
+	}
+	var list sympoziumv1alpha1.CellnToolList
+	if err := s.client.List(r.Context(), &list, client.InNamespace(ns)); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	sort.Slice(list.Items, func(i, j int) bool { return list.Items[i].Name < list.Items[j].Name })
+	if list.Items == nil {
+		list.Items = []sympoziumv1alpha1.CellnTool{}
+	}
 	writeJSON(w, list.Items)
 }
 

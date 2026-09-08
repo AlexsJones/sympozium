@@ -1,0 +1,31 @@
+{
+  "status": "passed",
+  "scope": "initial run-selection UI contract, read-only catalogue endpoint and RBAC; not live UI-to-model acceptance",
+  "browser": {
+    "runner": "Cypress 15.13.0, Electron 138, local Vite",
+    "testsPassed": 5,
+    "tests": [
+      "Ordered uppercase/length lending sends explicit provider/model and no OCI runtime override",
+      "Empty selection sends an explicit empty list",
+      "OCI-only runtime cannot be requested as native Celln Harness",
+      "Catalogue retrieval failure blocks submission",
+      "One-run runtime override is nested inside cellnSelection"
+    ],
+    "apiResponses": "intercepted fixtures",
+    "clusterTokenDiscovery": false,
+    "modelCalls": 0
+  },
+  "checks": [
+    "Full go test -race ./... -count=1 with real NATS fixture available",
+    "go build ./... and go vet ./...",
+    "npm run build (TypeScript and production Vite build)",
+    "Namespace-scoped sorted catalogue endpoint, empty array and unsupported mutation tests",
+    "Rendered Helm apiserver catalogue rule permits only get/list/watch"
+  ],
+  "limits": [
+    "Request waits for operator issuance; no automatic packaging/distribution",
+    "Displayed catalogue limits are declared metadata, not the final grant intersection",
+    "Conversations and full borrowed-tool submission/review UI remain open",
+    "Existing dependency audit reported 17 vulnerabilities (2 low, 3 moderate, 12 high); lockfile unchanged and dependency remediation not performed here"
+  ]
+}

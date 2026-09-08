@@ -3,6 +3,7 @@
 // ── Common K8s types ─────────────────────────────────────────────────────────
 
 export interface ObjectMeta {
+  uid?: string;
   name: string;
   namespace?: string;
   creationTimestamp?: string;
@@ -135,7 +136,8 @@ export interface Agent {
 export interface AgentRuntime {
   metadata: ObjectMeta;
   spec: {
-    image: string;
+    image?: string;
+    celln?: { contractVersion: string; revision: string; lifecycle: string; publisherKey: string };
     contractVersion?: string;
     capabilities?: string[];
     session?: {
@@ -153,6 +155,25 @@ export interface AgentRuntime {
     resolvedImageDigest?: string;
     conditions?: Condition[];
   };
+}
+
+export interface CellnSelection {
+  runtimeRef?: string;
+  toolRefs: { name: string; revision: string }[];
+}
+
+export interface CellnTool {
+  metadata: ObjectMeta;
+  spec: {
+    revision: string;
+    description: string;
+    supportOwner: string;
+    publisherKey: string;
+    invocationABI: string;
+    lane: string;
+    limits: { timeoutMillis: number; memoryBytes: number; argumentBytes: number; outputBytes: number; workspace: string; effects: string };
+  };
+  status?: { conditions?: Condition[] };
 }
 
 export interface HarnessSession {
@@ -232,6 +253,7 @@ export interface TaskModeSpec {
 export type AgentRunTask = string | TaskModeSpec;
 
 export interface AgentRunSpec {
+  cellnSelection?: CellnSelection;
   agentRef: string;
   agentId: string;
   sessionKey: string;
@@ -1310,6 +1332,8 @@ export const api = {
       timeout?: string;
       backend?: string;
       runtimeRef?: string;
+      provider?: string;
+      cellnSelection?: CellnSelection;
     }) =>
       apiFetch<AgentRun>("/api/v1/runs", {
         method: "POST",
@@ -1330,6 +1354,10 @@ export const api = {
       apiFetch<InstallDefaultRuntimesResponse>("/api/v1/runtimes/install-defaults", {
         method: "POST",
       }),
+  },
+
+  cellnTools: {
+    list: () => apiFetch<CellnTool[]>("/api/v1/celln-tools"),
   },
 
   harnessSessions: {
