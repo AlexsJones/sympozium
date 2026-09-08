@@ -23,6 +23,7 @@ type catalogueFixture struct {
 	pending, lookup, cancel int
 	beforePending           func()
 	pendingErr              error
+	lookupErr               error
 }
 
 func TestUnissuedCatalogueRunWaitsWithoutLegacyExecution(t *testing.T) {
@@ -133,7 +134,7 @@ func TestCatalogueProgressReportsSafeRetryAndDoesNotChangeTerminal(t *testing.T)
 }
 func (f *catalogueFixture) Lookup(context.Context, types.NamespacedName) (*cellnreview.RouterExecution, error) {
 	f.lookup++
-	return f.record, nil
+	return f.record, f.lookupErr
 }
 func (f *catalogueFixture) Cancel(context.Context, types.NamespacedName) (*cellnreview.RouterExecution, error) {
 	f.cancel++
@@ -254,5 +255,106 @@ func TestCatalogueControllerCannotRegressConcurrentTerminalState(t *testing.T) {
 	}
 	if current.Status.Phase != api.AgentRunPhaseSucceeded {
 		t.Fatal("terminal state changed")
+	}
+}
+
+func TestRunningCatalogueObservationRecoversWithoutResubmission(t *testing.T) {
+	ctx := context.Background()
+	run := newTestCellnRun(t, "running-observation", "running-observation-uid")
+	run.Status.Phase = api.AgentRunPhaseRunning
+	run.Status.CellnIssuance = &api.CellnIssuanceStatus{Phase: "Issued"}
+	run.Status.CellnActionID = "original-request"
+	run.Status.CellnRequest = `{"id":"original-request"}`
+	r := newAgentRunTestReconciler(t, run)
+	r.APIReader = r.Client
+	f := &catalogueFixture{record: &cellnreview.RouterExecution{RequestID: run.Status.CellnActionID, Phase: "Running"}}
+	r.CatalogueDispatcher = f
+	var previousRV string
+	for i, broken := range []bool{false, true, true, false} {
+		f.lookupErr = nil
+		if broken {
+			f.lookupErr = fmt.Errorf("private router credential detail")
+		}
+		_, err := r.reconcileRunningCatalogue(ctx, logr.Discard(), run)
+		if (err != nil) != broken {
+			t.Fatalf("lookup error semantics changed: %v", err)
+		}
+		var current api.AgentRun
+		if err := r.Get(ctx, client.ObjectKeyFromObject(run), &current); err != nil {
+			t.Fatal(err)
+		}
+		condition := meta.FindStatusCondition(current.Status.Conditions, "CellnExecutionObserved")
+		want := "True"
+		if broken {
+			want = "Unknown"
+		}
+		if condition == nil || string(condition.Status) != want || strings.Contains(condition.Message, "credential") {
+			t.Fatalf("incorrect or sensitive observation: %+v", condition)
+		}
+		if broken && !strings.Contains(condition.Message, "Do not resubmit") {
+			t.Fatal("missing safe recovery guidance")
+		}
+		if current.Status.Phase != api.AgentRunPhaseRunning || current.Status.CellnActionID != run.Status.CellnActionID || current.Status.CellnRequest != run.Status.CellnRequest || current.Status.CellnIssuance.Phase != "Issued" {
+			t.Fatal("observation changed execution identity or phase")
+		}
+		if i == 2 && current.ResourceVersion != previousRV {
+			t.Fatal("repeated lookup failure churned status")
+		}
+		previousRV = current.ResourceVersion
+	}
+	if f.lookup != 4 || f.pending != 0 || f.cancel != 0 {
+		t.Fatal("observation invoked another execution operation")
+	}
+
+	// An old observation cannot overwrite a changed durable request identity.
+	var current api.AgentRun
+	if err := r.Get(ctx, client.ObjectKeyFromObject(run), &current); err != nil {
+		t.Fatal(err)
+	}
+	current.Status.CellnRequest = `{"id":"changed-request"}`
+	if err := r.Status().Update(ctx, &current); err != nil {
+		t.Fatal(err)
+	}
+	f.lookupErr = fmt.Errorf("lost owner")
+	if _, err := r.reconcileRunningCatalogue(ctx, logr.Discard(), run); err == nil {
+		t.Fatal("lookup error swallowed")
+	}
+	if err := r.Get(ctx, client.ObjectKeyFromObject(run), &current); err != nil {
+		t.Fatal(err)
+	}
+	if meta.FindStatusCondition(current.Status.Conditions, "CellnExecutionObserved").Status != "True" {
+		t.Fatal("stale identity observation committed")
+	}
+}
+
+func TestPendingCatalogueLostResponseAfterIdentityCommitIsReported(t *testing.T) {
+	ctx := context.Background()
+	run := newTestCellnRun(t, "pending-lost-response", "pending-lost-response-uid")
+	run.Status.Phase = api.AgentRunPhasePending
+	r := newAgentRunTestReconciler(t, run)
+	r.APIReader = r.Client
+	f := &catalogueFixture{pendingErr: fmt.Errorf("POST response lost")}
+	f.beforePending = func() {
+		var current api.AgentRun
+		if err := r.Get(ctx, client.ObjectKeyFromObject(run), &current); err != nil {
+			t.Fatal(err)
+		}
+		current.Status.CellnActionID = "just-committed"
+		current.Status.CellnRequest = `{"id":"just-committed"}`
+		if err := r.Status().Update(ctx, &current); err != nil {
+			t.Fatal(err)
+		}
+	}
+	r.CatalogueDispatcher = f
+	if _, err := r.reconcilePendingCatalogue(ctx, logr.Discard(), run); err == nil {
+		t.Fatal("lost response swallowed")
+	}
+	var current api.AgentRun
+	if err := r.Get(ctx, client.ObjectKeyFromObject(run), &current); err != nil {
+		t.Fatal(err)
+	}
+	condition := meta.FindStatusCondition(current.Status.Conditions, "CellnExecutionObserved")
+	if condition == nil || condition.Status != "Unknown" || current.Status.CellnActionID != "just-committed" || current.Status.CellnRequest != `{"id":"just-committed"}` {
+		t.Fatal("pending identity commit suppressed lost-response observation or changed the request")
 	}
 }

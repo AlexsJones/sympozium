@@ -18,7 +18,11 @@ Controller logs retain detailed errors; user-visible observations intentionally
 exclude privileged issuer details, credentials and policy document contents.
 Conditions do not weaken admission, change durable request bytes, create a new
 execution ID or authorize rerouting. A terminal run is not changed by a stale
-pending observation. Permission previews remain observations, not grants.
+pending or running observation. A running owner's lookup failure changes the
+execution observation to Unknown without changing the run phase or saved request.
+A subsequent correlated owner response clears that warning; repeated identical
+failures do not continually rewrite status. Permission previews remain
+observations, not grants.
 
 For an operator-admission failure, keep the failed candidate and inspect its
 template/kernel/pilot compatibility. A sealed-member refusal must not be bypassed

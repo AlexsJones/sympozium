@@ -32,6 +32,9 @@ type catalogueProvisioner interface {
 	EnsureIssued(context.Context, types.NamespacedName, func(context.Context, *api.AgentRun) error) error
 }
 
+const catalogueOutcomeUnconfirmed = "Execution outcome is not confirmed. The controller will reconcile the original request with its configured host; it will not authorize a replacement execution. Ask an administrator to check the pinned host/router connection. Do not resubmit to work around this status."
+const catalogueOwnerObserved = "The configured execution owner returned a record for this exact request"
+
 // A named catalogue request must never fall through to forge/explicit artifact
 // execution while an operator or provisioning controller prepares issuance.
 func (r *AgentRunReconciler) awaitCatalogueIssuance(ctx context.Context, log logr.Logger, run *api.AgentRun) (ctrl.Result, error) {
@@ -113,7 +116,7 @@ func (r *AgentRunReconciler) reconcilePendingCatalogue(ctx context.Context, log 
 		return r.catalogueAdmission(ctx, log, current)
 	})
 	if err != nil {
-		if statusErr := r.catalogueProgress(ctx, run, "CellnExecutionObserved", metav1.ConditionUnknown, "ExecutionOutcomeUnconfirmed", "Execution outcome is not confirmed. The controller will reconcile the original request with its configured host; it will not authorize a replacement execution. Ask an administrator to check the pinned host/router connection. Do not resubmit to work around this status."); statusErr != nil {
+		if statusErr := r.catalogueProgress(ctx, run, "CellnExecutionObserved", metav1.ConditionUnknown, "ExecutionOutcomeUnconfirmed", catalogueOutcomeUnconfirmed); statusErr != nil {
 			return ctrl.Result{}, statusErr
 		}
 		return ctrl.Result{}, err
@@ -134,7 +137,7 @@ func (r *AgentRunReconciler) reconcilePendingCatalogue(ctx context.Context, log 
 		}
 		current.Status.Phase = api.AgentRunPhaseRunning
 		meta.SetStatusCondition(&current.Status.Conditions, metav1.Condition{Type: "CellnIssuanceCommitted", Status: metav1.ConditionTrue, Reason: "Issued", Message: "Trusted catalogue issuance and exact dispatch identity are committed", ObservedGeneration: current.Generation})
-		meta.SetStatusCondition(&current.Status.Conditions, metav1.Condition{Type: "CellnExecutionObserved", Status: metav1.ConditionTrue, Reason: "OwnerRecordObserved", Message: "The configured execution owner returned a record for this exact request", ObservedGeneration: current.Generation})
+		meta.SetStatusCondition(&current.Status.Conditions, metav1.Condition{Type: "CellnExecutionObserved", Status: metav1.ConditionTrue, Reason: "OwnerRecordObserved", Message: catalogueOwnerObserved, ObservedGeneration: current.Generation})
 		if current.Status.StartedAt == nil {
 			now := metav1.Now()
 			current.Status.StartedAt = &now
@@ -162,7 +165,14 @@ func (r *AgentRunReconciler) catalogueProgress(ctx context.Context, run *api.Age
 		if err := r.APIReader.Get(ctx, client.ObjectKeyFromObject(run), &current); err != nil {
 			return err
 		}
-		if current.UID != run.UID || current.Generation != run.Generation || current.DeletionTimestamp != nil || (current.Status.Phase != "" && current.Status.Phase != api.AgentRunPhasePending) {
+		active := current.Status.Phase == "" || current.Status.Phase == api.AgentRunPhasePending || (kind == "CellnExecutionObserved" && current.Status.Phase == api.AgentRunPhaseRunning)
+		if current.UID != run.UID || current.Generation != run.Generation || current.DeletionTimestamp != nil || !active {
+			return nil
+		}
+		// Pending dispatch may just have committed its identity before losing
+		// the POST response. A running lookup, however, must match its saved
+		// identity before updating an observation.
+		if kind == "CellnExecutionObserved" && run.Status.Phase == api.AgentRunPhaseRunning && (current.Status.CellnActionID != run.Status.CellnActionID || current.Status.CellnRequest != run.Status.CellnRequest) {
 			return nil
 		}
 		if kind == "CellnIssuanceCommitted" && current.Status.CellnIssuance != nil && current.Status.CellnIssuance.Phase == "Issued" {
@@ -183,11 +193,19 @@ func (r *AgentRunReconciler) reconcileRunningCatalogue(ctx context.Context, log 
 	}
 	record, err := r.CatalogueDispatcher.Lookup(ctx, client.ObjectKeyFromObject(run))
 	if err != nil {
+		if statusErr := r.catalogueProgress(ctx, run, "CellnExecutionObserved", metav1.ConditionUnknown, "ExecutionOutcomeUnconfirmed", catalogueOutcomeUnconfirmed); statusErr != nil {
+			return ctrl.Result{}, statusErr
+		}
 		return ctrl.Result{}, err
 	}
 	parsed, err := catalogueRecord(record)
 	if err != nil {
 		return ctrl.Result{}, err
+	}
+	if parsed.RequestID == run.Status.CellnActionID {
+		if err := r.catalogueProgress(ctx, run, "CellnExecutionObserved", metav1.ConditionTrue, "OwnerRecordObserved", catalogueOwnerObserved); err != nil {
+			return ctrl.Result{}, err
+		}
 	}
 	return r.applyCellnRecord(ctx, log, run, parsed)
 }
