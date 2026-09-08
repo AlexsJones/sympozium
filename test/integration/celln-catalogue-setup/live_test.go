@@ -229,9 +229,15 @@ func TestLiveCatalogueHarness(t *testing.T) {
 	// Only a host mapping references the credential; no Kubernetes Secret, CLI
 	// argument containing the key, environment injection or guest copy is used.
 	writeJSON(t, filepath.Join(root, "model-credentials.json"), map[string]any{"apiVersion": "sympozium.ai/celln-host-credentials-v1", "profiles": map[string]string{"catalogue-proof": credential}})
-	managed, err := cellnreview.NewManagedIssuer(cellnreview.IssueOptions{Binary: binary, PolicyRoot: root, ComposerPublisher: signed.Publisher, ProfileLifetime: 5 * time.Minute}, map[types.NamespacedName]cellnauthority.ModelLoader{{Namespace: ns.Name, Name: "agent"}: ml}, time.Second)
-	must(t, err)
-	issuerURL, issuerToken, issuerCA := liveIssuer(t, ctx, dir, managed)
+	issuerProcess := os.Getenv("CELLN_LIVE_ISSUER_PROCESS") == "1"
+	var issuerURL, issuerToken, issuerCA string
+	if issuerProcess {
+		issuerURL, issuerToken, issuerCA = liveIssuerProcess(t, ctx, dir, cli, kube, binary, root, signed.Publisher, ns.Name)
+	} else {
+		managed, err := cellnreview.NewManagedIssuer(cellnreview.IssueOptions{Binary: binary, PolicyRoot: root, ComposerPublisher: signed.Publisher, ProfileLifetime: 5 * time.Minute}, map[types.NamespacedName]cellnauthority.ModelLoader{{Namespace: ns.Name, Name: "agent"}: ml}, time.Second)
+		must(t, err)
+		issuerURL, issuerToken, issuerCA = liveIssuer(t, ctx, dir, managed)
+	}
 	backendToken, routerToken := filepath.Join(dir, "backend-token"), filepath.Join(dir, "router-token")
 	must(t, os.WriteFile(backendToken, []byte("public-live-catalogue-backend-token"), 0600))
 	must(t, os.WriteFile(routerToken, []byte("public-live-catalogue-router-token"), 0600))
@@ -585,7 +591,7 @@ func cleanControllerEnv(kube, config string) []string {
 	}
 	return append(env, "KUBECONFIG="+kube, "NATS_URL=", "AGENT_SANDBOX_ENABLED=false", "CELLN_HARNESS_ENABLED=true", "CELLN_CATALOGUE_CONFIG="+config)
 }
-func liveIssuer(t *testing.T, ctx context.Context, dir string, m *cellnreview.ManagedIssuer) (string, string, string) {
+func issuerTLSFiles(t *testing.T, dir string) (string, string, string) {
 	t.Helper()
 	sample := httptest.NewTLSServer(http.NotFoundHandler())
 	cert := sample.TLS.Certificates[0]
@@ -596,6 +602,11 @@ func liveIssuer(t *testing.T, ctx context.Context, dir string, m *cellnreview.Ma
 	must(t, os.WriteFile(token, []byte("public-live-catalogue-issuer-token"), 0600))
 	must(t, os.WriteFile(ca, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Certificate[0]}), 0600))
 	must(t, os.WriteFile(private, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: key}), 0600))
+	return token, ca, private
+}
+func liveIssuer(t *testing.T, ctx context.Context, dir string, m *cellnreview.ManagedIssuer) (string, string, string) {
+	t.Helper()
+	token, ca, private := issuerTLSFiles(t, dir)
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	must(t, err)
 	child, cancel := context.WithCancel(ctx)

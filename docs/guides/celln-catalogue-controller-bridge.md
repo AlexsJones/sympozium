@@ -4,8 +4,9 @@ The AgentRun reconciler has an explicitly injected `CatalogueDispatcher` path
 for runs with saved `status.cellnIssuance`. Nil configuration refuses rather than
 falling through to forge or OCI. This branch runs before mutable Agent/OCI task
 normalization so previously issued work can still be observed without those
-prerequisites. It does not yet create initial catalogue issuance or expose new
-selection fields. Controller executable/Helm registration is explicit and disabled
+prerequisites. Named `spec.cellnSelection` and initial automatic issuance for
+exact operator-registered source combinations are implemented; see
+[registered issuance](celln-registered-issuance.md). Controller executable/Helm registration is explicit and disabled
 by default; see the operator configuration below.
 
 `cellnreview.RunDispatcher` consumes independently verified, committed issuance.
@@ -43,9 +44,14 @@ replay, service lookup/cancel after approval deletion, and controller lifecycle
 through the full Reconcile entry point using an injected service fixture. Recovery
 adds the cleanup finalizer without creating a Job, and deletion retains it until
 terminal cancellation. Config refusal and default/legacy/catalogue
-Helm renders are also tested. Those are not yet a single deployed
-controller-to-model journey. Initial selection-to-issuance orchestration and
-deployed regression/real-model proof remain outstanding.
+Helm renders are also tested. Later MLP proofs cover the real host controller,
+issuer/router and KVM with DeepSeek, an authenticated API-server pod and actual
+browser selection/results, active deletion/cancellation and surviving-owner
+response loss across controller restart. See the
+[installation checklist](celln-mlp-installation.md) and
+[recovery scenarios](celln-mlp-troubleshooting.md). The full controller-Pod to
+host-service deployment, automatic distribution and final release qualification
+remain outstanding; these distinct proofs are not a turnkey deployment claim.
 
 ## Operator configuration
 
