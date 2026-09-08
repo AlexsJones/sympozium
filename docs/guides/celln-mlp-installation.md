@@ -19,7 +19,8 @@ incomplete installation appear functional.
 
 ## 1. Pin the components and choose the serving host
 
-Use a reviewed Celln build containing PR #95 and a Sympozium build containing
+Use a reviewed Celln build containing PRs #95 and #97 (the latter fixes early
+HTTP refusal resets through a TLS proxy), and a Sympozium build containing
 catalogue selection, automatic issuance and permission previews. Build the MLP
 integration branch when testing its installation/status improvements. Record
 source revisions, image digests, kernel/pilot hashes and the exact host in the

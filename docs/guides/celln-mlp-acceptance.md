@@ -46,10 +46,12 @@ That failed run remains failed. The bounded transport fix in
 the reproducing raw TCP test, 96 complete refusals through a real TLS proxy and
 the full browser/KVM/DeepSeek journey with cleanup. See the
 [fix acceptance record](../evidence/celln-router-refusal-fix-2026-09-08.json).
-Review/CI/merge of that dependency are still required.
+Celln PR #97 is merged as `c83be719872c97983c1cba307246503425a5a193`;
+its CI check passed. The CI hardware job explicitly skipped for missing KVM;
+the actual hardware/model evidence is the separate local acceptance run.
 
-- [ ] Review and merge Celln PR #97; local reproduction, corrected TLS refusal
-  tests and real AI rerun passed, but the dependency is not yet merged.
+- [x] Review and merge Celln PR #97 after local reproduction, corrected TLS
+  refusal tests, real AI rerun and green CI. Issue #96 is closed.
 - [ ] Qualify the persistent installed issuer/router/dispatcher layout, actual
   systemd sandbox, fixed service identity, certificates, least-privilege issuer
   kubeconfig and durable storage. The checked-in unit has syntax checks only.

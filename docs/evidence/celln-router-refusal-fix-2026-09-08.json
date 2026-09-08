@@ -3,6 +3,8 @@
   "includesRegisteredCleanup": true,
   "cellnFix": "93acb52",
   "cellnPR": "https://github.com/sympozium-ai/celln/pull/97",
+  "cellnMergedCommit": "c83be719872c97983c1cba307246503425a5a193",
+  "cellnCI": "check passed; hardware proofs explicitly skipped on CI for missing /dev/kvm; local real KVM/model proof is separate",
   "cellnBinarySHA256": "6f9a6a73c83b165bf931a971c7de7bca797eca4d713369ca77c84b874ebbbcd6",
   "scope": "bounded early-refusal fix; actual router/TLS proxy regression and separate deployed API/controller/browser/KVM/DeepSeek acceptance; not systemd/fleet or separate dispatcher HTTP qualification",
   "rawTCPRegressionFailedBeforeFix": true,
