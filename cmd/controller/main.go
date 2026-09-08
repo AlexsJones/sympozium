@@ -23,6 +23,7 @@ import (
 	llmfitv1alpha1 "github.com/sympozium-ai/llmfit-dra/api/v1alpha1"
 
 	sympoziumv1alpha1 "github.com/sympozium-ai/sympozium/api/v1alpha1"
+	"github.com/sympozium-ai/sympozium/internal/cellnreview"
 	"github.com/sympozium-ai/sympozium/internal/controller"
 	"github.com/sympozium-ai/sympozium/internal/dra"
 	"github.com/sympozium-ai/sympozium/internal/eventbus"
@@ -183,6 +184,16 @@ func main() {
 		DelegationControllerExecutor: delegationControllerExecutor,
 		DynamicClient:                dynamicClient,
 		Pricing:                      pricingLoader,
+	}
+	if configPath := os.Getenv("CELLN_CATALOGUE_CONFIG"); configPath != "" {
+		dispatcher, closeDispatcher, err := cellnreview.LoadRunDispatcher(configPath, mgr.GetClient(), mgr.GetAPIReader())
+		if err != nil {
+			setupLog.Error(err, "invalid Celln catalogue controller configuration")
+			os.Exit(1)
+		}
+		defer closeDispatcher()
+		agentRunReconciler.CatalogueDispatcher = dispatcher
+		setupLog.Info("Celln catalogue execution recovery enabled; new submission requires CELLN_HARNESS_ENABLED=true")
 	}
 	if err := agentRunReconciler.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "AgentRun")

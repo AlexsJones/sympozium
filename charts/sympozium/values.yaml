@@ -453,6 +453,13 @@ celln:
   # the router CLIENT bearer credential (at least 24 bytes). No token is generated
   # or inferred from model credentials. Missing configuration refuses dispatch.
   tokenSecret: ""
+  # -- Explicitly allow new native Harness submissions; recovery/cancel remains
+  # available when false. Does not establish catalogue readiness.
+  harnessEnabled: false
+  # -- Existing operator-owned Secret mounted at /etc/sympozium/celln-catalogue.
+  # Include config.json and separately scoped issuer/router token and CA files.
+  # No credential is generated or taken from tenant AgentRun fields.
+  catalogueConfigSecret: ""
   # -- Read-only discovery token Secret in the API-server namespace (key token).
   # Must differ from execution credentials and match router.capabilityTokenSecret.
   capabilityTokenSecret: ""
