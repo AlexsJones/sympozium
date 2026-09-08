@@ -86,13 +86,51 @@ func (c *rbacReadObserver) List(ctx context.Context, list client.ObjectList, opt
 	return c.Client.List(ctx, list, opts...)
 }
 
+func TestEditedCellnIntentCannotAcquireFreshCleanupExemption(t *testing.T) {
+	ctx := context.Background()
+	run := newTestCellnRun(t, "edited-intent", "edited-intent-uid")
+	// A prior Job attempt could have created RBAC before recording status.
+	// Removing its finalizer and editing backend still increments generation.
+	// Do not turn that history into a trusted cleanup exemption.
+	run.Generation = 2
+	run.Status = api.AgentRunStatus{}
+	run.Finalizers = nil
+	run.Spec.Celln = nil
+	run.Spec.CellnSelection = &api.CellnCatalogueSelection{}
+	r := newAgentRunTestReconciler(t, run)
+	if _, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(run)}); err != nil {
+		t.Fatal(err)
+	}
+	var stored api.AgentRun
+	if err := r.Get(ctx, client.ObjectKeyFromObject(run), &stored); err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status.CellnOnly {
+		t.Fatal("edited run acquired fresh Celln cleanup exemption")
+	}
+	// Even later-issued Celln identity cannot erase possible legacy RBAC.
+	stored.Status.CellnActionID = "issued-after-edit"
+	stored.Status.CellnRequest = `{"id":"issued-after-edit"}`
+	observer := &rbacReadObserver{Client: r.Client}
+	r.Client = observer
+	r.cleanupSkillRBAC(ctx, logr.Discard(), &stored)
+	if observer.lists != 2 {
+		t.Fatal("issued legacy Celln identity skipped potential Job RBAC cleanup")
+	}
+}
+
 func TestRecordedCellnCleanupDoesNotRequireJobRBAC(t *testing.T) {
-	for _, kind := range []string{"celln", "unrecorded", "unissued-recorded", "recorded-job", "job", "pod", "sandbox", "claim", "deployment", "service", "post-run"} {
+	for _, kind := range []string{"celln", "legacy-issued", "unrecorded", "unissued-recorded", "recorded-job", "job", "pod", "sandbox", "claim", "deployment", "service", "post-run"} {
 		t.Run(kind, func(t *testing.T) {
 			run := newTestCellnRun(t, "cleanup", "cleanup-uid")
 			run.Status.CellnActionID = "original"
 			run.Status.CellnRequest = `{"id":"original"}`
+			if kind != "legacy-issued" && kind != "unrecorded" {
+				run.Status.CellnOnly = true
+			}
 			switch kind {
+			case "celln":
+				run.Status.CellnOnly = true
 			case "unrecorded":
 				run.Status.CellnActionID = ""
 			case "unissued-recorded", "recorded-job":
@@ -135,6 +173,7 @@ func TestCellnTerminalFinalizerCompletesWithoutClusterRBAC(t *testing.T) {
 	ctx := context.Background()
 	run := newTestCellnRun(t, "terminal-cleanup", "terminal-cleanup-uid")
 	run.Status.Phase = api.AgentRunPhaseSucceeded
+	run.Status.CellnOnly = true
 	run.Status.CellnActionID = "original"
 	run.Status.CellnRequest = `{"id":"original"}`
 	run.Status.CellnIssuance = &api.CellnIssuanceStatus{Phase: "Issued"}

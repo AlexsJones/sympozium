@@ -25,9 +25,10 @@ func newTestCellnRun(t *testing.T, name string, uid types.UID) *sympoziumv1alpha
 	configureCellnToken(t)
 	return &sympoziumv1alpha1.AgentRun{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: "default",
-			UID:       uid,
+			Name:       name,
+			Namespace:  "default",
+			UID:        uid,
+			Generation: 1,
 		},
 		Spec: sympoziumv1alpha1.AgentRunSpec{
 			AgentRef: "my-instance",

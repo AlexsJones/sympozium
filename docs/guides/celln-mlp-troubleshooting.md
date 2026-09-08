@@ -110,7 +110,8 @@ dispatcher, not systemd sandbox qualification or serving-host reboot.
 
 ## Cancellation before issuance
 
-New untouched Celln runs record `status.cellnOnly: true` before their finalizer
+New untouched Celln runs on their original spec generation record
+`status.cellnOnly: true` before their finalizer
 or any workload effects. The controller must read that record back before it
 continues. This permits deletion while waiting for issuance without discovering
 Job-sidecar cluster RBAC. The CRD rejects a subsequent change to another backend;
@@ -123,7 +124,11 @@ Install the matching CRD before the controller. An old schema that prunes this
 field causes the new controller to keep trying to record it without dispatching.
 Do not downgrade to a controller that ignores this boundary while such runs
 exist. Older runs are not retroactively marked: their mutable backend alone
-cannot establish that they never created Job-side authority. Any recorded
+cannot establish that they never created Job-side authority. Even a legacy
+Celln action/request does not prove absence of earlier Job-side authority.
+An edited run cannot acquire this exemption merely by having empty status and
+no finalizer. Such legacy runs require a controller with the permissions needed
+for conservative cleanup, not the restricted new-run-only proof controller. Any recorded
 pod-plane resources still require the existing cleanup path.
 
 Unit tests cover record-before-finalizer ordering, backend-change refusal,

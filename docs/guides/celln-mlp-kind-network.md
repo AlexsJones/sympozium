@@ -106,7 +106,11 @@ finalizer completion and zero live cells/Jobs. An earlier run completed the AI
 task but failed cleanup by entering Job-sidecar ClusterRole discovery. The fix
 skips that path only for recorded Celln-only executions with no pod-plane state;
 legacy/mixed Job cleanup stays intact. That failed run required verified manual
-test-finalizer release and is not counted as a pass.
+test-finalizer release and is not counted as a pass. Subsequent review tightened
+the cleanup exemption further: only the immutable Celln-only boundary recorded
+on an untouched original-generation run qualifies. A legacy action/request alone
+cannot exclude earlier Job-side authority, so legacy runs retain conservative
+cluster-RBAC cleanup and need a suitably authorized controller.
 
 Read `test-outcome.json` for the result including registered cleanup;
 `summary.json` now describes execution checks only.
