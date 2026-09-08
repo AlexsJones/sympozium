@@ -1,0 +1,40 @@
+{
+  "controllerSource": "35b45cd",
+  "controllerImage": "localhost/sympozium-celln-controller:35b45cd",
+  "controllerBuiltImageID": "sha256:6dd93fa3f2ea509e25bc94d05f8c755709c56861d9be00d36b45c4b9813b926c",
+  "ci": {
+    "status": "passed",
+    "url": "https://github.com/sympozium-ai/sympozium/actions/runs/34222438830",
+    "scope": "format, vet, build, short race tests, code generation and Helm CRD sync; not hardware acceptance"
+  },
+  "earlyBrowserCancellation": {
+    "status": "passed",
+    "includesRegisteredCleanup": true,
+    "rawEvidenceDirectory": "target/celln-live-proof/catalogue-live-1903069890",
+    "runUID": "f98a4ba4-6333-4f0f-9c08-21151bfe874c",
+    "boundaryRecorded": true,
+    "boundaryRemovalRefused": true,
+    "statusRemovalRefused": true,
+    "backendChangeRefused": true,
+    "browserCancellation": true,
+    "executionPosts": 0,
+    "jobs": 0,
+    "finalizerCompleted": true,
+    "testDurationSeconds": 23.36
+  },
+  "normalJourney": {
+    "status": "failed",
+    "includesRegisteredCleanup": true,
+    "rawEvidenceDirectory": "target/celln-live-proof/catalogue-live-2404622213",
+    "runUID": "0857ed16-d030-4c8e-bd8a-1eca94a0b99b",
+    "stage": "router authentication probes before controller launch/dispatch",
+    "observedStatus": 502,
+    "expectedStatus": 401,
+    "proxyError": "HTTP/1.x transport connection broken: unexpected EOF",
+    "issue": "https://github.com/sympozium-ai/celln/issues/96",
+    "AIExecutionPassed": false,
+    "testDurationSeconds": 18.47
+  },
+  "proofControllerRestoredAfterBothRuns": true,
+  "manualFinalizerRemoval": false
+}

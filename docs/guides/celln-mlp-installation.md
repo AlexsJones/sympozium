@@ -1,5 +1,8 @@
 # One-shot Harness-in-Celln: MLP installation checklist
 
+See the [acceptance index](celln-mlp-acceptance.md) for current proof coverage,
+the consolidated PR and remaining release gates.
+
 This is the installation entry point for the administrator-assisted MLP. The
 native JSON Harness/browser/operator-admission journey has passed with an
 authenticated API-server and scoped controller Pods in isolated Kind, connected
