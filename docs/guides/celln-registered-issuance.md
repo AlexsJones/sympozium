@@ -52,6 +52,19 @@ controller admission gates are required before issuance and submission.
 
 ## Proof and limits
 
+For the administrator-assisted MLP path, additionally set
+`CELLN_LIVE_OPERATOR_ADMISSION=1`, an absolute `CELLN_LIVE_KERNEL` path,
+`CELLN_LIVE_KERNEL_SHA256` and `CELLN_LIVE_INITRD_SHA256` (64-character SHA256
+pins for that kernel and the package's `initramfs.cpio`). Use a Celln binary
+providing `closure prepare-mote` and `closure admit-prepared`.
+This mode does not invoke `CELLN_ISSUANCE_MATERIALIZER` or directly create the
+mote allowlist. The test supplies pinned artifact bytes and an explicit template;
+the actual CLI performs preparation, real-KVM member verification and exact-mote
+administrator admission before the controller issues any model grant.
+It records `operator-template.json` and `operator-admission.json`.
+This is still an isolated fixture with public signed runtime/tool sources, not
+a production installation or proof of arbitrary kernel/runtime compatibility.
+
 For the actual browser journey, build the UI with `npm run build --prefix web`,
 then set `CELLN_LIVE_BROWSER_SUBMISSION=1`, `CELLN_LIVE_AUTOMATIC_ISSUANCE=1`
 and `CELLN_LIVE_WEB_ROOT` to the absolute `web` directory when running the same

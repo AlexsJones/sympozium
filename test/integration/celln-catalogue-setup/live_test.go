@@ -52,7 +52,11 @@ func TestLiveCatalogueHarness(t *testing.T) {
 	kube := path("CELLN_CONTROLLER_KUBECONFIG")
 	fixture := path("CELLN_COMPOSITION_FIXTURE")
 	binary := path("CELLN_COMPOSITION_BINARY")
-	materializer := path("CELLN_ISSUANCE_MATERIALIZER")
+	operatorAdmission := os.Getenv("CELLN_LIVE_OPERATOR_ADMISSION") == "1"
+	materializer := ""
+	if !operatorAdmission {
+		materializer = path("CELLN_ISSUANCE_MATERIALIZER")
+	}
 	packagePath := path("CELLN_HARNESS_PACKAGE")
 	cli := path("CELLN_LIVE_SYMPOZIUM_BINARY")
 	automatic := os.Getenv("CELLN_LIVE_AUTOMATIC_ISSUANCE") == "1"
@@ -196,7 +200,11 @@ func TestLiveCatalogueHarness(t *testing.T) {
 	composition, err := cellnreview.Compose(ctx, l, *frozen, o)
 	must(t, err)
 	var artifacts cellnauthority.ExecutionArtifacts
-	must(t, json.Unmarshal(command(t, ctx, nil, materializer, root, o.OutputDir, packagePath), &artifacts))
+	if operatorAdmission {
+		artifacts = admitLiveCandidate(t, ctx, binary, root, o.OutputDir, packagePath, evidence)
+	} else {
+		must(t, json.Unmarshal(command(t, ctx, nil, materializer, root, o.OutputDir, packagePath), &artifacts))
+	}
 	var signed struct {
 		Publisher string `json:"publisher"`
 	}
