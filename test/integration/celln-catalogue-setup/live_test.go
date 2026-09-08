@@ -57,6 +57,10 @@ func TestLiveCatalogueHarness(t *testing.T) {
 	cli := path("CELLN_LIVE_SYMPOZIUM_BINARY")
 	automatic := os.Getenv("CELLN_LIVE_AUTOMATIC_ISSUANCE") == "1"
 	httpSubmission := os.Getenv("CELLN_LIVE_HTTP_SUBMISSION") == "1"
+	browserSubmission := os.Getenv("CELLN_LIVE_BROWSER_SUBMISSION") == "1"
+	if browserSubmission {
+		httpSubmission = true
+	}
 	if httpSubmission && !automatic {
 		t.Fatal("HTTP submission requires automatic issuance")
 	}
@@ -133,6 +137,7 @@ func TestLiveCatalogueHarness(t *testing.T) {
 	frozen := report["frozen"].(*cellnauthority.FrozenSelection)
 	l := cellnauthority.Loader{Reader: c, OperatorSource: types.NamespacedName{Namespace: ns.Name, Name: "operator"}, RuntimeSource: types.NamespacedName{Namespace: ns.Name, Name: "runtime"}, AgentSource: types.NamespacedName{Namespace: ns.Name, Name: "agent"}}
 	runName := "run"
+	var browserURL string
 	if httpSubmission {
 		// The setup run has never been issued and the controller is stopped.
 		// Replace it with a run created by the actual HTTP handler, then freeze
@@ -147,21 +152,32 @@ func TestLiveCatalogueHarness(t *testing.T) {
 		// Loopback-only test HTTP server; this is not a deployment/auth proof.
 		server := httptest.NewServer(apiserver.NewServer(c, nil, nil, logr.Discard()).Handler(nil))
 		t.Cleanup(server.Close)
-		body, err := json.Marshal(apiserver.CreateRunRequest{AgentRef: setup.Spec.AgentRef, Task: setup.Spec.Task.GetPrompt(), Model: "deepseek-chat", Provider: "deepseek", Backend: "celln", Timeout: "180s", CellnSelection: setup.Spec.CellnSelection})
-		must(t, err)
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, server.URL+"/api/v1/runs?namespace="+url.QueryEscape(ns.Name), bytes.NewReader(body))
-		must(t, err)
-		req.Header.Set("Content-Type", "application/json")
-		response, err := server.Client().Do(req)
-		must(t, err)
-		raw, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
-		response.Body.Close()
-		must(t, err)
-		if response.StatusCode != http.StatusCreated {
-			t.Fatalf("HTTP create failed: %d %s", response.StatusCode, raw)
-		}
 		var created api.AgentRun
-		must(t, json.Unmarshal(raw, &created))
+		if browserSubmission {
+			browserURL = browserServer(t, c)
+			runBrowser(t, ctx, browserURL, ns.Name, "", setup.Spec.Task.GetPrompt())
+			var runs api.AgentRunList
+			must(t, c.List(ctx, &runs, client.InNamespace(ns.Name)))
+			if len(runs.Items) != 1 {
+				t.Fatalf("browser must create exactly one run, got %d", len(runs.Items))
+			}
+			created = runs.Items[0]
+		} else {
+			body, err := json.Marshal(apiserver.CreateRunRequest{AgentRef: setup.Spec.AgentRef, Task: setup.Spec.Task.GetPrompt(), Model: "deepseek-chat", Provider: "deepseek", Backend: "celln", Timeout: "180s", CellnSelection: setup.Spec.CellnSelection})
+			must(t, err)
+			req, err := http.NewRequestWithContext(ctx, http.MethodPost, server.URL+"/api/v1/runs?namespace="+url.QueryEscape(ns.Name), bytes.NewReader(body))
+			must(t, err)
+			req.Header.Set("Content-Type", "application/json")
+			response, err := server.Client().Do(req)
+			must(t, err)
+			raw, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+			response.Body.Close()
+			must(t, err)
+			if response.StatusCode != http.StatusCreated {
+				t.Fatalf("HTTP create failed: %d %s", response.StatusCode, raw)
+			}
+			must(t, json.Unmarshal(raw, &created))
+		}
 		if created.Namespace != ns.Name || created.UID == "" || created.UID == uid || created.Name == "" {
 			t.Fatal("HTTP did not return a new persisted run")
 		}
@@ -276,6 +292,9 @@ func TestLiveCatalogueHarness(t *testing.T) {
 		t.Fatalf("catalogue run did not succeed: phase=%s error=%s", run.Status.Phase, run.Status.Error)
 	}
 	validateLiveResult(t, run)
+	if browserSubmission {
+		runBrowser(t, ctx, browserURL, ns.Name, runName, "")
+	}
 	if run.Status.CellnIssuance == nil || run.Status.CellnIssuance.Phase != "Issued" {
 		t.Fatal("terminal run lacks committed issuance")
 	}
