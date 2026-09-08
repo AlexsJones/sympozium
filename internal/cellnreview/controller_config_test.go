@@ -10,11 +10,16 @@ import (
 )
 
 func TestLoadRunDispatcherConfig(t *testing.T) {
-	for _, mode := range []string{"valid", "version", "empty", "duplicate", "sources", "shared-token", "plaintext", "unknown", "trailing"} {
+	for _, mode := range []string{"valid", "registered", "invalid-registration", "version", "empty", "duplicate", "sources", "shared-token", "plaintext", "unknown", "trailing"} {
 		t.Run(mode, func(t *testing.T) {
 			f := provisionFixture(t)
 			config := ControllerDispatchConfig{APIVersion: "sympozium.ai/celln-catalogue-controller-v1", Bindings: []ControllerDispatchBinding{{Agent: types.NamespacedName{Namespace: "tenant", Name: "agent"}, Issuer: ControllerEndpoint{URL: "https://issuer.example", TokenFile: "/operator/issuer-token"}, Router: ControllerEndpoint{URL: "https://router.example", TokenFile: "/operator/router-token"}, Backend: "http://host-a:8787", OperatorSource: f.l.Selection.OperatorSource, RuntimeSource: f.l.Selection.RuntimeSource, AgentSource: f.l.Selection.AgentSource, ModelSource: f.l.Source}}}
 			switch mode {
+			case "registered", "invalid-registration":
+				config.Bindings[0].Compositions = []RegisteredComposition{{Sources: f.f.Prepared.Composition.Sources, ImageBytes: 33554432, Artifacts: f.artifacts}}
+				if mode == "invalid-registration" {
+					config.Bindings[0].Compositions[0].ImageBytes = 0
+				}
 			case "version":
 				config.APIVersion = "bad"
 			case "empty":
@@ -43,7 +48,7 @@ func TestLoadRunDispatcherConfig(t *testing.T) {
 				t.Fatal(err)
 			}
 			d, close, err := LoadRunDispatcher(path, f.c, f.c)
-			if mode == "valid" {
+			if mode == "valid" || mode == "registered" {
 				if err != nil || d == nil || close == nil {
 					t.Fatalf("valid config refused: %v", err)
 				}

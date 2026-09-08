@@ -14,9 +14,10 @@ import (
 )
 
 type RunDispatchBinding struct {
-	Issuer *IssuerClient
-	Router *RouterClient
-	Loader cellnauthority.ModelLoader
+	Issuer       *IssuerClient
+	Router       *RouterClient
+	Loader       cellnauthority.ModelLoader
+	Compositions []RegisteredComposition
 }
 
 // RunDispatcher consumes durable catalogue issuance. Bindings are trusted
@@ -37,6 +38,11 @@ func NewRunDispatcher(writer client.Client, reader client.Reader, bindings map[t
 			return nil, fmt.Errorf("binding requires matching frozen route and separate issuer/router credentials")
 		}
 		b.Loader.Selection.Reader = reader
+		var err error
+		b.Compositions, err = copyRegisteredCompositions(b.Compositions)
+		if err != nil {
+			return nil, err
+		}
 		copy[key] = b
 	}
 	return &RunDispatcher{writer, reader, copy}, nil

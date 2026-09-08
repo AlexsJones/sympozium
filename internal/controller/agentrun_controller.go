@@ -686,8 +686,8 @@ func (r *AgentRunReconciler) reconcilePending(ctx context.Context, log logr.Logg
 		if agentRun.Spec.Backend != "celln" || agentRun.Spec.Celln != nil || !agentRun.Spec.Task.IsString() {
 			return ctrl.Result{}, r.failRun(ctx, agentRun, "Catalogue selection requires backend celln, a string task and no explicit artifacts")
 		}
-		if agentRun.Status.CellnIssuance == nil {
-			return r.awaitCatalogueIssuance(ctx, agentRun)
+		if agentRun.Status.CellnIssuance == nil || agentRun.Status.CellnIssuance.Phase == "Prepared" {
+			return r.awaitCatalogueIssuance(ctx, log, agentRun)
 		}
 	}
 	if agentRun.Spec.Backend == "celln" && agentRun.Status.CellnIssuance != nil {

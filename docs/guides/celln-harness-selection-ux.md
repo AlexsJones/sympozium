@@ -5,8 +5,9 @@ after the user's UI/YAML question. The approved experience has three distinct
 choices: Harness identity, execution placement, and explicitly borrowed tools.
 The [advanced JSON API](celln-json-harness.md) and the high-level AgentRun
 `cellnSelection` schema are implemented. Runs → New Run now supports initial
-catalogue selection. Automatic provisioning remains pending: a catalogue
-request waits for trusted issuance.
+catalogue selection. [Registered compositions](celln-registered-issuance.md) can
+receive automatic trusted issuance; unmatched selections wait for operator
+preparation. On-demand admission/distribution remains pending.
 
 ## Current run form
 
@@ -19,7 +20,8 @@ Incompatible runtimes and unavailable catalogues block the request. A native
 runtime without an OCI image cannot be submitted to the Job backend.
 
 The button says **Request catalogue run** because readiness is not established.
-The operator must still provision the selected artifacts and commit issuance.
+The operator must still prepare/register new compositions. For an exact
+registered composition, the controller can commit issuance automatically.
 Run details show the selected tools and the controller's issuance observation.
 Without a selected Harness, the existing Celln host-forge path retains its
 separate ambient-host-model warning. No Celln chat/session button is exposed.

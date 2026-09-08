@@ -1,0 +1,41 @@
+{
+  "status": "passed",
+  "scope": "automatic trusted issuance/execution of an operator-registered composition; not on-demand admission/distribution",
+  "liveProof": {
+    "context": "kind-celln-deployed",
+    "namespace": "celln-catalogue-proof-mwmr8",
+    "runUID": "4ab50ed7-933c-4600-9158-0766ee117ba4",
+    "action": "celln-0aa520b0b9068bee77bd686d933b57060674e46658b2ac3b2e1c7b7c036cd68e",
+    "closure": "blake3:2d297fff9688d2c3f95bc1801ffc41d52bf4c7a934dc51bee06fe708b2864aee",
+    "automaticRegisteredIssuance": true,
+    "issuanceCLIUsed": false,
+    "answer": "CELLN has length 5",
+    "tools": ["uppercase", "length"],
+    "brokerRequests": 3,
+    "jobs": 0,
+    "liveCells": 0,
+    "auditAndReceiptCorrelated": true,
+    "modelPolicyWithdrawn": true,
+    "hostReissuanceRefused": true,
+    "ownerReceiptRetained": true,
+    "proofNamespacesRemaining": 0,
+    "isolatedControllerRestoredReadyReplicas": 1,
+    "localEvidence": "target/celln-live-proof/catalogue-live-1459789282",
+    "agentrunSHA256": "1ddd04101bf07479b9de76ac5f3e557b009bb2250bdd4bb9dfc172eec1767bc4",
+    "auditSHA256": "d0c231057aa9b85f8b98471ac87feab880113c702744a6e0c309b41efa865896"
+  },
+  "portableChecks": [
+    "Full Go race suite with real NATS fixture available",
+    "Build and vet",
+    "Registered composition bounds, malformed hashes, ambiguity and configuration-copy validation",
+    "Missing/unmatched registration and admission refusal create no issuance",
+    "Lost Prepared acknowledgement, lost Issued acknowledgement and failed result commit recover using saved identity after registration removal",
+    "Controller config accepts explicit registrations and rejects invalid registration bounds"
+  ],
+  "limits": [
+    "Actual host processes and Kind API, not production pod deployment topology",
+    "Public fixture artifacts were composed/materialized before registration",
+    "No full browser-to-model acceptance or conversational lifecycle",
+    "Registration removal is not approval or fleet revocation"
+  ]
+}

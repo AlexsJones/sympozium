@@ -18,14 +18,15 @@ type ControllerEndpoint struct {
 	CAFile    string `json:"caFile,omitempty"`
 }
 type ControllerDispatchBinding struct {
-	Agent          types.NamespacedName `json:"agent"`
-	Issuer         ControllerEndpoint   `json:"issuer"`
-	Router         ControllerEndpoint   `json:"router"`
-	Backend        string               `json:"backend"`
-	OperatorSource types.NamespacedName `json:"operatorSource"`
-	RuntimeSource  types.NamespacedName `json:"runtimeSource"`
-	AgentSource    types.NamespacedName `json:"agentSource"`
-	ModelSource    types.NamespacedName `json:"modelSource"`
+	Compositions   []RegisteredComposition `json:"compositions,omitempty"`
+	Agent          types.NamespacedName    `json:"agent"`
+	Issuer         ControllerEndpoint      `json:"issuer"`
+	Router         ControllerEndpoint      `json:"router"`
+	Backend        string                  `json:"backend"`
+	OperatorSource types.NamespacedName    `json:"operatorSource"`
+	RuntimeSource  types.NamespacedName    `json:"runtimeSource"`
+	AgentSource    types.NamespacedName    `json:"agentSource"`
+	ModelSource    types.NamespacedName    `json:"modelSource"`
 }
 type ControllerDispatchConfig struct {
 	APIVersion string                      `json:"apiVersion"`
@@ -86,7 +87,7 @@ func LoadRunDispatcher(path string, writer client.Client, reader client.Reader) 
 			return nil, nil, err
 		}
 		closers = append(closers, router.CloseIdleConnections)
-		bindings[b.Agent] = RunDispatchBinding{Issuer: issuer, Router: router, Loader: cellnauthority.ModelLoader{Selection: cellnauthority.Loader{Reader: reader, OperatorSource: b.OperatorSource, RuntimeSource: b.RuntimeSource, AgentSource: b.AgentSource}, Source: b.ModelSource}}
+		bindings[b.Agent] = RunDispatchBinding{Issuer: issuer, Router: router, Compositions: b.Compositions, Loader: cellnauthority.ModelLoader{Selection: cellnauthority.Loader{Reader: reader, OperatorSource: b.OperatorSource, RuntimeSource: b.RuntimeSource, AgentSource: b.AgentSource}, Source: b.ModelSource}}
 	}
 	result, err := NewRunDispatcher(writer, reader, bindings)
 	if err != nil {

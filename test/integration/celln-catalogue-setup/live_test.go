@@ -52,6 +52,7 @@ func TestLiveCatalogueHarness(t *testing.T) {
 	materializer := path("CELLN_ISSUANCE_MATERIALIZER")
 	packagePath := path("CELLN_HARNESS_PACKAGE")
 	cli := path("CELLN_LIVE_SYMPOZIUM_BINARY")
+	automatic := os.Getenv("CELLN_LIVE_AUTOMATIC_ISSUANCE") == "1"
 	controller := path("CELLN_LIVE_CONTROLLER_BINARY")
 	config, err := clientcmd.LoadFromFile(kube)
 	must(t, err)
@@ -167,18 +168,27 @@ func TestLiveCatalogueHarness(t *testing.T) {
 		IssuancePersisted    bool `json:"issuancePersisted"`
 		ControllerMayExecute bool `json:"controllerMayExecute"`
 	}
-	must(t, json.Unmarshal(command(t, ctx, nil, cli, args...), &issuedReport))
-	if !issuedReport.IssuancePersisted || !issuedReport.ControllerMayExecute {
-		t.Fatal("CLI did not acknowledge durable execution hand-off")
+	if !automatic {
+		must(t, json.Unmarshal(command(t, ctx, nil, cli, args...), &issuedReport))
+		if !issuedReport.IssuancePersisted || !issuedReport.ControllerMayExecute {
+			t.Fatal("CLI did not acknowledge durable execution hand-off")
+		}
 	}
 	var run api.AgentRun
 	key := types.NamespacedName{Namespace: ns.Name, Name: "run"}
 	must(t, c.Get(ctx, key, &run))
-	if run.Status.CellnIssuance == nil || run.Status.CellnIssuance.Phase != "Issued" || run.Status.CellnActionID != "" {
+	if !automatic && (run.Status.CellnIssuance == nil || run.Status.CellnIssuance.Phase != "Issued" || run.Status.CellnActionID != "") {
 		t.Fatal("issuance did not precede dispatch")
 	}
+	if automatic && run.Status.CellnIssuance != nil {
+		t.Fatal("automatic proof was manually issued")
+	}
 	configPath := filepath.Join(dir, "controller.json")
-	writeJSON(t, configPath, cellnreview.ControllerDispatchConfig{APIVersion: "sympozium.ai/celln-catalogue-controller-v1", Bindings: []cellnreview.ControllerDispatchBinding{{Agent: types.NamespacedName{Namespace: ns.Name, Name: "agent"}, Issuer: cellnreview.ControllerEndpoint{URL: issuerURL, TokenFile: issuerToken, CAFile: issuerCA}, Router: cellnreview.ControllerEndpoint{URL: router.URL, TokenFile: routerToken, CAFile: routerCA}, Backend: backend, OperatorSource: l.OperatorSource, RuntimeSource: l.RuntimeSource, AgentSource: l.AgentSource, ModelSource: ml.Source}}})
+	var registrations []cellnreview.RegisteredComposition
+	if automatic {
+		registrations = []cellnreview.RegisteredComposition{{Sources: frozen.Prepared.Composition.Sources, ImageBytes: frozen.Prepared.Composition.ImageBytes, Artifacts: artifacts}}
+	}
+	writeJSON(t, configPath, cellnreview.ControllerDispatchConfig{APIVersion: "sympozium.ai/celln-catalogue-controller-v1", Bindings: []cellnreview.ControllerDispatchBinding{{Compositions: registrations, Agent: types.NamespacedName{Namespace: ns.Name, Name: "agent"}, Issuer: cellnreview.ControllerEndpoint{URL: issuerURL, TokenFile: issuerToken, CAFile: issuerCA}, Router: cellnreview.ControllerEndpoint{URL: router.URL, TokenFile: routerToken, CAFile: routerCA}, Backend: backend, OperatorSource: l.OperatorSource, RuntimeSource: l.RuntimeSource, AgentSource: l.AgentSource, ModelSource: ml.Source}}})
 	env := cleanControllerEnv(kube, configPath)
 	startProcess(t, ctx, env, controller, "--metrics-bind-address=0", "--health-probe-bind-address=0", "--max-run-history=100")
 	// Registered after the controller process cleanup: remove the run while
@@ -216,6 +226,9 @@ func TestLiveCatalogueHarness(t *testing.T) {
 		t.Fatalf("catalogue run did not succeed: phase=%s error=%s", run.Status.Phase, run.Status.Error)
 	}
 	validateLiveResult(t, run)
+	if run.Status.CellnIssuance == nil || run.Status.CellnIssuance.Phase != "Issued" {
+		t.Fatal("terminal run lacks committed issuance")
+	}
 	var jobs batchv1.JobList
 	must(t, c.List(ctx, &jobs, client.InNamespace(ns.Name)))
 	if len(jobs.Items) != 0 {
@@ -299,8 +312,8 @@ func TestLiveCatalogueHarness(t *testing.T) {
 			t.Fatal("owner receipt changed after withdrawal")
 		}
 	}
-	writeJSON(t, filepath.Join(evidence, "summary.json"), map[string]any{"status": "passed", "scope": "actual host CLI/controller/issuer/router/KVM with isolated Kind API and real DeepSeek; not deployed pod topology or production admission", "namespace": ns.Name, "runUID": run.UID, "action": run.Status.CellnActionID, "closure": composition.Closure, "brokerRequests": 3, "toolCalls": 2, "jobs": 0, "liveCells": 0, "modelPolicyWithdrawn": true, "hostReissuanceRefused": true, "ownerReceiptRetained": true})
-	t.Logf("PASS actual Kind catalogue -> signed composition -> TLS issuer -> issue-run CLI durable status -> configured controller -> TLS pinned router -> KVM -> DeepSeek uppercase and length -> terminal receipt -> model-policy withdrawal -> retained owner receipt; namespace=%s runUID=%s action=%s closure=%s", ns.Name, run.UID, run.Status.CellnActionID, composition.Closure)
+	writeJSON(t, filepath.Join(evidence, "summary.json"), map[string]any{"status": "passed", "scope": "actual host controller/issuer/router/KVM with isolated Kind API and real DeepSeek; not deployed pod topology or production admission", "automaticRegisteredIssuance": automatic, "issuanceCLIUsed": !automatic, "namespace": ns.Name, "runUID": run.UID, "action": run.Status.CellnActionID, "closure": composition.Closure, "brokerRequests": 3, "toolCalls": 2, "jobs": 0, "liveCells": 0, "modelPolicyWithdrawn": true, "hostReissuanceRefused": true, "ownerReceiptRetained": true})
+	t.Logf("PASS actual Kind named catalogue -> signed composition -> TLS issuer -> durable status -> configured controller -> TLS pinned router -> KVM -> DeepSeek uppercase and length -> terminal receipt -> model-policy withdrawal -> retained owner receipt; automaticRegisteredIssuance=%t namespace=%s runUID=%s action=%s closure=%s", automatic, ns.Name, run.UID, run.Status.CellnActionID, composition.Closure)
 }
 
 func sameJSON(a, b []byte) bool {

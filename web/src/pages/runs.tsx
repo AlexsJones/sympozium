@@ -299,7 +299,7 @@ export function RunsPage() {
                       <p className="text-xs">Lending order: {lentTools.map((ref) => `${ref.name}@${ref.revision}`).join(" → ") || "none"}</p>
                       {staleTools && <p role="alert" className="text-xs text-red-400">The catalogue changed. Clear and reselect the borrowed tools before submitting.</p>}
                       {!!lentTools.length && <Button type="button" variant="outline" size="sm" onClick={() => setLentTools([])}>Clear borrowed tools</Button>}
-                      <p className="text-xs text-amber-500">Selection readiness is not established. Catalogue metadata is not permission to run. This request waits for operator issuance, which checks the effective permissions and prepares the approved artifacts. No automatic provisioning yet.</p>
+                      <p className="text-xs text-amber-500">Selection readiness is not established. Catalogue metadata is not permission to run. Registered compositions can receive trusted issuance automatically; new combinations require operator preparation. Current approvals and effective permissions are checked before execution.</p>
                     </div>}
                     {capabilities.data && !capabilities.data.celln.available ? (
                       <p className="flex items-start gap-1 text-xs text-red-400 mt-1">
