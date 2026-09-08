@@ -33,6 +33,14 @@ of the full epic, not completed requirements or silent fallbacks.
 | Tenant-Pod egress to host services | [Calico before/deny/after proof](../evidence/celln-tenant-host-network-2026-09-08.json): credential-free non-root Pods copying controller labels reach both live host endpoints before policy, time out under namespace egress restriction, and reach them after removal; subsequent AI/cleanup pass. Not a production firewall or additive-policy bypass guarantee. |
 | Portable regressions | Full local Go race/build/vet passes recorded in PR history; CI verifies formatting, vet/build, short race tests, generation and Helm CRD synchronization. Hardware-skipped CI is not hardware proof. |
 
+The latest [portable regression record](../evidence/celln-mlp-portable-regression-2026-09-08.json)
+covers application source `ad2255c`: full Go race/build/vet, web build and five
+browser selection contract checks. The initial browser assertion failed because
+the incompatible-Harness alert was below the scrollable dialog fold; the corrected
+test scrolls to the alert while preserving visibility/disabled-submit assertions.
+Deployed Job/sandbox/Harness regressions are still open. Review the older sandbox
+script's controller mutations and broad cleanup selectors before running it.
+
 The cleanup exemption was tightened during review in `35b45cd`: only an immutable
 Celln-only boundary recorded on an untouched original-generation run qualifies.
 Legacy action/request identity alone is insufficient. Legacy/mixed-state runs

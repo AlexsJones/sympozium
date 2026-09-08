@@ -1,0 +1,39 @@
+{
+  "status": "passed-after-browser-test-correction",
+  "applicationSource": "ad2255cc0074be5bd7c6590d7ea9fb1d96909081",
+  "scope": "fresh portable Go regression and built-browser selection contract checks; not deployed Job/sandbox/Harness or hardware acceptance",
+  "go": {
+    "race": "go test -race ./... -count=1 passed",
+    "build": "go build ./... passed",
+    "vet": "go vet ./... passed",
+    "natsFixturePath": "/home/axjns/Code/sympozium-m0-celln/target/nats-proof/bin",
+    "mcpBridgeSeconds": 51.591,
+    "optInLiveTests": "not enabled in portable run; separate committed live evidence remains authoritative"
+  },
+  "webBuild": {
+    "command": "npm run build",
+    "passed": true,
+    "warnings": ["Browserslist data outdated", "JavaScript bundle exceeds 500 kB"]
+  },
+  "browserContract": {
+    "spec": "cypress/e2e/celln-selection.cy.ts",
+    "initialResult": "4 passed, 1 failed: incompatible-Harness alert below scrollable dialog fold",
+    "correction": "scope alert to dialog and scroll it into view; retain visibility and disabled-submit assertions",
+    "rerun": "5 passed in 13 seconds",
+    "realModelOrCluster": false,
+    "limits": "selection APIs intercepted; preview POST and WebSocket proxy unavailable, not preview/streaming qualification",
+    "warnings": ["Cypress allowCypressEnv deprecation/security warning", "Node module.register deprecation"]
+  },
+  "ciAtApplicationSource": {
+    "verify": "passed",
+    "url": "https://github.com/sympozium-ai/sympozium/actions/runs/34226476625/job/102061725639",
+    "imageBuildAndPush": "skipped by PR workflow"
+  },
+  "deployedRegressionStatus": "not run; gate remains open",
+  "deployedScriptReview": {
+    "test-agent-sandbox.sh": "requires sympozium-controller-manager and may mutate its environment/restart it; cleanup uses obsolete sympoziuminstance name and broad component selectors; needs scoped setup/cleanup before execution",
+    "test-harness-mode.sh": "requires platform controller and admission setup; uses an adapter stand-in, not a real-model proof"
+  },
+  "localPreviewStopped": true,
+  "generatedTrackedBuildFilesRestored": true
+}
