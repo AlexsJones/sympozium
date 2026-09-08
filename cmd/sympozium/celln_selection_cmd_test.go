@@ -37,6 +37,29 @@ func TestRemoteIssuanceHasNoLocalHostAuthorityFlags(t *testing.T) {
 	}
 }
 
+func TestDurableIssuanceRequiresRouteAndWarnsAboutExecution(t *testing.T) {
+	cmd := newCellnSelectionRunIssueCmd()
+	for _, name := range []string{"issuer-url", "issuer-token-file", "run", "model-policy", "execution-mote", "execution-closure", "router-url", "backend", "grant-namespace", "operator-grants", "runtime-grants", "agent-grants"} {
+		flag := cmd.Flags().Lookup(name)
+		if flag == nil || len(flag.Annotations["cobra_annotation_bash_completion_one_required_flag"]) == 0 {
+			t.Fatalf("missing required durable issuance input %s", name)
+		}
+	}
+	for _, name := range []string{"policy-root", "celln-binary", "composer-publisher", "profile-lifetime", "key-file", "router-token-file"} {
+		if cmd.Flags().Lookup(name) != nil {
+			t.Fatalf("issuance command accepts unnecessary authority flag %s", name)
+		}
+	}
+	if !strings.Contains(cmd.Long, "may immediately execute") || !strings.Contains(cmd.Flags().Lookup("run").Usage, "may execute immediately") {
+		t.Fatal("durable hand-off fails to disclose controller execution")
+	}
+	// Preserve the existing provisioning-only command's contract.
+	remote := newCellnSelectionRemoteIssueCmd()
+	if remote.Flags().Lookup("router-url") != nil || !strings.Contains(remote.Long, "No dispatch") {
+		t.Fatal("provisioning-only command changed")
+	}
+}
+
 func TestSelectionPlanRequiresExplicitSourcesAndWellFormedSelections(t *testing.T) {
 	for _, args := range [][]string{
 		{"agent"},
