@@ -1,0 +1,26 @@
+{
+  "status": "passed",
+  "scope": "fixture setup against the actual isolated Kind Kubernetes API; not execution acceptance",
+  "context": "kind-celln-deployed",
+  "namespace": "celln-catalogue-proof-sw7vb",
+  "runUID": "baa2d3b9-6f5c-4769-b9bc-af84ca199417",
+  "checks": [
+    "Known proof controller UID and absence of nonterminal runs checked before pause",
+    "Runtime, Agent, uppercase and length catalogue objects created with actual API-assigned identities",
+    "Three independent grant documents bind persisted/defaulted Agent, runtime and tool identities",
+    "Independent DeepSeek policy resolved against the frozen run and selected tools",
+    "Zero Jobs in the proof namespace",
+    "Second invocation refused before namespace creation while the restored controller was running",
+    "Portable race test refuses implicit paths and non-proof kubeconfig contexts"
+  ],
+  "cleanup": {
+    "namespaceDeleted": true,
+    "controllerUID": "ca1c69fb-3af7-47f7-ac3f-44e9a26a27cc",
+    "controllerRestoredReplicas": 1,
+    "controllerRolloutPassed": true
+  },
+  "issuanceRequests": 0,
+  "executionSubmissions": 0,
+  "modelCalls": 0,
+  "remaining": "Compose/materialize, run actual issuer and issue-run CLI, execute through configured controller/router, correlate real two-tool AI result and receipt, prove withdrawal and cleanup."
+}

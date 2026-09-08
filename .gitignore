@@ -60,3 +60,6 @@ mcp-bridge
 
 # Local machine-specific Claude notes (not shared)
 CLAUDE.local.md
+
+# Local catalogue proof binaries and full execution evidence (publish summaries)
+/target/celln-live-proof/
