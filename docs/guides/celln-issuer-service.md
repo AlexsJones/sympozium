@@ -8,6 +8,10 @@ It is wired into registered automatic AgentRun issuance through the
 [controller bridge](celln-catalogue-controller-bridge.md); Helm can mount the
 controller's endpoint/credential configuration. The chart does not install this
 host service or automatically distribute admitted artifacts.
+An administrator-managed [systemd unit and installation procedure](celln-issuer-systemd.md)
+are now provided separately. They preserve explicit host provisioning and require
+runtime qualification; the command's existing process proofs do not establish
+that the systemd sandbox and installed filesystem layout work on a target host.
 
 ## Operator configuration
 

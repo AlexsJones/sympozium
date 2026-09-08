@@ -2,8 +2,10 @@
 
 This is the installation entry point for the administrator-assisted MLP. The
 native JSON Harness/browser/operator-admission journey has passed with an
-authenticated API-server pod in isolated Kind and host-process controller,
-issuer and router. **The complete deployment described here still needs
+authenticated API-server and scoped controller Pods in isolated Kind, connected
+over verified TLS to standalone host issuer/router/dispatcher processes. Browser
+cancellation and controller-Pod replacement also have separate evidence.
+**The complete persistent deployment described here still needs
 qualification; it is not a GA or arbitrary-Harness compatibility claim.**
 
 The supported scope is a bounded one-shot native JSON Harness with explicitly
@@ -54,6 +56,9 @@ Follow [model authority](celln-model-authority.md), [issuer service](celln-issue
 and [controller bridge](celln-catalogue-controller-bridge.md). Model credentials
 remain in the host credential mapping, not the guest or AgentRun. The issuer
 has its own trusted per-Agent approval bindings and durable lifecycle journal.
+The [host systemd procedure](celln-issuer-systemd.md) supplies an explicit issuer
+unit and filesystem/identity/upgrade contract. Its sandboxed startup and full host
+lifecycle remain qualification gates; syntax checks alone are not deployment proof.
 
 Register the admitted mote/closure with the exact source sequence using
 [registered issuance](celln-registered-issuance.md). Registration is only artifact

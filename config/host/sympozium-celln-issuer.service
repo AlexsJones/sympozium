@@ -1,0 +1,46 @@
+[Unit]
+Description=Sympozium Celln trusted issuance service
+Documentation=https://github.com/sympozium-ai/sympozium/blob/main/docs/guides/celln-issuer-service.md
+Wants=network-online.target
+After=network-online.target
+RequiresMountsFor=/var/lib/celln /etc/sympozium-issuer /opt/sympozium-celln
+ConditionPathExists=/etc/sympozium-issuer/issuer.json
+ConditionPathExists=/etc/sympozium-issuer/kubeconfig
+ConditionPathExists=/dev/kvm
+StartLimitIntervalSec=120
+StartLimitBurst=5
+
+[Service]
+Type=exec
+User=celln
+Group=celln
+SupplementaryGroups=kvm
+WorkingDirectory=/var/lib/celln
+ExecStart=/opt/sympozium-celln/bin/sympozium --kubeconfig /etc/sympozium-issuer/kubeconfig celln-tool serve-issuer --config /etc/sympozium-issuer/issuer.json
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=100
+KillMode=control-group
+UMask=0077
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+# PrivateDevices would hide KVM from the actual sealed-member check.
+PrivateDevices=no
+DevicePolicy=closed
+DeviceAllow=/dev/kvm rw
+ReadWritePaths=/var/lib/celln
+ReadOnlyPaths=/etc/sympozium-issuer /opt/sympozium-celln
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
