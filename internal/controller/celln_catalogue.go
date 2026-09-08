@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -27,13 +28,35 @@ type CatalogueDispatcher interface {
 	Cancel(context.Context, types.NamespacedName) (*cellnreview.RouterExecution, error)
 }
 
+type catalogueProvisioner interface {
+	EnsureIssued(context.Context, types.NamespacedName, func(context.Context, *api.AgentRun) error) error
+}
+
 // A named catalogue request must never fall through to forge/explicit artifact
 // execution while an operator or provisioning controller prepares issuance.
-func (r *AgentRunReconciler) awaitCatalogueIssuance(ctx context.Context, run *api.AgentRun) (ctrl.Result, error) {
+func (r *AgentRunReconciler) awaitCatalogueIssuance(ctx context.Context, log logr.Logger, run *api.AgentRun) (ctrl.Result, error) {
 	condition := metav1.Condition{Type: "CellnIssuanceCommitted", Status: metav1.ConditionFalse, Reason: "AwaitingIssuance", Message: "Waiting for trusted catalogue issuance; no execution has been submitted", ObservedGeneration: run.Generation}
 	if r.CatalogueDispatcher == nil {
 		condition.Reason = "DispatcherNotConfigured"
 		condition.Message = "Catalogue controller binding is not configured; no execution has been submitted"
+	}
+	if provisioner, ok := r.CatalogueDispatcher.(catalogueProvisioner); ok {
+		if r.APIReader == nil {
+			return ctrl.Result{}, fmt.Errorf("uncached reader required for automatic catalogue issuance")
+		}
+		err := provisioner.EnsureIssued(ctx, client.ObjectKeyFromObject(run), func(ctx context.Context, current *api.AgentRun) error { return r.catalogueAdmission(ctx, log, current) })
+		if err == nil {
+			var current api.AgentRun
+			if err := r.APIReader.Get(ctx, client.ObjectKeyFromObject(run), &current); err != nil {
+				return ctrl.Result{}, err
+			}
+			return r.reconcilePendingCatalogue(ctx, log, &current)
+		}
+		if !errors.Is(err, cellnreview.ErrNoRegisteredComposition) {
+			return ctrl.Result{}, err
+		}
+		condition.Reason = "AwaitingRegisteredComposition"
+		condition.Message = "No operator-registered admitted composition matches these source closures; no execution has been submitted"
 	}
 	result := ctrl.Result{RequeueAfter: 5 * time.Second}
 	if existing := meta.FindStatusCondition(run.Status.Conditions, condition.Type); existing != nil && existing.Status == condition.Status && existing.Reason == condition.Reason && existing.Message == condition.Message && existing.ObservedGeneration == condition.ObservedGeneration {
@@ -46,6 +69,19 @@ func (r *AgentRunReconciler) awaitCatalogueIssuance(ctx context.Context, run *ap
 		meta.SetStatusCondition(&current.Status.Conditions, condition)
 	})
 	return result, err
+}
+
+func (r *AgentRunReconciler) catalogueAdmission(ctx context.Context, log logr.Logger, current *api.AgentRun) error {
+	if os.Getenv("CELLN_HARNESS_ENABLED") != "true" {
+		return fmt.Errorf("Celln Harness is disabled")
+	}
+	if err := r.validatePolicy(ctx, current); err != nil {
+		return err
+	}
+	if err := validateGateHooks(current); err != nil {
+		return err
+	}
+	return r.checkTokenBudget(ctx, log, current)
 }
 
 func catalogueRecord(record *cellnreview.RouterExecution) (executionRecord, error) {
@@ -70,16 +106,7 @@ func (r *AgentRunReconciler) reconcilePendingCatalogue(ctx context.Context, log 
 		return ctrl.Result{}, fmt.Errorf("Celln catalogue dispatcher and uncached reader are not configured")
 	}
 	record, err := r.CatalogueDispatcher.ReconcilePending(ctx, client.ObjectKeyFromObject(run), func(ctx context.Context, current *api.AgentRun) error {
-		if os.Getenv("CELLN_HARNESS_ENABLED") != "true" {
-			return fmt.Errorf("Celln Harness is disabled")
-		}
-		if err := r.validatePolicy(ctx, current); err != nil {
-			return err
-		}
-		if err := validateGateHooks(current); err != nil {
-			return err
-		}
-		return r.checkTokenBudget(ctx, log, current)
+		return r.catalogueAdmission(ctx, log, current)
 	})
 	if err != nil {
 		return ctrl.Result{}, err

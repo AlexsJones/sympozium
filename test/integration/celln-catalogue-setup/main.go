@@ -172,6 +172,10 @@ func populate(ctx context.Context, c client.Client, namespace string, source cat
 		return nil, err
 	}
 	run.Namespace, run.Name = namespace, "run"
+	run.Spec.CellnSelection = &api.CellnCatalogueSelection{ToolRefs: []api.CellnCatalogueToolRef{}}
+	for _, ref := range selected {
+		run.Spec.CellnSelection.ToolRefs = append(run.Spec.CellnSelection.ToolRefs, api.CellnCatalogueToolRef{Name: ref.Name, Revision: ref.Revision})
+	}
 	if err := c.Create(ctx, &run); err != nil {
 		return nil, err
 	}
