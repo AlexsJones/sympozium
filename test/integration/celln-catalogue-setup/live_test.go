@@ -1,0 +1,501 @@
+package main
+
+import (
+	"context"
+	"crypto/x509"
+	"encoding/json"
+	"encoding/pem"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"testing"
+	"time"
+
+	api "github.com/sympozium-ai/sympozium/api/v1alpha1"
+	"github.com/sympozium-ai/sympozium/internal/cellnauthority"
+	"github.com/sympozium-ai/sympozium/internal/cellnreview"
+	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/clientcmd"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+)
+
+// Explicitly billable, host-KVM test. The caller pauses/restores only the known
+// isolated proof controller. No environment-default cluster is ever selected.
+func TestLiveCatalogueHarness(t *testing.T) {
+	if os.Getenv("CELLN_LIVE_CATALOGUE") != "1" {
+		t.Skip("explicit isolated live catalogue/model proof required")
+	}
+	path := func(name string) string {
+		p := os.Getenv(name)
+		if !filepath.IsAbs(p) {
+			t.Fatalf("absolute %s required", name)
+		}
+		return p
+	}
+	kube := path("CELLN_CONTROLLER_KUBECONFIG")
+	fixture := path("CELLN_COMPOSITION_FIXTURE")
+	binary := path("CELLN_COMPOSITION_BINARY")
+	materializer := path("CELLN_ISSUANCE_MATERIALIZER")
+	packagePath := path("CELLN_HARNESS_PACKAGE")
+	cli := path("CELLN_LIVE_SYMPOZIUM_BINARY")
+	controller := path("CELLN_LIVE_CONTROLLER_BINARY")
+	config, err := clientcmd.LoadFromFile(kube)
+	must(t, err)
+	if config.CurrentContext != "kind-celln-deployed" {
+		t.Fatal("only isolated kind-celln-deployed permitted")
+	}
+	rest, err := clientcmd.NewDefaultClientConfig(*config, &clientcmd.ConfigOverrides{}).ClientConfig()
+	must(t, err)
+	scheme := runtime.NewScheme()
+	must(t, api.AddToScheme(scheme))
+	must(t, corev1.AddToScheme(scheme))
+	must(t, appsv1.AddToScheme(scheme))
+	must(t, batchv1.AddToScheme(scheme))
+	c, err := client.New(rest, client.Options{Scheme: scheme})
+	must(t, err)
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
+	t.Cleanup(cancel)
+	var deployment appsv1.Deployment
+	must(t, c.Get(ctx, types.NamespacedName{Namespace: "sympozium-system", Name: "harness-proof-controller"}, &deployment))
+	if deployment.Spec.Replicas == nil || *deployment.Spec.Replicas != 0 || deployment.Status.Replicas != 0 || deployment.Status.ObservedGeneration < deployment.Generation {
+		t.Fatal("proof controller must be stopped")
+	}
+	dir := t.TempDir()
+	evidence := filepath.Join(dir, "evidence")
+	if parent := os.Getenv("CELLN_LIVE_EVIDENCE_PARENT"); parent != "" {
+		if !filepath.IsAbs(parent) {
+			t.Fatal("absolute evidence parent required")
+		}
+		evidence, err = os.MkdirTemp(parent, "catalogue-live-")
+		must(t, err)
+	} else {
+		must(t, os.Mkdir(evidence, 0700))
+	}
+	t.Logf("evidence directory: %s", evidence)
+	credential := os.Getenv("CELLN_LIVE_CREDENTIAL_FILE")
+	if source := os.Getenv("CELLN_LIVE_DEEPSEEK_ZSHRC"); source != "" {
+		if credential != "" || !filepath.IsAbs(source) {
+			t.Fatal("choose one explicit host credential source")
+		}
+		raw, err := os.ReadFile(source)
+		must(t, err)
+		if len(raw) > 1<<20 {
+			t.Fatal("shell configuration exceeds bound")
+		}
+		matches := regexp.MustCompile(`(?m)^\s*(?:export\s+)?DEEPSEEK_API_KEY\s*=\s*(['"]?)(sk-[A-Za-z0-9_-]+)(['"]?)\s*(?:#.*)?$`).FindAllSubmatch(raw, -1)
+		if len(matches) != 1 || string(matches[0][1]) != string(matches[0][3]) {
+			t.Fatal("exactly one literal DeepSeek assignment required; shell configuration is never sourced")
+		}
+		credential = filepath.Join(dir, "deepseek-key")
+		must(t, os.WriteFile(credential, matches[0][2], 0600))
+	}
+	if !filepath.IsAbs(credential) {
+		t.Fatal("absolute host credential file or explicit literal shell configuration required")
+	}
+	root := filepath.Join(dir, "store")
+	must(t, os.CopyFS(root, os.DirFS(fixture)))
+	var source catalogue
+	readJSON(t, filepath.Join(root, "catalogue.json"), &source)
+	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{GenerateName: "celln-catalogue-proof-", Labels: map[string]string{"sympozium.ai/celln-catalogue-proof": "true"}}}
+	must(t, c.Create(ctx, ns))
+	t.Cleanup(func() {
+		cleanup, stop := context.WithTimeout(context.Background(), 15*time.Second)
+		defer stop()
+		uid := ns.UID
+		if err := c.Delete(cleanup, ns, &client.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &uid}}); err != nil {
+			t.Errorf("namespace cleanup %s: %v", ns.Name, err)
+		}
+	})
+	report, err := populate(ctx, c, ns.Name, source)
+	must(t, err)
+	frozen := report["frozen"].(*cellnauthority.FrozenSelection)
+	l := cellnauthority.Loader{Reader: c, OperatorSource: types.NamespacedName{Namespace: ns.Name, Name: "operator"}, RuntimeSource: types.NamespacedName{Namespace: ns.Name, Name: "runtime"}, AgentSource: types.NamespacedName{Namespace: ns.Name, Name: "agent"}}
+	ml := cellnauthority.ModelLoader{Selection: l, Source: types.NamespacedName{Namespace: ns.Name, Name: "model"}}
+	o := cellnreview.ComposeOptions{Binary: binary, PolicyRoot: root, KeyFile: filepath.Join(root, "public-fixture-seed"), OutputDir: filepath.Join(dir, "composed")}
+	composition, err := cellnreview.Compose(ctx, l, *frozen, o)
+	must(t, err)
+	var artifacts cellnauthority.ExecutionArtifacts
+	must(t, json.Unmarshal(command(t, ctx, nil, materializer, root, o.OutputDir, packagePath), &artifacts))
+	var signed struct {
+		Publisher string `json:"publisher"`
+	}
+	readJSON(t, filepath.Join(o.OutputDir, "signed-closure.json"), &signed)
+	// Only a host mapping references the credential; no Kubernetes Secret, CLI
+	// argument containing the key, environment injection or guest copy is used.
+	writeJSON(t, filepath.Join(root, "model-credentials.json"), map[string]any{"apiVersion": "sympozium.ai/celln-host-credentials-v1", "profiles": map[string]string{"catalogue-proof": credential}})
+	managed, err := cellnreview.NewManagedIssuer(cellnreview.IssueOptions{Binary: binary, PolicyRoot: root, ComposerPublisher: signed.Publisher, ProfileLifetime: 5 * time.Minute}, map[types.NamespacedName]cellnauthority.ModelLoader{{Namespace: ns.Name, Name: "agent"}: ml}, time.Second)
+	must(t, err)
+	issuerURL, issuerToken, issuerCA := liveIssuer(t, ctx, dir, managed)
+	backendToken, routerToken := filepath.Join(dir, "backend-token"), filepath.Join(dir, "router-token")
+	must(t, os.WriteFile(backendToken, []byte("public-live-catalogue-backend-token"), 0600))
+	must(t, os.WriteFile(routerToken, []byte("public-live-catalogue-router-token"), 0600))
+	backendAddr, routerAddr := freeAddress(t), freeAddress(t)
+	backend := "http://" + backendAddr
+	startProcess(t, ctx, nil, binary, "--root", root, "dispatcher", "--listen", backendAddr, "--token-file", backendToken, "--node-name", "catalogue-live-proof", "--mote-store", filepath.Join(root, "motes"), "--tool-store", filepath.Join(root, "tools"), "--allow-egress-host", "api.deepseek.com", "--egress-slots", "1")
+	waitTCP(t, backendAddr)
+	startProcess(t, ctx, nil, binary, "route", "--listen", routerAddr, "--backends", backend, "--token-file", backendToken, "--client-token-file", routerToken, "--ownership-dir", filepath.Join(dir, "ownership"))
+	waitTCP(t, routerAddr)
+	target, err := url.Parse("http://" + routerAddr)
+	must(t, err)
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	transport := &http.Transport{Proxy: nil}
+	proxy.Transport = transport
+	t.Cleanup(transport.CloseIdleConnections)
+	router := httptest.NewTLSServer(proxy)
+	t.Cleanup(router.Close)
+	routerCA := filepath.Join(dir, "router-ca.pem")
+	must(t, os.WriteFile(routerCA, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: router.Certificate().Raw}), 0600))
+	args := []string{"--kubeconfig", kube, "--namespace", ns.Name, "celln-tool", "issue-run", "agent", "--run", "run", "--grant-namespace", ns.Name, "--operator-grants", "operator", "--runtime-grants", "runtime", "--agent-grants", "agent", "--model-policy", "model", "--execution-mote", artifacts.Mote.Hash, "--execution-closure", artifacts.Closure.Hash, "--issuer-url", issuerURL, "--issuer-token-file", issuerToken, "--issuer-ca-file", issuerCA, "--router-url", router.URL, "--backend", backend}
+	for _, tool := range source.Tools {
+		args = append(args, "--tool", tool.Name+"@"+tool.Spec.Revision)
+	}
+	var issuedReport struct {
+		IssuancePersisted    bool `json:"issuancePersisted"`
+		ControllerMayExecute bool `json:"controllerMayExecute"`
+	}
+	must(t, json.Unmarshal(command(t, ctx, nil, cli, args...), &issuedReport))
+	if !issuedReport.IssuancePersisted || !issuedReport.ControllerMayExecute {
+		t.Fatal("CLI did not acknowledge durable execution hand-off")
+	}
+	var run api.AgentRun
+	key := types.NamespacedName{Namespace: ns.Name, Name: "run"}
+	must(t, c.Get(ctx, key, &run))
+	if run.Status.CellnIssuance == nil || run.Status.CellnIssuance.Phase != "Issued" || run.Status.CellnActionID != "" {
+		t.Fatal("issuance did not precede dispatch")
+	}
+	configPath := filepath.Join(dir, "controller.json")
+	writeJSON(t, configPath, cellnreview.ControllerDispatchConfig{APIVersion: "sympozium.ai/celln-catalogue-controller-v1", Bindings: []cellnreview.ControllerDispatchBinding{{Agent: types.NamespacedName{Namespace: ns.Name, Name: "agent"}, Issuer: cellnreview.ControllerEndpoint{URL: issuerURL, TokenFile: issuerToken, CAFile: issuerCA}, Router: cellnreview.ControllerEndpoint{URL: router.URL, TokenFile: routerToken, CAFile: routerCA}, Backend: backend, OperatorSource: l.OperatorSource, RuntimeSource: l.RuntimeSource, AgentSource: l.AgentSource, ModelSource: ml.Source}}})
+	env := cleanControllerEnv(kube, configPath)
+	startProcess(t, ctx, env, controller, "--metrics-bind-address=0", "--health-probe-bind-address=0", "--max-run-history=100")
+	// Registered after the controller process cleanup: remove the run while
+	// cancellation/finalizer reconciliation is still available, even on failure.
+	t.Cleanup(func() {
+		cleanup, stop := context.WithTimeout(context.Background(), 50*time.Second)
+		defer stop()
+		if err := c.Delete(cleanup, &api.AgentRun{ObjectMeta: metav1.ObjectMeta{Namespace: ns.Name, Name: "run"}}); client.IgnoreNotFound(err) != nil {
+			t.Errorf("run cleanup: %v", err)
+			return
+		}
+		for cleanup.Err() == nil {
+			var current api.AgentRun
+			if err := c.Get(cleanup, key, &current); err != nil {
+				if client.IgnoreNotFound(err) == nil {
+					return
+				}
+				t.Errorf("cleanup lookup: %v", err)
+				return
+			}
+			time.Sleep(time.Second)
+		}
+		t.Error("run finalizer did not complete before controller shutdown")
+	})
+	deadline := time.Now().Add(200 * time.Second)
+	for time.Now().Before(deadline) {
+		must(t, c.Get(ctx, key, &run))
+		if run.Status.Phase == api.AgentRunPhaseSucceeded || run.Status.Phase == api.AgentRunPhaseFailed {
+			break
+		}
+		time.Sleep(time.Second)
+	}
+	if run.Status.Phase != api.AgentRunPhaseSucceeded {
+		writeJSON(t, filepath.Join(evidence, "agentrun.json"), run)
+		t.Fatalf("catalogue run did not succeed: phase=%s error=%s", run.Status.Phase, run.Status.Error)
+	}
+	validateLiveResult(t, run)
+	var jobs batchv1.JobList
+	must(t, c.List(ctx, &jobs, client.InNamespace(ns.Name)))
+	if len(jobs.Items) != 0 {
+		t.Fatal("unexpected workload Jobs")
+	}
+	var audit struct {
+		Receipt   json.RawMessage `json:"receipt"`
+		Execution struct {
+			ModelGrant string `json:"modelGrant"`
+			Broker     struct {
+				Requests int `json:"requests"`
+			} `json:"broker"`
+		} `json:"execution"`
+		Events []struct {
+			Phase string `json:"phase"`
+		} `json:"events"`
+	}
+	auditBytes := authenticatedGet(t, ctx, router.Client(), router.URL+"/v1/executions/"+run.Status.CellnActionID+"/audit", routerToken)
+	must(t, json.Unmarshal(auditBytes, &audit))
+	dissolved := false
+	for _, event := range audit.Events {
+		if event.Phase == "Dissolved" {
+			dissolved = true
+		}
+	}
+	var request struct {
+		Harness struct {
+			ModelGrant api.CellnImmutableRef `json:"modelGrant"`
+		} `json:"harness"`
+	}
+	must(t, json.Unmarshal([]byte(run.Status.CellnRequest), &request))
+	if audit.Execution.Broker.Requests != 3 || audit.Execution.ModelGrant != request.Harness.ModelGrant.Hash || !dissolved || !sameJSON(audit.Receipt, []byte(run.Status.CellnReceipt)) {
+		t.Fatal("audit does not correlate model budget, grant, receipt and dissolution")
+	}
+	var node struct {
+		Node struct {
+			LiveCells int `json:"live_cells"`
+		} `json:"node"`
+	}
+	must(t, json.Unmarshal(authenticatedGet(t, ctx, &http.Client{Timeout: 10 * time.Second}, backend+"/v1/node", backendToken), &node))
+	if node.Node.LiveCells != 0 {
+		t.Fatal("live cells remain after terminal result")
+	}
+	writeJSON(t, filepath.Join(evidence, "agentrun.json"), run)
+	must(t, os.WriteFile(filepath.Join(evidence, "audit.json"), auditBytes, 0600))
+	writeJSON(t, filepath.Join(evidence, "node.json"), node)
+	writeJSON(t, filepath.Join(evidence, "jobs.json"), jobs)
+	// Current approval withdrawal must not prevent retrieving the existing
+	// owner, but must remove host admission before any new use.
+	must(t, c.Delete(ctx, &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Namespace: ns.Name, Name: "model"}}))
+	var issued cellnreview.IssuedSelection
+	must(t, json.Unmarshal([]byte(run.Status.CellnIssuance.Result), &issued))
+	profilePath := filepath.Join(root, "trusted-model-profiles", issued.Profile+".json")
+	for end := time.Now().Add(10 * time.Second); time.Now().Before(end); {
+		if _, err := os.Stat(profilePath); os.IsNotExist(err) {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if _, err := os.Stat(profilePath); !os.IsNotExist(err) {
+		t.Fatal("model approval withdrawal did not remove profile")
+	}
+	withdrawnRequest := filepath.Join(dir, "withdrawn-request.json")
+	must(t, os.WriteFile(withdrawnRequest, issued.Request, 0600))
+	refusal := exec.CommandContext(ctx, binary, "--root", root, "harness-grant", withdrawnRequest, "--profile", issued.Profile)
+	if out, err := refusal.CombinedOutput(); err == nil {
+		t.Fatalf("withdrawn host profile still issued a grant: %s", out)
+	}
+	routerClient, err := cellnreview.NewRouterClient(router.URL, routerToken, routerCA)
+	must(t, err)
+	defer routerClient.CloseIdleConnections()
+	record, err := routerClient.Lookup(ctx, cellnreview.DispatchRoute{RouterURL: router.URL, Backend: backend}, run.Status.CellnActionID)
+	must(t, err)
+	if record.Phase != "Succeeded" || string(record.Receipt) != run.Status.CellnReceipt { // Compare JSON semantics, not serialization order.
+		var a, b any
+		must(t, json.Unmarshal(record.Receipt, &a))
+		must(t, json.Unmarshal([]byte(run.Status.CellnReceipt), &b))
+		x, _ := json.Marshal(a)
+		y, _ := json.Marshal(b)
+		if record.Phase != "Succeeded" || string(x) != string(y) {
+			t.Fatal("owner receipt changed after withdrawal")
+		}
+	}
+	writeJSON(t, filepath.Join(evidence, "summary.json"), map[string]any{"status": "passed", "scope": "actual host CLI/controller/issuer/router/KVM with isolated Kind API and real DeepSeek; not deployed pod topology or production admission", "namespace": ns.Name, "runUID": run.UID, "action": run.Status.CellnActionID, "closure": composition.Closure, "brokerRequests": 3, "toolCalls": 2, "jobs": 0, "liveCells": 0, "modelPolicyWithdrawn": true, "hostReissuanceRefused": true, "ownerReceiptRetained": true})
+	t.Logf("PASS actual Kind catalogue -> signed composition -> TLS issuer -> issue-run CLI durable status -> configured controller -> TLS pinned router -> KVM -> DeepSeek uppercase and length -> terminal receipt -> model-policy withdrawal -> retained owner receipt; namespace=%s runUID=%s action=%s closure=%s", ns.Name, run.UID, run.Status.CellnActionID, composition.Closure)
+}
+
+func sameJSON(a, b []byte) bool {
+	var x, y any
+	if json.Unmarshal(a, &x) != nil || json.Unmarshal(b, &y) != nil {
+		return false
+	}
+	p, _ := json.Marshal(x)
+	q, _ := json.Marshal(y)
+	return string(p) == string(q)
+}
+func authenticatedGet(t *testing.T, ctx context.Context, c *http.Client, url, tokenPath string) []byte {
+	t.Helper()
+	token, err := os.ReadFile(tokenPath)
+	must(t, err)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	must(t, err)
+	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(string(token)))
+	res, err := c.Do(req)
+	must(t, err)
+	defer res.Body.Close()
+	if res.StatusCode != 200 {
+		t.Fatalf("proof observation HTTP %d", res.StatusCode)
+	}
+	raw, err := io.ReadAll(io.LimitReader(res.Body, 1048577))
+	must(t, err)
+	if len(raw) > 1048576 {
+		t.Fatal("observation exceeds bound")
+	}
+	return raw
+}
+
+func must(t *testing.T, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+func readJSON(t *testing.T, path string, out any) {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	must(t, err)
+	must(t, json.Unmarshal(raw, out))
+}
+func writeJSON(t *testing.T, path string, value any) {
+	t.Helper()
+	raw, err := json.Marshal(value)
+	must(t, err)
+	must(t, os.WriteFile(path, raw, 0600))
+}
+func command(t *testing.T, ctx context.Context, env []string, binary string, args ...string) []byte {
+	t.Helper()
+	cmd := exec.CommandContext(ctx, binary, args...)
+	if env != nil {
+		cmd.Env = env
+	}
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("%s failed: %v: %s", filepath.Base(binary), err, out)
+	}
+	return out
+}
+func freeAddress(t *testing.T) string {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	must(t, err)
+	addr := l.Addr().String()
+	must(t, l.Close())
+	return addr
+}
+func waitTCP(t *testing.T, addr string) {
+	t.Helper()
+	for end := time.Now().Add(10 * time.Second); time.Now().Before(end); {
+		c, err := net.DialTimeout("tcp", addr, time.Second)
+		if err == nil {
+			_ = c.Close()
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatal("listener did not start: " + addr)
+}
+func startProcess(t *testing.T, ctx context.Context, env []string, binary string, args ...string) {
+	t.Helper()
+	child, cancel := context.WithCancel(ctx)
+	log, err := os.CreateTemp(t.TempDir(), "process.log")
+	must(t, err)
+	cmd := exec.CommandContext(child, binary, args...)
+	if env != nil {
+		cmd.Env = env
+	}
+	cmd.Stdout, cmd.Stderr = log, log
+	must(t, cmd.Start())
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(10 * time.Second):
+			t.Error("owned process did not stop")
+		}
+		_ = log.Close()
+		if t.Failed() {
+			raw, _ := os.ReadFile(log.Name())
+			if len(raw) > 12000 {
+				raw = raw[len(raw)-12000:]
+			}
+			t.Logf("%s log: %s", filepath.Base(binary), raw)
+		}
+	})
+}
+func cleanControllerEnv(kube, config string) []string {
+	var env []string
+	for _, entry := range os.Environ() {
+		key, _, _ := strings.Cut(entry, "=")
+		if strings.HasPrefix(key, "CELLN_") || key == "KUBECONFIG" || key == "NATS_URL" || key == "AGENT_SANDBOX_ENABLED" || key == "OTEL_EXPORTER_OTLP_ENDPOINT" || key == "SYMPOZIUM_PRICING_CONFIGMAP" {
+			continue
+		}
+		env = append(env, entry)
+	}
+	return append(env, "KUBECONFIG="+kube, "NATS_URL=", "AGENT_SANDBOX_ENABLED=false", "CELLN_HARNESS_ENABLED=true", "CELLN_CATALOGUE_CONFIG="+config)
+}
+func liveIssuer(t *testing.T, ctx context.Context, dir string, m *cellnreview.ManagedIssuer) (string, string, string) {
+	t.Helper()
+	sample := httptest.NewTLSServer(http.NotFoundHandler())
+	cert := sample.TLS.Certificates[0]
+	sample.Close()
+	key, err := x509.MarshalPKCS8PrivateKey(cert.PrivateKey)
+	must(t, err)
+	token, ca, private := filepath.Join(dir, "issuer-token"), filepath.Join(dir, "issuer-ca.pem"), filepath.Join(dir, "issuer-key.pem")
+	must(t, os.WriteFile(token, []byte("public-live-catalogue-issuer-token"), 0600))
+	must(t, os.WriteFile(ca, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Certificate[0]}), 0600))
+	must(t, os.WriteFile(private, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: key}), 0600))
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	must(t, err)
+	child, cancel := context.WithCancel(ctx)
+	done := make(chan error, 1)
+	go func() { done <- cellnreview.ServeIssuer(child, l, m, token, ca, private) }()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Errorf("issuer shutdown: %v", err)
+			}
+		case <-time.After(10 * time.Second):
+			t.Error("issuer did not stop")
+		}
+	})
+	for end := time.Now().Add(10 * time.Second); time.Now().Before(end); {
+		ready, _ := m.Status()
+		if ready {
+			return "https://" + l.Addr().String(), token, ca
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatal("issuer provisioning gate did not open")
+	return "", "", ""
+}
+func validateLiveResult(t *testing.T, run api.AgentRun) {
+	t.Helper()
+	var calls []map[string]any
+	models := 0
+	completed := false
+	for _, line := range strings.Split(run.Status.Result, "\n") {
+		if !strings.HasPrefix(line, "CELLN_HARNESS_EVENT ") {
+			continue
+		}
+		var event map[string]any
+		must(t, json.Unmarshal([]byte(strings.TrimPrefix(line, "CELLN_HARNESS_EVENT ")), &event))
+		switch event["type"] {
+		case "model":
+			models++
+		case "tool":
+			calls = append(calls, event)
+		case "completed":
+			completed = event["answer"] == "CELLN has length 5"
+		}
+	}
+	if models != 3 || len(calls) != 2 || !completed {
+		t.Fatalf("unexpected model/tool event counts or answer: models=%d tools=%d completed=%t", models, len(calls), completed)
+	}
+	want := []struct {
+		name   string
+		result string
+	}{{"uppercase", `{"text":"CELLN"}`}, {"length", `{"length":5}`}}
+	for i, w := range want {
+		raw, err := json.Marshal(calls[i]["result"])
+		must(t, err)
+		if calls[i]["name"] != w.name || string(raw) != w.result {
+			t.Fatal(fmt.Sprintf("tool %d did not return expected output", i))
+		}
+	}
+	if run.Status.CellnReceipt == "" || run.Status.CellnActionID == "" {
+		t.Fatal("missing correlated receipt/identity")
+	}
+}

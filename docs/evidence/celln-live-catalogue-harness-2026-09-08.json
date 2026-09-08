@@ -1,0 +1,61 @@
+{
+  "status": "passed",
+  "scope": "actual host Sympozium CLI/controller, isolated Kind API, managed TLS issuer, TLS-fronted pinned Celln router, real KVM dispatcher and real DeepSeek",
+  "sympoziumProductionSource": "2588768271a560dce131bafb332aa5f7cec3bdcd",
+  "testSource": "test/integration/celln-catalogue-setup/live_test.go in the containing commit",
+  "context": "kind-celln-deployed",
+  "namespace": "celln-catalogue-proof-bw6h4",
+  "runUID": "7c9078a6-6ef3-4aee-916b-19d96ef6152f",
+  "action": "celln-475969e6149922559e877b0f559a1e7d1d4d9750bc89758f80a404d88388a9d8",
+  "closure": "blake3:fbb376b56b141a6d2523444e8eb14839de7a2b2297100cc78321bc2570c3e366",
+  "mote": "blake3:fce9708ecfd21fffa09a6d3c838ef2cd45fd6314ebdb26e1396f7b31291fae5e",
+  "modelGrant": "blake3:d59b04acd57a479b7df40c87ef41459b1596ba0a9cafba3cb605d75b700e937d",
+  "receipt": {
+    "phase": "succeeded",
+    "node": "catalogue-live-proof",
+    "cellId": "678f53482166",
+    "startedAt": "2026-09-08T06:21:48Z",
+    "completedAt": "2026-09-08T06:21:51Z",
+    "outputHash": "blake3:12eb830d6f01ef1a6a20af84092a3dd9e8545d103d4ee74956e28d8a4e256024",
+    "outputBytes": 1100
+  },
+  "toolCalls": [
+    {"name":"uppercase", "arguments":{"text":"celln"}, "result":{"text":"CELLN"}},
+    {"name":"length", "arguments":{"text":"CELLN"}, "result":{"length":5}}
+  ],
+  "answer": "CELLN has length 5",
+  "brokerRequests": 3,
+  "brokerDenied": 0,
+  "jobs": 0,
+  "liveCellsAfterTerminal": 0,
+  "checks": [
+    "Catalogue and approval bindings use real API-assigned UIDs and persisted specs",
+    "Actual issue-run CLI committed Issued status before controller startup and dispatch",
+    "Actual controller loaded trusted issuer/router bindings and used the frozen route",
+    "Execution audit correlates grant, three broker requests and the controller receipt",
+    "Execution audit records Dissolved",
+    "Model-policy deletion removed the host admission profile",
+    "Host grant reissuance refused after withdrawal",
+    "Router retained the successful owner receipt after withdrawal"
+  ],
+  "cleanup": {
+    "runFinalizerCompleted": true,
+    "proofNamespacesRemaining": 0,
+    "allOwnedHostProcessesJoined": true,
+    "isolatedControllerRestoredReadyReplicas": 1
+  },
+  "evidenceSHA256": {
+    "agentrun.json": "ccabd9a7ca4eb3099bba1396eae6d444859e1d68dfe0645849026b374a0f565f",
+    "audit.json": "afe706198e7518bd100b763a54b9b9d0d77ead6f5ab18835d2a9d885e617ec02",
+    "summary.json": "44a37b5f06641a0ffd22b2879ebc1f8d2c00566b3e012091d2f4e3e5049b3e4f"
+  },
+  "localEvidence": "target/celln-live-proof/catalogue-live-4099304486",
+  "totalBillableRunsThisChange": 2,
+  "totalBrokerRequestsThisChange": 6,
+  "limits": [
+    "Host processes, not production pod deployment topology",
+    "Public signed fixture and fixture materializer, not production admission/distribution",
+    "One-shot native JSON runtime, not arbitrary OCI Harness or conversations",
+    "No final UI/YAML user-selection, fleet availability or full epic acceptance claim"
+  ]
+}
