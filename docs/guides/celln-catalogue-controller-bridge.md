@@ -40,7 +40,9 @@ Current tests separately cover real TLS/KVM prewarm, HTTPS submission/refusal,
 first submission and 404 recovery, unavailable owners, both admission gates,
 approval withdrawal during prewarm, lost submission acknowledgement without
 replay, service lookup/cancel after approval deletion, and controller lifecycle
-using an injected service fixture. Config refusal and default/legacy/catalogue
+through the full Reconcile entry point using an injected service fixture. Recovery
+adds the cleanup finalizer without creating a Job, and deletion retains it until
+terminal cancellation. Config refusal and default/legacy/catalogue
 Helm renders are also tested. Those are not yet a single deployed
 controller-to-model journey. Initial selection-to-issuance orchestration and
 deployed regression/real-model proof remain outstanding.

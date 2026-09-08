@@ -10,7 +10,7 @@
     "config": "valid configuration and version/empty/duplicate/source/credential-path/plaintext/unknown/trailing refusals passed",
     "submissionSequence": "first submission, 404 recovery, unavailable owner, both admission gates, post-prewarm approval deletion, missing gate and lost-submit recovery passed",
     "recovery": "lookup/cancel after approval deletion without prewarm or execution replay passed",
-    "controllerLifecycle": "catalogue ID retained; OCI prerequisites bypassed for recovery; Cancelling not treated as teardown; concurrent terminal state preserved"
+    "controllerLifecycle": "full Reconcile entry point: catalogue ID retained; OCI prerequisites bypassed for recovery; finalizer added; zero Jobs; Cancelling retains deletion finalizer until terminal cancellation; concurrent terminal state preserved"
   },
   "limitations": [
     "New tests use HTTPS protocol and fake Kubernetes/service fixtures, not a single deployed controller-model journey",
