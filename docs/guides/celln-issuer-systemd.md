@@ -45,6 +45,20 @@ mapping; never place their contents in the unit, environment, Helm values or log
 
 ## Install and inspect, then start explicitly
 
+Start with the read-only layout preflight:
+
+```sh
+bash config/host/check-issuer-host.sh
+```
+
+It reports missing accounts, host paths, unsafe basic ownership/modes and KVM
+device presence without reading credential contents, changing files or starting
+services. A nonzero exit means required layout checks are missing/unverified.
+It cannot certify service-account ACL access, configuration or credentials,
+executable provenance, KVM guarantees, storage durability or installed behavior;
+its output lists these exclusions explicitly. Do not treat a clean report as
+permission to skip the actual service and model acceptance below.
+
 After provisioning and independently reviewing the paths above, an administrator
 can install the reviewed unit from the repository checkout:
 

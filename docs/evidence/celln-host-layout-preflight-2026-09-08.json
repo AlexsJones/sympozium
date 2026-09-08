@@ -1,0 +1,19 @@
+{
+  "status": "installation-prerequisites-missing",
+  "command": "bash config/host/check-issuer-host.sh",
+  "exitCode": 1,
+  "changesMadeByPreflight": false,
+  "credentialContentsRead": false,
+  "present": ["kvm group", "/dev/kvm character device", "basic root ownership/modes on /opt and /etc"],
+  "missingOrUnverified": [
+    "celln user and group",
+    "/opt/sympozium-celln/bin and installed binaries",
+    "/etc/sympozium-issuer and configuration files",
+    "/var/lib/celln durable state directory",
+    "/etc/systemd/system/sympozium-celln-issuer.service"
+  ],
+  "administratorAccess": "sudo -n true refused: password required",
+  "scope": "read-only basic filesystem/account prerequisite check on the workstation; not KVM proof, configuration validation, credential confidentiality or installed service qualification",
+  "portableChecks": "host packaging race tests, Bash syntax and ShellCheck passed",
+  "nextRequiredDecision": "administrator setup on this workstation or another explicitly designated serving host"
+}

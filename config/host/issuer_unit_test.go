@@ -58,3 +58,27 @@ func TestIssuerUnitSystemdSyntax(t *testing.T) {
 		t.Fatalf("systemd verify: %v\n%s", err, out)
 	}
 }
+
+func TestIssuerHostPreflightIsReadOnly(t *testing.T) {
+	raw, err := os.ReadFile("check-issuer-host.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(raw)
+	for _, forbidden := range []string{"sudo ", "systemctl ", "useradd ", "groupadd ", "chmod ", "chown ", "install ", "cat /etc/", "source ", "rm "} {
+		for _, line := range strings.Split(script, "\n") {
+			if strings.HasPrefix(strings.TrimSpace(line), "#") {
+				continue
+			}
+			if strings.Contains(line, forbidden) {
+				t.Fatalf("unexpected mutation/credential access: %s", line)
+			}
+		}
+	}
+	if !strings.Contains(script, "NOT TESTED:") || !strings.Contains(script, "not installation acceptance") {
+		t.Fatal("preflight must disclose its limits")
+	}
+	if output, err := exec.Command("bash", "-n", "check-issuer-host.sh").CombinedOutput(); err != nil {
+		t.Fatalf("preflight syntax: %v %s", err, output)
+	}
+}

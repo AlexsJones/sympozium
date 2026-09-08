@@ -88,6 +88,10 @@ has no dedicated `celln` service account, and non-interactive sudo requires a
 password. No root-owned service was installed or enabled, and no weaker user
 service was treated as equivalent evidence. The requested host/setup choice is
 pending; independent review and security work can continue.
+The [read-only layout preflight](../evidence/celln-host-layout-preflight-2026-09-08.json)
+also confirms the expected installed binaries, configuration, durable store and
+unit are missing/unverified. Run `bash config/host/check-issuer-host.sh` to reproduce
+the prerequisite report; it reads no credential contents and changes no host state.
 
 Use [installation](celln-mlp-installation.md), [systemd procedure](celln-issuer-systemd.md)
 and [reproducible isolated modes](celln-mlp-kind-network.md) for the concrete
