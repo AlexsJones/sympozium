@@ -8,10 +8,12 @@ import (
 	"io"
 	"os"
 	"slices"
+	"time"
 
 	"github.com/go-logr/logr"
 	api "github.com/sympozium-ai/sympozium/api/v1alpha1"
 	"github.com/sympozium-ai/sympozium/internal/cellnreview"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/retry"
@@ -23,6 +25,27 @@ type CatalogueDispatcher interface {
 	ReconcilePending(context.Context, types.NamespacedName, func(context.Context, *api.AgentRun) error) (*cellnreview.RouterExecution, error)
 	Lookup(context.Context, types.NamespacedName) (*cellnreview.RouterExecution, error)
 	Cancel(context.Context, types.NamespacedName) (*cellnreview.RouterExecution, error)
+}
+
+// A named catalogue request must never fall through to forge/explicit artifact
+// execution while an operator or provisioning controller prepares issuance.
+func (r *AgentRunReconciler) awaitCatalogueIssuance(ctx context.Context, run *api.AgentRun) (ctrl.Result, error) {
+	condition := metav1.Condition{Type: "CellnIssuanceCommitted", Status: metav1.ConditionFalse, Reason: "AwaitingIssuance", Message: "Waiting for trusted catalogue issuance; no execution has been submitted", ObservedGeneration: run.Generation}
+	if r.CatalogueDispatcher == nil {
+		condition.Reason = "DispatcherNotConfigured"
+		condition.Message = "Catalogue controller binding is not configured; no execution has been submitted"
+	}
+	result := ctrl.Result{RequeueAfter: 5 * time.Second}
+	if existing := meta.FindStatusCondition(run.Status.Conditions, condition.Type); existing != nil && existing.Status == condition.Status && existing.Reason == condition.Reason && existing.Message == condition.Message && existing.ObservedGeneration == condition.ObservedGeneration {
+		return result, nil
+	}
+	err := r.updateStatusWithRetry(ctx, run, func(current *api.AgentRun) {
+		if current.Status.CellnIssuance != nil {
+			return
+		}
+		meta.SetStatusCondition(&current.Status.Conditions, condition)
+	})
+	return result, err
 }
 
 func catalogueRecord(record *cellnreview.RouterExecution) (executionRecord, error) {
@@ -76,6 +99,7 @@ func (r *AgentRunReconciler) reconcilePendingCatalogue(ctx context.Context, log 
 			return fmt.Errorf("catalogue run changed during dispatch")
 		}
 		current.Status.Phase = api.AgentRunPhaseRunning
+		meta.SetStatusCondition(&current.Status.Conditions, metav1.Condition{Type: "CellnIssuanceCommitted", Status: metav1.ConditionTrue, Reason: "Issued", Message: "Trusted catalogue issuance and exact dispatch identity are committed", ObservedGeneration: current.Generation})
 		if current.Status.StartedAt == nil {
 			now := metav1.Now()
 			current.Status.StartedAt = &now

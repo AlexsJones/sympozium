@@ -358,6 +358,47 @@ spec:
                 - mote
                 - tools
                 type: object
+              cellnSelection:
+                description: |-
+                  CellnSelection requests same-namespace approved catalogue revisions.
+                  This is intent, not host authority or readiness. Until durable issuance
+                  is committed, the controller waits without entering legacy execution.
+                  Mutually exclusive with the advanced explicit Celln artifact binding.
+                properties:
+                  runtimeRef:
+                    description: |-
+                      RuntimeRef overrides Agent.spec.runtimeRef for this run only. The
+                      independently trusted grants must approve this exact Agent/runtime pair.
+                    maxLength: 253
+                    minLength: 1
+                    pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                    type: string
+                  toolRefs:
+                    items:
+                      properties:
+                        name:
+                          maxLength: 253
+                          minLength: 1
+                          pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                          type: string
+                        revision:
+                          maxLength: 64
+                          minLength: 1
+                          type: string
+                      required:
+                      - name
+                      - revision
+                      type: object
+                    maxItems: 16
+                    type: array
+                    x-kubernetes-list-type: atomic
+                required:
+                - toolRefs
+                type: object
+                x-kubernetes-validations:
+                - message: catalogue tool names must be unique
+                  rule: self.toolRefs.all(t, self.toolRefs.filter(x, x.name == t.name).size()
+                    == 1)
               cleanup:
                 default: delete
                 description: 'Cleanup policy: "delete" to remove pod after completion,
@@ -2863,6 +2904,11 @@ spec:
             - model
             - sessionKey
             type: object
+            x-kubernetes-validations:
+            - message: catalogue selection requires backend celln and cannot mix explicit
+                artifacts
+              rule: '!has(self.cellnSelection) || (has(self.backend) && self.backend
+                == ''celln'' && !has(self.celln))'
           status:
             description: AgentRunStatus defines the observed state of AgentRun.
             properties:

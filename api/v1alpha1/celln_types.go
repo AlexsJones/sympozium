@@ -1,5 +1,32 @@
 package v1alpha1
 
+// CellnCatalogueSelection keeps tenant intent separate from explicit artifacts
+// and operator grant/route configuration. Ordered tools are explicitly lent;
+// an empty list lends none, never all installed tools.
+// +kubebuilder:validation:XValidation:rule="self.toolRefs.all(t, self.toolRefs.filter(x, x.name == t.name).size() == 1)",message="catalogue tool names must be unique"
+type CellnCatalogueSelection struct {
+	// RuntimeRef overrides Agent.spec.runtimeRef for this run only. The
+	// independently trusted grants must approve this exact Agent/runtime pair.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern="^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$"
+	// +optional
+	RuntimeRef string `json:"runtimeRef,omitempty"`
+	// +kubebuilder:validation:MaxItems=16
+	// +listType=atomic
+	ToolRefs []CellnCatalogueToolRef `json:"toolRefs"`
+}
+
+type CellnCatalogueToolRef struct {
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern="^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$"
+	Name string `json:"name"`
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=64
+	Revision string `json:"revision"`
+}
+
 // CellnExecutionSpec names immutable sources for explicit native Celln requests.
 // Invocation aliases are lookups into Tools, never host filesystem paths.
 type CellnExecutionSpec struct {

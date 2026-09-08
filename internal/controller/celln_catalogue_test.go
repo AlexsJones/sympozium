@@ -10,6 +10,7 @@ import (
 	"github.com/sympozium-ai/sympozium/internal/cellnreview"
 	batchv1 "k8s.io/api/batch/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -19,6 +20,44 @@ type catalogueFixture struct {
 	record                  *cellnreview.RouterExecution
 	pending, lookup, cancel int
 	beforePending           func()
+}
+
+func TestUnissuedCatalogueRunWaitsWithoutLegacyExecution(t *testing.T) {
+	for _, configured := range []bool{false, true} {
+		ctx := context.Background()
+		run := newTestCellnRun(t, "catalogue-wait", "catalogue-wait-uid")
+		run.Spec.Celln = nil
+		run.Spec.CellnSelection = &api.CellnCatalogueSelection{ToolRefs: []api.CellnCatalogueToolRef{}}
+		r := newAgentRunTestReconciler(t, run)
+		r.APIReader = r.Client
+		f := &catalogueFixture{}
+		if configured {
+			r.CatalogueDispatcher = f
+		}
+		request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(run)}
+		for i := 0; i < 2; i++ {
+			result, err := r.Reconcile(ctx, request)
+			if err != nil || result.RequeueAfter == 0 {
+				t.Fatalf("did not wait: %v %v", result, err)
+			}
+		}
+		var stored api.AgentRun
+		if err := r.Get(ctx, request.NamespacedName, &stored); err != nil {
+			t.Fatal(err)
+		}
+		condition := meta.FindStatusCondition(stored.Status.Conditions, "CellnIssuanceCommitted")
+		want := "DispatcherNotConfigured"
+		if configured {
+			want = "AwaitingIssuance"
+		}
+		if condition == nil || condition.Reason != want || condition.Status != "False" || stored.Status.CellnActionID != "" || stored.Status.StartedAt != nil || f.pending != 0 {
+			t.Fatal("unissued selection was dispatched or readiness implied")
+		}
+		var jobs batchv1.JobList
+		if err := r.List(ctx, &jobs); err != nil || len(jobs.Items) != 0 {
+			t.Fatal("unissued selection created a Job")
+		}
+	}
 }
 
 func (f *catalogueFixture) ReconcilePending(context.Context, types.NamespacedName, func(context.Context, *api.AgentRun) error) (*cellnreview.RouterExecution, error) {

@@ -1113,6 +1113,12 @@ type CreateRunRequest struct {
 	// RuntimeRef selects an administrator-approved AgentRuntime. When omitted,
 	// the Agent's runtimeRef inheritance and legacy string-task behaviour apply.
 	RuntimeRef string `json:"runtimeRef,omitempty"`
+	// Catalogue Harness runs require explicit model/provider selection and use
+	// host-issued model authority, never inherited Kubernetes auth credentials.
+	CellnSelection *sympoziumv1alpha1.CellnCatalogueSelection `json:"cellnSelection,omitempty"`
+	// Do not silently discard an advanced artifact block sent to this endpoint.
+	Celln    json.RawMessage `json:"celln,omitempty"`
+	Provider string          `json:"provider,omitempty"`
 }
 
 func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
@@ -1129,6 +1135,14 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 
 	if req.AgentRef == "" || req.Task == "" {
 		http.Error(w, "agentRef and task are required", http.StatusBadRequest)
+		return
+	}
+	if req.CellnSelection != nil && (req.Backend != "celln" || req.RuntimeRef != "" || req.Provider != "deepseek" || req.Model == "" || req.CellnSelection.ToolRefs == nil || len(req.CellnSelection.ToolRefs) > 16) {
+		http.Error(w, "catalogue selection requires backend celln, explicit DeepSeek provider/model and toolRefs; use only cellnSelection.runtimeRef for an override", http.StatusBadRequest)
+		return
+	}
+	if len(req.Celln) != 0 && string(req.Celln) != "null" {
+		http.Error(w, "explicit celln artifacts require the AgentRun Kubernetes API and cannot be mixed with catalogue selection", http.StatusBadRequest)
 		return
 	}
 
@@ -1177,7 +1191,7 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Cloud providers require an API key; local providers with a baseURL do not.
-	if authSecret == "" && inst.Spec.Agents.Default.BaseURL == "" {
+	if req.CellnSelection == nil && authSecret == "" && inst.Spec.Agents.Default.BaseURL == "" {
 		http.Error(w, fmt.Sprintf("instance %q has no API key configured (authRefs is empty)", req.AgentRef), http.StatusBadRequest)
 		return
 	}
@@ -1225,6 +1239,10 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 			Env:              inst.Spec.Agents.Default.Env,
 			Timeout:          timeout,
 		},
+	}
+	if req.CellnSelection != nil {
+		run.Spec.CellnSelection = req.CellnSelection.DeepCopy()
+		run.Spec.Model = sympoziumv1alpha1.ModelSpec{Provider: req.Provider, Model: req.Model}
 	}
 	if strings.TrimSpace(req.RuntimeRef) != "" {
 		run.Spec.Task = &sympoziumv1alpha1.TaskSpec{

@@ -1,0 +1,29 @@
+{
+  "status": "passed",
+  "scope": "catalogue intent schema, trusted resolution and controller/API handling; not final UI or automatic provisioning",
+  "liveSchema": {
+    "context": "kind-celln-deployed",
+    "accepted": ["explicit empty tool list", "ordered two-tool selection and runtime override", "legacy explicit-artifact binding without catalogue intent"],
+    "refused": ["job backend", "missing backend", "duplicate tool names", "null tool list", "missing tool list", "cross-namespace tool spelling", "empty revision", "cross-namespace runtime spelling", "17 tools", "mixed catalogue and explicit artifacts"],
+    "persistedAgentRuns": 0,
+    "jobs": 0,
+    "modelCalls": 0,
+    "temporaryNamespaceDeleted": true
+  },
+  "portableChecks": [
+    "Full go test -race ./... -count=1 with real NATS fixture available",
+    "go build ./... and go vet ./...",
+    "make generate and synchronized chart CRDs",
+    "Selection substitution, empty selection, null/duplicate/mixed intent refusals",
+    "Runtime override refused until all three grant layers approve the new pair; Agent default unchanged",
+    "Full Reconcile waits without Agent/OCI prerequisites, dispatch or Jobs until issuance exists",
+    "HTTP creation preserves ordered selection and string task, requires explicit model/provider and does not inherit pod credentials",
+    "Legacy runtimeRef HTTP creation remains covered"
+  ],
+  "limits": [
+    "Named selection waits for trusted operator issuance; no automatic materialization/distribution yet",
+    "HTTP handler tests use a fake Kubernetes client; schema tests use the real API server",
+    "New controller waiting path is unit-tested, not yet deployed in this change",
+    "UI selection, model-backed named-selection E2E and conversations remain follow-ups"
+  ]
+}

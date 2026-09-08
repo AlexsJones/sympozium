@@ -7,6 +7,7 @@ import (
 
 // AgentRunSpec defines the desired state of an AgentRun.
 // Each agent invocation (including sub-agents) produces an AgentRun CR.
+// +kubebuilder:validation:XValidation:rule="!has(self.cellnSelection) || (has(self.backend) && self.backend == 'celln' && !has(self.celln))",message="catalogue selection requires backend celln and cannot mix explicit artifacts"
 type AgentRunSpec struct {
 	// AgentRef is the name of the Agent this run belongs to.
 	AgentRef string `json:"agentRef"`
@@ -123,6 +124,13 @@ type AgentRunSpec struct {
 	// The Celln operator must independently approve every referenced artifact.
 	// +optional
 	Celln *CellnExecutionSpec `json:"celln,omitempty"`
+
+	// CellnSelection requests same-namespace approved catalogue revisions.
+	// This is intent, not host authority or readiness. Until durable issuance
+	// is committed, the controller waits without entering legacy execution.
+	// Mutually exclusive with the advanced explicit Celln artifact binding.
+	// +optional
+	CellnSelection *CellnCatalogueSelection `json:"cellnSelection,omitempty"`
 
 	// CanaryMode runs built-in health checks instead of the LLM conversation
 	// loop. The agent executes deterministic platform checks (API server,

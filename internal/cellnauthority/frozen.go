@@ -25,7 +25,21 @@ func (l Loader) FreezeRun(ctx context.Context, runKey types.NamespacedName, sele
 	if err != nil {
 		return nil, err
 	}
-	snapshot, err := l.Resolve(ctx, types.NamespacedName{Namespace: run.Namespace, Name: run.Spec.AgentRef}, selection)
+	runtimeOverride := ""
+	if intent := run.Spec.CellnSelection; intent != nil {
+		if run.Spec.Celln != nil || intent.ToolRefs == nil || len(intent.ToolRefs) > 16 || len(intent.ToolRefs) != len(selection) {
+			return nil, fmt.Errorf("catalogue selection cannot mix artifacts or change the explicit tool list")
+		}
+		seen := map[string]bool{}
+		for i, ref := range intent.ToolRefs {
+			if ref.Name == "" || ref.Revision == "" || seen[ref.Name] || ref.Name != selection[i].Name || ref.Revision != selection[i].Revision {
+				return nil, fmt.Errorf("operator selection differs from ordered run tool intent")
+			}
+			seen[ref.Name] = true
+		}
+		runtimeOverride = intent.RuntimeRef
+	}
+	snapshot, err := l.resolveRuntime(ctx, types.NamespacedName{Namespace: run.Namespace, Name: run.Spec.AgentRef}, selection, runtimeOverride)
 	if err != nil {
 		return nil, err
 	}

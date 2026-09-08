@@ -82,6 +82,10 @@ type SelectionSnapshot struct {
 }
 
 func (l Loader) Resolve(ctx context.Context, agentKey types.NamespacedName, selection []Selection) (*SelectionSnapshot, error) {
+	return l.resolveRuntime(ctx, agentKey, selection, "")
+}
+
+func (l Loader) resolveRuntime(ctx context.Context, agentKey types.NamespacedName, selection []Selection, runtimeOverride string) (*SelectionSnapshot, error) {
 	if l.Reader == nil || agentKey.Namespace == "" || agentKey.Name == "" || len(selection) > 16 {
 		return nil, fmt.Errorf("reader, Agent identity and bounded selection required")
 	}
@@ -89,11 +93,15 @@ func (l Loader) Resolve(ctx context.Context, agentKey types.NamespacedName, sele
 	if err := l.Reader.Get(ctx, agentKey, &agent); err != nil {
 		return nil, err
 	}
-	if agent.Spec.RuntimeRef == "" {
+	runtimeName := agent.Spec.RuntimeRef
+	if runtimeOverride != "" {
+		runtimeName = runtimeOverride
+	}
+	if runtimeName == "" {
 		return nil, fmt.Errorf("Agent has no approved runtime reference")
 	}
 	var runtime api.AgentRuntime
-	runtimeKey := types.NamespacedName{Namespace: agentKey.Namespace, Name: agent.Spec.RuntimeRef}
+	runtimeKey := types.NamespacedName{Namespace: agentKey.Namespace, Name: runtimeName}
 	if err := l.Reader.Get(ctx, runtimeKey, &runtime); err != nil {
 		return nil, err
 	}
