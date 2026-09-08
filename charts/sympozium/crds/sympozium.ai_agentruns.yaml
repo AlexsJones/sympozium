@@ -2979,6 +2979,12 @@ spec:
                 - message: prepared issuance cannot contain an outcome
                   rule: self.phase != 'Prepared' || !has(self.result) || size(self.result)
                     == 0
+              cellnOnly:
+                description: |-
+                  CellnOnly records a new run's execution boundary before any finalizer or
+                  workload side effects. The controller refuses subsequent backend changes.
+                  Absent on legacy runs: absence does not prove that Job-side RBAC is absent.
+                type: boolean
               cellnReceipt:
                 description: CellnReceipt retains the validated versioned terminal
                   receipt as JSON.
@@ -3260,6 +3266,12 @@ spec:
         - message: saved Celln issuance status cannot be removed
           rule: '!has(oldSelf.status) || !has(oldSelf.status.cellnIssuance) || (has(self.status)
             && has(self.status.cellnIssuance))'
+        - message: a recorded Celln-only execution boundary cannot be removed
+          rule: '!has(oldSelf.status) || !has(oldSelf.status.cellnOnly) || !oldSelf.status.cellnOnly
+            || (has(self.status) && has(self.status.cellnOnly) && self.status.cellnOnly)'
+        - message: a recorded Celln-only run cannot change execution backend
+          rule: '!has(self.status) || !has(self.status.cellnOnly) || !self.status.cellnOnly
+            || (has(self.spec.backend) && self.spec.backend == ''celln'')'
     served: true
     storage: true
     subresources:

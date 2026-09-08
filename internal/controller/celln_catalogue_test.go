@@ -39,6 +39,9 @@ func TestUnissuedCatalogueRunWaitsWithoutLegacyExecution(t *testing.T) {
 			r.CatalogueDispatcher = f
 		}
 		request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(run)}
+		if result, err := r.Reconcile(ctx, request); err != nil || !result.Requeue || f.pending != 0 {
+			t.Fatalf("fresh execution boundary was not persisted before dispatch: %v %v", result, err)
+		}
 		for i := 0; i < 2; i++ {
 			result, err := r.Reconcile(ctx, request)
 			if err != nil || result.RequeueAfter == 0 {

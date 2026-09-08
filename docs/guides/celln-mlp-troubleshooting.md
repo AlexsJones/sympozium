@@ -90,3 +90,27 @@ The normal single-POST, unchanged-request, real-model and
 cleanup assertions still apply. This tests recovery from durable Kubernetes
 issuance/request state rather than the original controller's memory; it does
 not prove dispatcher or serving-host restart recovery.
+
+## Cancellation before issuance
+
+New untouched Celln runs record `status.cellnOnly: true` before their finalizer
+or any workload effects. The controller must read that record back before it
+continues. This permits deletion while waiting for issuance without discovering
+Job-sidecar cluster RBAC. The CRD rejects a subsequent change to another backend;
+the controller also refuses such a change if it encounters inconsistent stored
+state. Create a new run to change execution planes. The CRD prevents removal of
+a true record, including removal of the entire status object. Only trusted
+controller identities should be able to write run status.
+
+Install the matching CRD before the controller. An old schema that prunes this
+field causes the new controller to keep trying to record it without dispatching.
+Do not downgrade to a controller that ignores this boundary while such runs
+exist. Older runs are not retroactively marked: their mutable backend alone
+cannot establish that they never created Job-side authority. Any recorded
+pod-plane resources still require the existing cleanup path.
+
+Unit tests cover record-before-finalizer ordering, backend-change refusal,
+unissued finalizer completion without cluster-RBAC reads, and conservative
+legacy/mixed-state cleanup. The generated CRD passes server-side dry-run
+validation on the isolated Kind API. This is not yet a deployed-controller
+early-cancellation proof; that acceptance check remains open.

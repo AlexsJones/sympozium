@@ -311,6 +311,19 @@ func (r *AgentRunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	isTerminal := agentRun.Status.Phase == sympoziumv1alpha1.AgentRunPhaseSucceeded ||
 		agentRun.Status.Phase == sympoziumv1alpha1.AgentRunPhaseFailed ||
 		agentRun.Status.Phase == sympoziumv1alpha1.AgentRunPhaseSkipped
+	// Persist this boundary only for untouched new runs, before adding our
+	// finalizer or creating any resources. Never infer it from mutable backend
+	// intent on an existing run. Requeue to confirm the API retains the field.
+	if agentRun.Spec.Backend == "celln" && len(agentRun.Finalizers) == 0 && apiequality.Semantic.DeepEqual(agentRun.Status, sympoziumv1alpha1.AgentRunStatus{}) {
+		agentRun.Status.CellnOnly = true
+		if err := r.Status().Update(ctx, agentRun); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{Requeue: true}, nil
+	}
+	if !isTerminal && agentRun.Status.CellnOnly && agentRun.Spec.Backend != "celln" {
+		return ctrl.Result{}, r.failRun(ctx, agentRun, "Celln-only run cannot change execution backend; create a new run")
+	}
 	if !isTerminal && !controllerutil.ContainsFinalizer(agentRun, agentRunFinalizer) {
 		controllerutil.AddFinalizer(agentRun, agentRunFinalizer)
 		if err := r.Update(ctx, agentRun); err != nil {
@@ -5403,12 +5416,13 @@ func (r *AgentRunReconciler) reconcileClusterRoleBinding(ctx context.Context, de
 // Namespace-scoped resources (Role, RoleBinding) are cleaned up automatically
 // via owner references and garbage collection.
 func (r *AgentRunReconciler) cleanupSkillRBAC(ctx context.Context, log logr.Logger, agentRun *sympoziumv1alpha1.AgentRun) {
-	// A recorded Celln-only execution cannot have created skill-sidecar RBAC.
+	// A Celln-only boundary recorded before any resources, or an issued
+	// Celln-only execution, does not require skill-sidecar RBAC discovery.
 	// Avoid starting a cluster-wide informer just to clean up nonexistent Job
 	// authority: a scoped Celln controller intentionally lacks that permission.
 	// Preserve legacy/mixed workload cleanup whenever any pod-plane state exists.
 	status := agentRun.Status
-	if status.CellnActionID != "" && status.CellnRequest != "" && status.JobName == "" && status.PodName == "" && status.SandboxName == "" && status.SandboxClaimName == "" && status.DeploymentName == "" && status.ServiceName == "" && status.PostRunJobName == "" {
+	if (status.CellnOnly || (status.CellnActionID != "" && status.CellnRequest != "")) && status.JobName == "" && status.PodName == "" && status.SandboxName == "" && status.SandboxClaimName == "" && status.DeploymentName == "" && status.ServiceName == "" && status.PostRunJobName == "" {
 		return
 	}
 	// List ClusterRoles owned by this run

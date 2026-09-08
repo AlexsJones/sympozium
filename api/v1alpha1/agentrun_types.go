@@ -345,6 +345,12 @@ const (
 // AgentRunStatus defines the observed state of AgentRun.
 // +kubebuilder:validation:XValidation:rule="!has(oldSelf.cellnIssuance) || has(self.cellnIssuance)",message="saved Celln issuance cannot be removed"
 type AgentRunStatus struct {
+	// CellnOnly records a new run's execution boundary before any finalizer or
+	// workload side effects. The controller refuses subsequent backend changes.
+	// Absent on legacy runs: absence does not prove that Job-side RBAC is absent.
+	// +optional
+	CellnOnly bool `json:"cellnOnly,omitempty"`
+
 	// Phase is the current phase (Pending, Running, Succeeded, Failed, Skipped).
 	// +optional
 	Phase AgentRunPhase `json:"phase,omitempty"`
@@ -645,6 +651,8 @@ type LifecycleHooks struct {
 // Each agent invocation produces an AgentRun CR that the orchestrator
 // reconciles into a Kubernetes Job.
 // +kubebuilder:validation:XValidation:rule="!has(oldSelf.status) || !has(oldSelf.status.cellnIssuance) || (has(self.status) && has(self.status.cellnIssuance))",message="saved Celln issuance status cannot be removed"
+// +kubebuilder:validation:XValidation:rule="!has(oldSelf.status) || !has(oldSelf.status.cellnOnly) || !oldSelf.status.cellnOnly || (has(self.status) && has(self.status.cellnOnly) && self.status.cellnOnly)",message="a recorded Celln-only execution boundary cannot be removed"
+// +kubebuilder:validation:XValidation:rule="!has(self.status) || !has(self.status.cellnOnly) || !self.status.cellnOnly || (has(self.spec.backend) && self.spec.backend == 'celln')",message="a recorded Celln-only run cannot change execution backend"
 type AgentRun struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
