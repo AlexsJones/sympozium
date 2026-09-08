@@ -129,6 +129,12 @@ spec:
               value: {{ .Values.celln.routerUrl | quote }}
             - name: CELLN_ALLOW_INSECURE_HTTP
               value: {{ .Values.celln.allowInsecureHttp | quote }}
+            - name: CELLN_HARNESS_ENABLED
+              value: {{ .Values.celln.harnessEnabled | default false | quote }}
+            {{- if .Values.celln.catalogueConfigSecret }}
+            - name: CELLN_CATALOGUE_CONFIG
+              value: /etc/sympozium/celln-catalogue/config.json
+            {{- end }}
             {{- if .Values.celln.tokenSecret }}
             - name: CELLN_TOKEN_FILE
               value: /etc/sympozium/celln/token
@@ -163,20 +169,34 @@ spec:
             {{- toYaml .Values.controller.resources | nindent 12 }}
           securityContext:
             {{- toYaml .Values.containerSecurityContext | nindent 12 }}
-          {{- if and .Values.celln.enabled .Values.celln.tokenSecret }}
+          {{- if and .Values.celln.enabled (or .Values.celln.tokenSecret .Values.celln.catalogueConfigSecret) }}
           volumeMounts:
+            {{- if .Values.celln.tokenSecret }}
             - name: celln-token
               mountPath: /etc/sympozium/celln
               readOnly: true
+            {{- end }}
+            {{- if .Values.celln.catalogueConfigSecret }}
+            - name: celln-catalogue-config
+              mountPath: /etc/sympozium/celln-catalogue
+              readOnly: true
+            {{- end }}
           {{- end }}
-      {{- if and .Values.celln.enabled .Values.celln.tokenSecret }}
+      {{- if and .Values.celln.enabled (or .Values.celln.tokenSecret .Values.celln.catalogueConfigSecret) }}
       volumes:
+        {{- if .Values.celln.tokenSecret }}
         - name: celln-token
           secret:
             secretName: {{ .Values.celln.tokenSecret | quote }}
             items:
               - key: token
                 path: token
+        {{- end }}
+        {{- if .Values.celln.catalogueConfigSecret }}
+        - name: celln-catalogue-config
+          secret:
+            secretName: {{ .Values.celln.catalogueConfigSecret | quote }}
+        {{- end }}
       {{- end }}
       {{- with .Values.controller.nodeSelector }}
       nodeSelector:

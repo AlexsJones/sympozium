@@ -1,0 +1,21 @@
+{
+  "date": "2026-09-08",
+  "base": "6bc9246 (Sympozium #453)",
+  "scope": "Controller integration and explicit registration for already-issued catalogue runs",
+  "checks": {
+    "fullGoRaceSuite": "passed with real NATS binary available",
+    "buildAndVet": "passed",
+    "helmLintBothCharts": "passed",
+    "actualHelmRender": "disabled, legacy and catalogue opt-in passed; read-only Secret mount and explicit flags verified",
+    "config": "valid configuration and version/empty/duplicate/source/credential-path/plaintext/unknown/trailing refusals passed",
+    "submissionSequence": "first submission, 404 recovery, unavailable owner, both admission gates, post-prewarm approval deletion, missing gate and lost-submit recovery passed",
+    "recovery": "lookup/cancel after approval deletion without prewarm or execution replay passed",
+    "controllerLifecycle": "full Reconcile entry point: catalogue ID retained; OCI prerequisites bypassed for recovery; finalizer added; zero Jobs; Cancelling retains deletion finalizer until terminal cancellation; concurrent terminal state preserved"
+  },
+  "limitations": [
+    "New tests use HTTPS protocol and fake Kubernetes/service fixtures, not a single deployed controller-model journey",
+    "Real TLS/router/KVM prewarm proof is the separate merged #453 evidence, not new full-system acceptance",
+    "Initial catalogue selection-to-issuance orchestration remains outstanding",
+    "No new user UI/YAML selectors, conversations, fleet recovery or release qualification claimed"
+  ]
+}

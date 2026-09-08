@@ -149,6 +149,9 @@ const DefaultRunHistoryLimit = 50
 // It watches AgentRun CRDs and reconciles them into Kubernetes Jobs/Pods.
 type AgentRunReconciler struct {
 	client.Client
+	// CatalogueDispatcher is explicit operator wiring; nil refuses catalogue
+	// issuance rather than falling through to legacy forge or OCI execution.
+	CatalogueDispatcher CatalogueDispatcher
 	// APIReader bypasses the controller cache for reads — needed when we
 	// must see status mutations committed by a concurrent reconcile that
 	// the watch-based cache may not yet have observed.
@@ -679,6 +682,9 @@ func (r *AgentRunReconciler) prepareTaskPrerequisites(
 
 // reconcilePending handles an AgentRun that needs a Job created.
 func (r *AgentRunReconciler) reconcilePending(ctx context.Context, log logr.Logger, agentRun *sympoziumv1alpha1.AgentRun) (ctrl.Result, error) {
+	if agentRun.Spec.Backend == "celln" && agentRun.Status.CellnIssuance != nil {
+		return r.reconcilePendingCatalogue(ctx, log, agentRun)
+	}
 	ctx, span := controllerTracer.Start(ctx, "agentrun.create_job",
 		trace.WithAttributes(
 			attribute.String("agentrun.name", agentRun.Name),
