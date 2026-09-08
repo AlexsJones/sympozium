@@ -38,8 +38,12 @@ covers application source `ad2255c`: full Go race/build/vet, web build and five
 browser selection contract checks. The initial browser assertion failed because
 the incompatible-Harness alert was below the scrollable dialog fold; the corrected
 test scrolls to the alert while preserving visibility/disabled-submit assertions.
-Deployed Job/sandbox/Harness regressions are still open. Review the older sandbox
-script's controller mutations and broad cleanup selectors before running it.
+Deployed Job/sandbox/Harness regressions are still open. The sandbox script now
+requires explicit test targeting, checks controller/CRD prerequisites read-only,
+and removes broad sandbox cleanup. Its command-stand-in safety tests pass; this
+does not establish deployed lifecycle behavior. The checked isolated cluster lacks
+sandbox CRDs and its existing proof controller has sandbox support disabled.
+See [sandbox test setup](writing-integration-tests.md#sandbox-regression-targeting).
 
 The cleanup exemption was tightened during review in `35b45cd`: only an immutable
 Celln-only boundary recorded on an untouched original-generation run qualifies.

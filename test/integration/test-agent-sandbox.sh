@@ -2,7 +2,7 @@
 # Integration test: Kubernetes Agent Sandbox (CRD) execution backend.
 #
 # Verifies the full lifecycle:
-#   1. Agent-sandbox CRDs can be installed
+#   1. Required Agent-sandbox CRDs are installed (read-only preflight)
 #   2. Controller detects CRDs and enables the feature
 #   3. AgentRun with agentSandbox.enabled creates a Sandbox CR (not a Job)
 #   4. AgentRun without agentSandbox still creates a Job (backward compat)
@@ -19,8 +19,17 @@
 
 set -euo pipefail
 
-NAMESPACE="${TEST_NAMESPACE:-default}"
+: "${TEST_KUBECONFIG:?explicit test kubeconfig required}"
+: "${TEST_CONTEXT:?explicit test context required}"
+: "${TEST_NAMESPACE:?dedicated inttest-sandbox-* namespace required}"
+[[ "$TEST_KUBECONFIG" == /* && -f "$TEST_KUBECONFIG" ]] || { echo 'Absolute readable test kubeconfig required' >&2; exit 1; }
+[[ "$TEST_CONTEXT" == kind-* ]] || { echo 'Only an explicitly selected Kind context is permitted' >&2; exit 1; }
+[[ "$TEST_NAMESPACE" =~ ^inttest-sandbox-[a-z0-9][a-z0-9-]*[a-z0-9]$ && ${#TEST_NAMESPACE} -le 63 ]] || { echo 'Dedicated inttest-sandbox-* namespace required' >&2; exit 1; }
+kubectl() { command kubectl --kubeconfig "$TEST_KUBECONFIG" --context "$TEST_CONTEXT" "$@"; }
+
+NAMESPACE="$TEST_NAMESPACE"
 SYSTEM_NS="${SYMPOZIUM_NAMESPACE:-sympozium-system}"
+CONTROLLER="${TEST_CONTROLLER_DEPLOYMENT:-sympozium-controller-manager}"
 TIMEOUT="${TEST_TIMEOUT:-60}"
 
 RED='\033[0;31m'
@@ -29,47 +38,34 @@ YELLOW='\033[1;33m'
 NC='\033[0m'
 
 pass() { echo -e "${GREEN}✓ $*${NC}"; }
-fail() { echo -e "${RED}✗ $*${NC}"; EXIT_CODE=1; }
+fail() { echo -e "${RED}✗ $*${NC}" >&2; EXIT_CODE=1; }
 info() { echo -e "${YELLOW}● $*${NC}"; }
 
 EXIT_CODE=0
-SUFFIX="$(date +%s)"
+SUFFIX="$(date +%s)-${RANDOM}"
 SANDBOX_INSTANCE="inttest-sandbox-${SUFFIX}"
 SANDBOX_RUN="inttest-sb-run-${SUFFIX}"
 REGULAR_RUN="inttest-reg-run-${SUFFIX}"
 BOTH_RUN="inttest-both-run-${SUFFIX}"
 CLAIM_RUN="inttest-claim-run-${SUFFIX}"
 
+# Registered through the EXIT trap only after read-only preflight succeeds.
+# shellcheck disable=SC2329
 cleanup() {
+  local failed=0
   info "Cleaning up agent-sandbox test resources..."
+  # The controller finalizer and owner references reclaim Jobs/Sandbox CRs.
+  # Never delete all sandbox resources carrying a shared component label.
   kubectl delete agentrun "${SANDBOX_RUN}" "${REGULAR_RUN}" "${BOTH_RUN}" "${CLAIM_RUN}" \
-    -n "$NAMESPACE" --ignore-not-found >/dev/null 2>&1 || true
-  kubectl delete sympoziuminstance "${SANDBOX_INSTANCE}" \
-    -n "$NAMESPACE" --ignore-not-found >/dev/null 2>&1 || true
-  kubectl delete sandbox -n "$NAMESPACE" -l "sympozium.ai/component=agent-run" \
-    --ignore-not-found >/dev/null 2>&1 || true
-  kubectl delete sandboxclaim -n "$NAMESPACE" -l "sympozium.ai/component=agent-run" \
-    --ignore-not-found >/dev/null 2>&1 || true
+    -n "$NAMESPACE" --ignore-not-found --timeout=45s >/dev/null 2>&1 || failed=1
+  kubectl delete agent "${SANDBOX_INSTANCE}" \
+    -n "$NAMESPACE" --ignore-not-found --timeout=45s >/dev/null 2>&1 || failed=1
   kubectl delete secret "${SANDBOX_INSTANCE}-test-key" \
-    -n "$NAMESPACE" --ignore-not-found >/dev/null 2>&1 || true
+    -n "$NAMESPACE" --ignore-not-found --timeout=45s >/dev/null 2>&1 || failed=1
   kubectl delete configmap -n "$NAMESPACE" -l "sympozium.ai/instance=${SANDBOX_INSTANCE}" \
-    --ignore-not-found >/dev/null 2>&1 || true
-}
-trap cleanup EXIT
-
-wait_for_field() {
-  local resource="$1" name="$2" jsonpath="$3" expected="$4" label="$5"
-  local elapsed=0
-  while [[ "$elapsed" -lt "$TIMEOUT" ]]; do
-    val="$(kubectl get "$resource" "$name" -n "$NAMESPACE" -o jsonpath="$jsonpath" 2>/dev/null || true)"
-    if [[ "$val" == "$expected" ]]; then
-      return 0
-    fi
-    sleep 2
-    elapsed=$((elapsed + 2))
-  done
-  fail "${label}: timed out waiting for ${jsonpath}=${expected} (got: ${val})"
-  return 1
+    --ignore-not-found --timeout=45s >/dev/null 2>&1 || failed=1
+  if [[ "$failed" != 0 ]]; then echo 'Sandbox test cleanup incomplete; inspect exact test resources' >&2; fi
+  return "$failed"
 }
 
 wait_for_field_notempty() {
@@ -91,40 +87,32 @@ wait_for_field_notempty() {
 # ── Preflight ─────────────────────────────────────────────────────────────────
 
 info "Running Agent Sandbox integration test in namespace '${NAMESPACE}'"
+kubectl get namespace "$NAMESPACE" >/dev/null
 
-# Check agent-sandbox CRDs are installed.
-if ! kubectl get crd sandboxes.agents.x-k8s.io >/dev/null 2>&1; then
-  info "Installing agent-sandbox CRDs from hack/agent-sandbox-crds.yaml..."
-  kubectl apply -f "$(git rev-parse --show-toplevel)/hack/agent-sandbox-crds.yaml" >/dev/null 2>&1
-fi
-kubectl get crd sandboxes.agents.x-k8s.io >/dev/null 2>&1 && pass "Sandbox CRD installed" || { fail "Sandbox CRD missing"; exit 1; }
-kubectl get crd sandboxclaims.agents.x-k8s.io >/dev/null 2>&1 && pass "SandboxClaim CRD installed" || { fail "SandboxClaim CRD missing"; exit 1; }
-kubectl get crd sandboxwarmpools.agents.x-k8s.io >/dev/null 2>&1 && pass "SandboxWarmPool CRD installed" || { fail "SandboxWarmPool CRD missing"; exit 1; }
+# Prerequisites are operator-owned. Tests must not install cluster-wide CRDs or
+# silently alter/restart a shared controller to satisfy their own prerequisites.
+for crd in sandboxes.agents.x-k8s.io sandboxclaims.agents.x-k8s.io sandboxwarmpools.agents.x-k8s.io; do
+  if kubectl get crd "$crd" >/dev/null 2>&1; then
+    pass "$crd installed"
+  else
+    fail "$crd missing; provision the test platform first"
+    exit 1
+  fi
+done
 
 # Check controller has agent-sandbox enabled.
 # The env var must be set AND the controller must have been restarted after
 # the agent-sandbox CRDs were installed. We check the env var first, then
 # look for the log message across ALL log lines (not just tail).
-current_env="$(kubectl get deployment/sympozium-controller-manager -n "$SYSTEM_NS" \
+current_env="$(kubectl get "deployment/$CONTROLLER" -n "$SYSTEM_NS" \
   -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="AGENT_SANDBOX_ENABLED")].value}' 2>/dev/null || true)"
 
 if [[ "$current_env" != "true" ]]; then
-  info "Setting AGENT_SANDBOX_ENABLED=true on controller..."
-  kubectl set env deployment/sympozium-controller-manager -n "$SYSTEM_NS" \
-    AGENT_SANDBOX_ENABLED=true AGENT_SANDBOX_DEFAULT_RUNTIME_CLASS=gvisor >/dev/null 2>&1 || true
-  kubectl rollout status deployment/sympozium-controller-manager -n "$SYSTEM_NS" --timeout=60s >/dev/null 2>&1
+  fail "Selected controller must already have AGENT_SANDBOX_ENABLED=true"
+  exit 1
 fi
 
-# Force a restart to ensure the controller picks up both the env var and CRDs.
-controller_logs="$(kubectl logs deployment/sympozium-controller-manager -n "$SYSTEM_NS" 2>/dev/null || true)"
-if ! echo "$controller_logs" | grep -q "Agent Sandbox CRD support enabled"; then
-  info "Restarting controller to detect agent-sandbox CRDs..."
-  kubectl rollout restart deployment/sympozium-controller-manager -n "$SYSTEM_NS" >/dev/null 2>&1
-  kubectl rollout status deployment/sympozium-controller-manager -n "$SYSTEM_NS" --timeout=60s >/dev/null 2>&1
-  sleep 3
-fi
-
-controller_logs="$(kubectl logs deployment/sympozium-controller-manager -n "$SYSTEM_NS" 2>/dev/null || true)"
+controller_logs="$(kubectl logs "deployment/$CONTROLLER" -n "$SYSTEM_NS" 2>/dev/null || true)"
 if echo "$controller_logs" | grep -q "Agent Sandbox CRD support enabled"; then
   pass "Controller has agent-sandbox support enabled"
 else
@@ -133,6 +121,7 @@ else
   exit 1
 fi
 
+trap cleanup EXIT
 # Create test prerequisites: secret and instance.
 kubectl create secret generic "${SANDBOX_INSTANCE}-test-key" \
   --from-literal=OPENAI_API_KEY=sk-test-dummy-key \
@@ -415,8 +404,8 @@ if $gc_passed; then
 else
   fail "Test 7: Sandbox CR '${gc_sb}' still exists after AgentRun deletion"
 fi
-# Clear so cleanup doesn't try to delete it again.
-SANDBOX_RUN=""
+# Keep the immutable test name: cleanup uses --ignore-not-found, never an empty
+# positional resource name that could invalidate cleanup of the other runs.
 
 # ── Test 8: CRD field validation ─────────────────────────────────────────────
 
