@@ -118,7 +118,9 @@ The live catalogue test's `CELLN_LIVE_ISSUER_PROCESS=1` mode launches the actual
 kubeconfig. It uses verified TLS status before submitting, then the ordinary
 model-result and periodic approval-withdrawal assertions. This mode is distinct
 from the original in-process server fixture. The test uses a private host state
-root and public fixture token; it is not a production credential/bootstrap recipe.
+root with fresh per-run issuer/router/backend credentials and self-signed TLS
+identities pinned by the test clients. The isolated browser's UI token remains
+public test data. This is not a production credential/bootstrap recipe.
 The [standalone-issuer/browser evidence](../evidence/celln-issuer-process-browser-2026-09-08.json)
 records a passing real-model run with that command, deployed API and fresh
 browser result visit, including periodic model-policy withdrawal and host refusal.

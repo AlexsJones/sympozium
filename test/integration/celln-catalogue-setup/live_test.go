@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
@@ -239,8 +240,8 @@ func TestLiveCatalogueHarness(t *testing.T) {
 		issuerURL, issuerToken, issuerCA = liveIssuer(t, ctx, dir, managed)
 	}
 	backendToken, routerToken := filepath.Join(dir, "backend-token"), filepath.Join(dir, "router-token")
-	must(t, os.WriteFile(backendToken, []byte("public-live-catalogue-backend-token"), 0600))
-	must(t, os.WriteFile(routerToken, []byte("public-live-catalogue-router-token"), 0600))
+	must(t, os.WriteFile(backendToken, freshProofToken(t), 0600))
+	must(t, os.WriteFile(routerToken, freshProofToken(t), 0600))
 	backendAddr, routerAddr := freeAddress(t), freeAddress(t)
 	backend := "http://" + backendAddr
 	startProcess(t, ctx, nil, binary, "--root", root, "dispatcher", "--listen", backendAddr, "--token-file", backendToken, "--node-name", "catalogue-live-proof", "--mote-store", filepath.Join(root, "motes"), "--tool-store", filepath.Join(root, "tools"), "--allow-egress-host", "api.deepseek.com", "--egress-slots", "1")
@@ -260,7 +261,9 @@ func TestLiveCatalogueHarness(t *testing.T) {
 		routerHandler = loss
 		t.Cleanup(func() { loss.released.Store(true) })
 	}
-	router := httptest.NewTLSServer(routerHandler)
+	router := httptest.NewUnstartedServer(routerHandler)
+	router.TLS = &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{freshProofCertificate(t, "127.0.0.1")}}
+	router.StartTLS()
 	t.Cleanup(router.Close)
 	routerCA := filepath.Join(dir, "router-ca.pem")
 	must(t, os.WriteFile(routerCA, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: router.Certificate().Raw}), 0600))
@@ -593,13 +596,11 @@ func cleanControllerEnv(kube, config string) []string {
 }
 func issuerTLSFiles(t *testing.T, dir string) (string, string, string) {
 	t.Helper()
-	sample := httptest.NewTLSServer(http.NotFoundHandler())
-	cert := sample.TLS.Certificates[0]
-	sample.Close()
+	cert := freshProofCertificate(t, "127.0.0.1")
 	key, err := x509.MarshalPKCS8PrivateKey(cert.PrivateKey)
 	must(t, err)
 	token, ca, private := filepath.Join(dir, "issuer-token"), filepath.Join(dir, "issuer-ca.pem"), filepath.Join(dir, "issuer-key.pem")
-	must(t, os.WriteFile(token, []byte("public-live-catalogue-issuer-token"), 0600))
+	must(t, os.WriteFile(token, freshProofToken(t), 0600))
 	must(t, os.WriteFile(ca, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Certificate[0]}), 0600))
 	must(t, os.WriteFile(private, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: key}), 0600))
 	return token, ca, private
