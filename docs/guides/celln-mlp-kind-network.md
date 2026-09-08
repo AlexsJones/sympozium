@@ -111,7 +111,7 @@ test-finalizer release and is not counted as a pass.
 Read `test-outcome.json` for the result including registered cleanup;
 `summary.json` now describes execution checks only.
 
-Two further isolated controller-Pod cases passed:
+Further isolated controller-Pod cases passed:
 
 - [Active cancellation](../evidence/celln-controller-pod-cancellation-2026-09-08.json):
   use `CELLN_LIVE_CANCEL_ACTIVE=1` and omit the browser/API image flags. The
@@ -125,8 +125,15 @@ Two further isolated controller-Pod cases passed:
   original request and made exactly one execution POST; the real two-tool model
   result appeared on a fresh browser visit. No controller or host restart was
   injected in this case.
+- [Controller-Pod replacement](../evidence/celln-controller-pod-restart-2026-09-08.json):
+  also set `CELLN_LIVE_RESTART_CONTROLLER=1`. After persisted uncertainty, delete
+  the proof deployment's Pod with a UID precondition and wait for its replacement
+  to become ready before restoring observation. A different Pod recovered the
+  original request, exactly one execution POST was observed, the real two-tool
+  result appeared in the browser, and registered cleanup passed. The issuer,
+  router, dispatcher and API stayed alive; this is not host failure qualification.
 
 Persistent installation, unissued-run cancellation, browser cancellation,
-deployed Pod/host restart, network-policy refusal and general platform/RBAC
+host restart, network-policy refusal and general platform/RBAC
 qualification remain open. These bounded checks do not complete MLP release
 qualification or the broader epic.

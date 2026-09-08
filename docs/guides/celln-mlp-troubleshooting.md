@@ -73,14 +73,20 @@ request bytes, exactly one execution POST through the proxy, and the ordinary
 real-model two-tool result, correlated audit/receipt, cleanup and approval
 withdrawal checks. A passing portable proxy test only validates fault injection;
 it is not evidence for the controller/KVM journey. This scenario is response
-loss with a surviving owner, not host/process loss, fleet failover or deployed
-browser recovery. Those remain distinct qualification requirements.
+loss with a surviving owner, not host/process loss or fleet failover. The
+[isolated deployed browser variant](celln-mlp-kind-network.md) exercises this
+same fault through API and controller Pods.
 
 Add `CELLN_LIVE_RESTART_CONTROLLER=1` to the lost-response mode to kill and reap
 the test-owned controller after uncertainty is persisted, then start a fresh
 controller with the same explicit configuration before restoring observation.
-Only the owned host process is restarted; the issuer, router, dispatcher and
-Kind API stay alive. The normal single-POST, unchanged-request, real-model and
+With `CELLN_LIVE_CONTROLLER_IMAGE` set, the test instead deletes the owned
+controller Pod using a UID precondition, after verifying its ReplicaSet belongs
+to the proof deployment. It waits for the old Pod to disappear and a different
+Pod from that ReplicaSet to become ready. `controller-pod-restart.json` records
+both identities. Without that image flag, only the owned host process is
+restarted. The issuer, router, dispatcher and Kind API stay alive in both modes.
+The normal single-POST, unchanged-request, real-model and
 cleanup assertions still apply. This tests recovery from durable Kubernetes
 issuance/request state rather than the original controller's memory; it does
 not prove dispatcher or serving-host restart recovery.

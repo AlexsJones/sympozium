@@ -7,14 +7,17 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/sympozium-ai/sympozium/internal/cellnreview"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -130,6 +133,61 @@ func deployCatalogueController(t *testing.T, ctx context.Context, c client.Clien
 		must(t, c.Create(ctx, obj))
 	}
 	command(t, ctx, nil, "kubectl", "--kubeconfig", os.Getenv("CELLN_CONTROLLER_KUBECONFIG"), "--context", "kind-celln-deployed", "-n", namespace, "rollout", "status", "deployment/catalogue-controller", "--timeout=90s")
+}
+
+// Replace only the controller Pod owned by this test's deployment. The
+// issuer/router/dispatcher survive, and response observation remains blocked
+// until a different ready Pod is observed by the caller.
+func restartCatalogueControllerPod(t *testing.T, ctx context.Context, c client.Client, namespace, evidence string) {
+	t.Helper()
+	if !strings.HasPrefix(namespace, "celln-catalogue-proof-") {
+		t.Fatal("refusing controller replacement outside private proof namespace")
+	}
+	var deployment appsv1.Deployment
+	must(t, c.Get(ctx, client.ObjectKey{Namespace: namespace, Name: "catalogue-controller"}, &deployment))
+	var pods corev1.PodList
+	must(t, c.List(ctx, &pods, client.InNamespace(namespace), client.MatchingLabels{"app": "celln-controller-proof"}))
+	if len(pods.Items) != 1 {
+		t.Fatal("expected exactly one proof controller Pod")
+	}
+	old := pods.Items[0]
+	owner := metav1.GetControllerOf(&old)
+	if owner == nil || owner.Kind != "ReplicaSet" {
+		t.Fatal("controller Pod lacks ReplicaSet owner")
+	}
+	var replicaSet appsv1.ReplicaSet
+	must(t, c.Get(ctx, client.ObjectKey{Namespace: namespace, Name: owner.Name}, &replicaSet))
+	parent := metav1.GetControllerOf(&replicaSet)
+	if replicaSet.UID != owner.UID || parent == nil || parent.UID != deployment.UID || parent.Kind != "Deployment" {
+		t.Fatal("controller Pod is not owned by the proof deployment")
+	}
+	uid := old.UID
+	must(t, c.Delete(ctx, &old, &client.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &uid}}))
+	for end := time.Now().Add(90 * time.Second); time.Now().Before(end) && ctx.Err() == nil; {
+		var previous corev1.Pod
+		err := c.Get(ctx, client.ObjectKeyFromObject(&old), &previous)
+		if err != nil && !apierrors.IsNotFound(err) {
+			t.Fatal(err)
+		}
+		if apierrors.IsNotFound(err) {
+			must(t, c.List(ctx, &pods, client.InNamespace(namespace), client.MatchingLabels{"app": "celln-controller-proof"}))
+			for _, pod := range pods.Items {
+				newOwner := metav1.GetControllerOf(&pod)
+				if pod.UID == uid || pod.DeletionTimestamp != nil || newOwner == nil || newOwner.UID != replicaSet.UID {
+					continue
+				}
+				for _, condition := range pod.Status.Conditions {
+					if condition.Type == corev1.PodReady && condition.Status == corev1.ConditionTrue {
+						writeJSON(t, filepath.Join(evidence, "controller-pod-restart.json"), map[string]any{"oldPodUID": uid, "newPodUID": pod.UID, "deploymentUID": deployment.UID, "oldPodDeleted": true, "newPodReady": true})
+						t.Logf("controller Pod replaced while observation blocked: %s -> %s", uid, pod.UID)
+						return
+					}
+				}
+			}
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	t.Fatal("replacement controller Pod did not become ready after original deletion")
 }
 
 func TestControllerProofHasNoApprovalWritesOrSecretReads(t *testing.T) {

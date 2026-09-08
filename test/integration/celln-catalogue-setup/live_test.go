@@ -74,8 +74,8 @@ func TestLiveCatalogueHarness(t *testing.T) {
 	lostResponse := os.Getenv("CELLN_LIVE_LOST_RESPONSE") == "1"
 	restartController := os.Getenv("CELLN_LIVE_RESTART_CONTROLLER") == "1"
 	controllerImage := os.Getenv("CELLN_LIVE_CONTROLLER_IMAGE")
-	if controllerImage != "" && (!automatic || os.Getenv("CELLN_LIVE_ISSUER_PROCESS") != "1" || restartController) {
-		t.Fatal("controller Pod proof requires automatic standalone issuance; host-process restart mode is separate")
+	if controllerImage != "" && (!automatic || os.Getenv("CELLN_LIVE_ISSUER_PROCESS") != "1") {
+		t.Fatal("controller Pod proof requires automatic standalone issuance")
 	}
 	if restartController && !lostResponse {
 		t.Fatal("controller restart proof requires an uncertain accepted response")
@@ -341,6 +341,7 @@ func TestLiveCatalogueHarness(t *testing.T) {
 	if controllerImage != "" {
 		t.Cleanup(cleanupRun)
 		deployCatalogueController(t, ctx, c, ns.Name, controllerImage, configPath)
+		restart = func() { restartCatalogueControllerPod(t, ctx, c, ns.Name, evidence) }
 	} else {
 		restart = startProcess(t, ctx, env, controller, "--metrics-bind-address=0", "--health-probe-bind-address=0", "--max-run-history=100", "--watch-namespace="+ns.Name)
 		t.Cleanup(cleanupRun)
